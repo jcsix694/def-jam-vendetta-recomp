@@ -17152,10 +17152,10 @@ index 0000000..ed29a2e
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_window.cpp b/ps2xRuntime/src/lib/ps2_host_window.cpp
 new file mode 100644
-index 0000000..93beab2
+index 0000000..fb23f2d
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_window.cpp
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,166 @@
 +#include "runtime/ps2_host_window.h"
 +
 +#if defined(PS2X_HAS_GLFW)
@@ -17172,6 +17172,12 @@ index 0000000..93beab2
 +#define WIN32_LEAN_AND_MEAN
 +#endif
 +#include <windows.h>
++#define GLFW_EXPOSE_NATIVE_WIN32
++#include <GLFW/glfw3native.h>
++
++#include <chrono>
++#include <string>
++#include <thread>
 +#endif
 +
 +namespace ps2_host_window
@@ -17199,10 +17205,81 @@ index 0000000..93beab2
 +#endif
 +        }
 +
++#if defined(_WIN32)
++        // Taking the front back: only just after the game took it (the window opened, or came back from the taskbar),
++        // which is when the screen switches mode and a program such as Microsoft Copilot's Quick View answers by taking
++        // the front; at most twice each time, so the game never fights a program the player wants.
++        constexpr auto kTakeBackWindow = std::chrono::seconds(10);
++        constexpr int kTakeBacks = 2;
++        std::chrono::steady_clock::time_point g_armedAt{};
++        int g_takeBacks = 0;
++
++        std::string frontProgram()
++        {
++            HWND front = GetForegroundWindow();
++            DWORD pid = 0;
++            GetWindowThreadProcessId(front, &pid);
++            std::string name = "an unknown program";
++            if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid))
++            {
++                char path[MAX_PATH]{};
++                DWORD size = MAX_PATH;
++                if (QueryFullProcessImageNameA(process, 0, path, &size))
++                {
++                    name = path;
++                    name = name.substr(name.find_last_of("\\/") + 1);
++                }
++                CloseHandle(process);
++            }
++            char title[128]{};
++            GetWindowTextA(front, title, sizeof(title));
++            return title[0] ? name + " (\"" + title + "\")" : name;
++        }
++
++        // Over the next 2 seconds, from a helper thread: the game's window back in front whenever another program
++        // still has it and the player hasn't done anything (the other program's window may settle, or come back, a
++        // moment later). Windows lets a program bring itself forward when its input is attached to the front window's
++        // thread.
++        void takeBackSoon(HWND game)
++        {
++            std::thread([game]() {
++                bool tried = false, done = false;
++                for (int check = 0; check < 8; ++check)
++                {
++                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
++                    HWND front = GetForegroundWindow();
++                    if (front == game || playerSwitchedAway())
++                        continue;
++                    const DWORD frontThread = GetWindowThreadProcessId(front, nullptr);
++                    const DWORD self = GetCurrentThreadId();
++                    const bool attached = frontThread != 0 && AttachThreadInput(self, frontThread, TRUE);
++                    done = SetForegroundWindow(game) != 0;
++                    BringWindowToTop(game);
++                    if (attached)
++                        AttachThreadInput(self, frontThread, FALSE);
++                    tried = true;
++                }
++                if (tried)
++                    std::cerr << "[window] " << (done ? "the game took the front back" : "Windows didn't let the game take the front back")
++                              << std::endl;
++                else
++                    std::cerr << "[window] the game is in front again" << std::endl;
++            }).detach();
++        }
++#endif
++
 +        void onFocus(GLFWwindow *window, int focused)
 +        {
 +            if (g_previous)
 +                g_previous(window, focused);
++#if defined(_WIN32)
++            if (focused && glfwGetWindowMonitor(window) && glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_FALSE &&
++                std::chrono::steady_clock::now() - g_armedAt > kTakeBackWindow)
++            {
++                g_armedAt = std::chrono::steady_clock::now(); // back in front: the screen's mode may switch again
++                g_takeBacks = 0;
++            }
++#endif
 +            if (focused || !glfwGetWindowMonitor(window))
 +                return; // only a fullscreen window losing the front
 +            if (playerSwitchedAway())
@@ -17210,9 +17287,23 @@ index 0000000..93beab2
 +                glfwIconifyWindow(window); // the screen gets its own mode back; clicking it or Alt-Tab restores both
 +                return;
 +            }
++#if defined(_WIN32)
++            const std::string who = frontProgram();
++            if (std::chrono::steady_clock::now() - g_armedAt < kTakeBackWindow && g_takeBacks < kTakeBacks)
++            {
++                ++g_takeBacks;
++                std::cerr << "[window] " << who << " took the front by itself as the game started: taking it back" << std::endl;
++                takeBackSoon(glfwGetWin32Window(window));
++                return;
++            }
++            std::cerr << "[window] " << who << " took the front by itself: the game stays fullscreen (a click or "
++                         "Alt-Tab brings it back)"
++                      << std::endl;
++#else
 +            std::cerr << "[window] another program took the front by itself: the game stays fullscreen (a click or "
 +                         "Alt-Tab brings it back)"
 +                      << std::endl;
++#endif
 +        }
 +    }
 +
@@ -17221,6 +17312,10 @@ index 0000000..93beab2
 +        if (!window)
 +            return;
 +        glfwSetWindowAttrib(window, GLFW_AUTO_ICONIFY, GLFW_FALSE);
++#if defined(_WIN32)
++        g_armedAt = std::chrono::steady_clock::now();
++        g_takeBacks = 0;
++#endif
 +        GLFWwindowfocusfun previous = glfwSetWindowFocusCallback(window, onFocus);
 +        if (previous != onFocus)
 +            g_previous = previous;
