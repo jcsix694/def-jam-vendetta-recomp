@@ -85,6 +85,37 @@ def git(args, cwd):
     return subprocess.run(['git'] + args, cwd=cwd, check=True, capture_output=True).stdout
 
 
+def file_date():
+    """The date every file in the zip gets: two days before this commit. A zip keeps a file's time as a plain clock
+    time with no time zone, so a file dated "21:12" by a UK clock unzips in the USA as 21:12 there, hours in the future.
+    CMake then sees its files newer than the build it just set up, and Ninja stops ("manifest 'build.ninja' still dirty
+    after 100 tries"). Two days back is in the past in every time zone. Updates are not affected (the settings program
+    writes each file it replaces as new, dated now)."""
+    import datetime
+    commit = int(git(['log', '-1', '--format=%ct'], REPO).decode().strip())
+    return datetime.datetime.fromtimestamp(commit - 2 * 86400, datetime.timezone.utc).timetuple()[:6]
+
+
+class ReleaseZip(zipfile.ZipFile):
+    """A zip whose every file is dated file_date()."""
+    date = None
+
+    def write(self, filename, arcname=None, compress_type=None, compresslevel=None):
+        info = zipfile.ZipInfo.from_file(filename, arcname)
+        with open(filename, 'rb') as f:
+            self.writestr(info, f.read(), compress_type, compresslevel)
+
+    def writestr(self, zinfo_or_arcname, data, compress_type=None, compresslevel=None):
+        info = zinfo_or_arcname if isinstance(zinfo_or_arcname, zipfile.ZipInfo) else zipfile.ZipInfo(zinfo_or_arcname)
+        if ReleaseZip.date is None:
+            ReleaseZip.date = file_date()
+        info.date_time = ReleaseZip.date
+        if not isinstance(zinfo_or_arcname, zipfile.ZipInfo):
+            info.external_attr = 0o600 << 16  # as zipfile gives a file made from a name
+        super().writestr(info, data, compress_type if compress_type is not None else self.compression,
+                         compresslevel if compresslevel is not None else self.compresslevel)
+
+
 def check(name):
     low = name.lower()
     rel = low[len(SRC.lower()):] if low.startswith(SRC.lower()) else low
@@ -185,7 +216,7 @@ def main():
         pyzip = python_zip()
         ps2recomp = patched_ps2recomp(work)
         pgs_patched = patched_parallel_gs(work)
-        with zipfile.ZipFile(out + '.part', 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        with ReleaseZip(out + '.part', 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
             z.write(exe, TOP + '/Def Jam Vendetta Recompiled Settings.exe')
             z.writestr(TOP + '/READ ME FIRST.txt', README.replace('\n', '\r\n'))
             with zipfile.ZipFile(pyzip) as py:
@@ -260,7 +291,7 @@ def add_manifest(path):
                 for chunk in iter(lambda: f.read(1 << 20), b''):
                     digest.update(chunk)
             lines.append(f'{digest.hexdigest()} {info.file_size} {info.filename[len(TOP) + 1:]}')
-    with zipfile.ZipFile(path, 'a', zipfile.ZIP_DEFLATED) as z:
+    with ReleaseZip(path, 'a', zipfile.ZIP_DEFLATED) as z:
         z.writestr(FILES + 'release-manifest.txt', '\n'.join(lines) + '\n')
     print(f'release-manifest.txt: {len(lines) - 2} files, version {version()}')
 

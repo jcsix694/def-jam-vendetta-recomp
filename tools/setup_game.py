@@ -64,6 +64,8 @@ KNOWN_ERRORS = [
      'Your PC ran out of memory while building. Close other programs (browsers, games) and try again.'),
     (re.compile(r'LNK1104|LNK1201|Permission denied|being used by another process', re.IGNORECASE),
      "Another program held one of the build's files, often an antivirus. Try again."),
+    (re.compile(r'still dirty after|system time is not set', re.IGNORECASE),
+     "Some files are dated in the future. Check that your PC's date, time and time zone are right, then try again."),
 ]
 
 
@@ -244,6 +246,28 @@ def build_with_retry(build_dir, env, start, end):
         run(['cmake', '--build', build_dir, '--', f'-j{retry_jobs}'], env=env, parse=parse)
 
 
+def fix_future_dates(folder):
+    """Files dated in the future are dated now. A zip keeps a file's time with no time zone, so a release zipped in the
+    evening by a UK clock unzips in the USA with files hours in the future (and a wrong clock does the same): CMake
+    sees them newer than the build it just set up, and Ninja stops with "manifest 'build.ninja' still dirty after 100
+    tries"."""
+    now = time.time()
+    fixed = 0
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in ('.git', 'out', 'bin', 'obj')]
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                st = os.stat(path)
+                if st.st_mtime > now + 60:
+                    os.utime(path, (st.st_atime, now))
+                    fixed += 1
+            except OSError:
+                pass
+    if fixed:
+        say(f'{fixed} files were dated in the future: dated now')
+
+
 def step_recompiler(env, data):
     step(3, STEPS[2])
     build = os.path.join(data, 'build', 'recomp')
@@ -335,6 +359,7 @@ def main():
     try:
         step_disc(data, args.disc)
         env = step_tools()
+        fix_future_dates(SRC)
         recompiler = step_recompiler(env, data)
         step_recompile(recompiler, data)
         out_dir = step_game(env, data)
