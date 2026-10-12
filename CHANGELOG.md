@@ -5,6 +5,24 @@ The newest version is at the top.
 
 ---
 
+## 0.2.1
+
+### Fixed
+- **The first setup works in every time zone.** Outside the UK, for example in the USA, the setup could stop at step 3
+  with "build.ninja still dirty". The download's files now carry a date that is in the past everywhere, and the setup
+  also corrects any file dated in the future before it builds (a PC clock that is set wrong did the same).
+- **Fullscreen stays in front when Copilot jumps in.** When the screen switches to the game's refresh rate, Microsoft
+  Copilot's Quick View can take the front by itself. The game now takes the front back on its own in the first few
+  seconds, unless you are pressing something, so you no longer need to click it on the taskbar.
+
+### Good to know
+- If the setup of 0.2.0 stopped for you at step 3, download this version and run it again.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.2.0
 
 ### New
