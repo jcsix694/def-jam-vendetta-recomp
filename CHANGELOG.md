@@ -5,6 +5,20 @@ The newest version is at the top.
 
 ---
 
+## 0.2.2
+
+### Fixed
+- **No more lines or a square on the mat after a Blazin'.** At the higher sharpness settings, thin lines or a large
+  darker square could appear on the floor and follow the wrestler after a Blazin'. The wrestlers' shadows are drawn
+  correctly again, as on the PS2.
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.2.1
 
 ### Fixed
