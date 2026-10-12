@@ -1,8 +1,8 @@
 diff --git a/gs/gs_interface.cpp b/gs/gs_interface.cpp
-index ea00016..0177545 100644
+index ea00016..db519b3 100644
 --- a/gs/gs_interface.cpp
 +++ b/gs/gs_interface.cpp
-@@ -2697,8 +2697,16 @@ void GSInterface::drawing_kick_append()
+@@ -2697,8 +2697,19 @@ void GSInterface::drawing_kick_append()
  	{
  		prim_attr.state |= 1u << STATE_BIT_PARALLELOGRAM;
  		prim_attr.state |= 1u << STATE_BIT_SPRITE;
@@ -13,7 +13,10 @@ index ea00016..0177545 100644
 +		// shows. Only art the game uploaded is drawn at the upscaled resolution.
 +		const bool reads_drawn_texture = prim.desc.TME &&
 +		                                 tracker.texture_may_super_sample(state_tracker.tex.page_rects[0]);
-+		if (!hacks.upscale_sprites || reads_drawn_texture)
++		// An untextured sprite (a fill: clearing a render target, a flat box) has nothing to gain from upscaling and
++		// must cover exactly the pixels the GS covers, every sample of them: unsnapped, a clear from y -0.5 to 255.5
++		// misses the samples of row 255 below y 255.5.
++		if (!hacks.upscale_sprites || reads_drawn_texture || !prim.desc.TME)
 +		{
 +			prim_attr.state |= 1u << STATE_BIT_SNAP_RASTER;
 +			prim_attr.state |= 1u << STATE_BIT_SNAP_ATTRIBUTE;
@@ -21,7 +24,7 @@ index ea00016..0177545 100644
  		prim_attr.state &= ~(1u << STATE_BIT_MULTISAMPLE);
  	}
  	else if (is_line)
-@@ -4445,6 +4453,7 @@ void GSInterface::set_debug_mode(const DebugMode &mode)
+@@ -4445,6 +4456,7 @@ void GSInterface::set_debug_mode(const DebugMode &mode)
  void GSInterface::set_hacks(const Hacks &hacks_)
  {
  	hacks = hacks_;
@@ -29,6 +32,17 @@ index ea00016..0177545 100644
  
  	if (!hacks.backbuffer_promotion)
  	{
+@@ -4679,7 +4691,9 @@ ScanoutResult GSInterface::vsync(const VSyncInfo &info_)
+ 	                                    priv_registers.smode2.INT &&
+ 	                                    priv_registers.smode1.CMOD != SMODE1Bits::CMOD_PROGRESSIVE;
+ 
+-	renderer.set_field_aware_super_sampling(render_pass.field_aware_rendering);
++	renderer.set_field_aware_super_sampling(render_pass.field_aware_rendering,
++	                                        priv_registers.pmode.EN1 ? uint32_t(priv_registers.dispfb1.FBW) : 0u,
++	                                        priv_registers.pmode.EN2 ? uint32_t(priv_registers.dispfb2.FBW) : 0u);
+ 
+ 
+ 	auto result = renderer.vsync(priv_registers, info,
 diff --git a/gs/gs_interface.hpp b/gs/gs_interface.hpp
 index 9f05da8..70adbe0 100644
 --- a/gs/gs_interface.hpp
@@ -57,7 +71,7 @@ index 9f05da8..70adbe0 100644
  
  class SignalInterface
 diff --git a/gs/gs_renderer.cpp b/gs/gs_renderer.cpp
-index dbe032d..e6afeab 100644
+index dbe032d..b6ebdac 100644
 --- a/gs/gs_renderer.cpp
 +++ b/gs/gs_renderer.cpp
 @@ -4,6 +4,8 @@
@@ -69,19 +83,25 @@ index dbe032d..e6afeab 100644
  #include "logging.hpp"
  #include "gs_interface.hpp"
  #include "gs_registers_debug.hpp"
-@@ -352,6 +354,11 @@ SuperSampling GSRenderer::get_max_supported_super_sampling() const
+@@ -352,9 +354,16 @@ SuperSampling GSRenderer::get_max_supported_super_sampling() const
  	return max_ssaa;
  }
  
+-void GSRenderer::set_field_aware_super_sampling(bool enable)
 +void GSRenderer::set_upscale_flat_ui(bool enable)
 +{
 +	upscale_flat_ui = enable;
 +}
 +
- void GSRenderer::set_field_aware_super_sampling(bool enable)
++void GSRenderer::set_field_aware_super_sampling(bool enable, uint32_t display_fbw_1, uint32_t display_fbw_2)
  {
  	field_aware_super_sampling = enable;
-@@ -790,10 +797,27 @@ bool GSRenderer::init(Vulkan::Device *device_, const GSOptions &options)
++	field_display_fbw[0] = display_fbw_1;
++	field_display_fbw[1] = display_fbw_2;
+ }
+ 
+ void GSRenderer::init_vram(const GSOptions &options)
+@@ -790,10 +799,27 @@ bool GSRenderer::init(Vulkan::Device *device_, const GSOptions &options)
  	Vulkan::ResourceLayout layout;
  	shaders = Shaders<>(*device_, layout, 0);
  	blit_quad = device_->request_program(shaders.quad, shaders.blit_circuit);
@@ -111,7 +131,44 @@ index dbe032d..e6afeab 100644
  	flush_submit(0);
  	// Descriptor indexing is a hard requirement, but timeline semaphore could be elided if really needed.
  	// Wave-ops is critical.
-@@ -2008,7 +2032,8 @@ void GSRenderer::dispatch_triangle_setup(Vulkan::CommandBuffer &cmd, const Rende
+@@ -1936,14 +1962,26 @@ bool GSRenderer::render_pass_instance_is_deduced_blur(const RenderPass &rp, uint
+ 	return false;
+ }
+ 
+-static bool render_pass_instance_might_field_render(const RenderPass &rp, uint32_t instance)
++static bool render_pass_instance_might_field_render(const RenderPass &rp, uint32_t instance,
++                                                    const uint32_t (&display_fbw)[2])
+ {
+ 	// Some "field" rendered games actually render the frame in full res first, then downsample.
+ 	// In this case, we can deduce we should use normal snapping rules.
+ 	// Very shaky heuristic since it obviously cannot catch every case.
+ 	auto &inst = rp.instances[instance];
+ 	bool is_tall_render_pass = (inst.base_y + (inst.coarse_tiles_height << rp.coarse_tile_size_log2)) > 256;
+-	return !is_tall_render_pass;
++	if (is_tall_render_pass)
++		return false;
++
++	// A field the CRTC scans out is laid out like the display buffer. A short render target with another width is
++	// an offscreen texture (Def Jam Vendetta's 256x256 fighter shadow map, cleared with a sprite from y -0.5 to
++	// 255.5): field snapping evaluates the lower half of each pixel's samples half a line down, so the clear never
++	// reaches the lower samples of the last row, and stale shadow there is clamped across the floor as lines.
++	uint32_t fbw = inst.fb.frame.desc.FBW;
++	if ((display_fbw[0] || display_fbw[1]) && fbw != display_fbw[0] && fbw != display_fbw[1])
++		return false;
++
++	return true;
+ }
+ 
+ void GSRenderer::dispatch_triangle_setup(Vulkan::CommandBuffer &cmd, const RenderPass &rp)
+@@ -2001,14 +2039,15 @@ void GSRenderer::dispatch_triangle_setup(Vulkan::CommandBuffer &cmd, const Rende
+ 				insert_label(cmd, "Instance %u, deduced blur kernel", i);
+ 		}
+ 
+-		if (field_aware_super_sampling && render_pass_instance_might_field_render(rp, i))
++		if (field_aware_super_sampling && render_pass_instance_might_field_render(rp, i, field_display_fbw))
+ 			allow_field_render = true;
+ 	}
+ 
  	cmd.push_constants(&push, 0, sizeof(push));
  
  	cmd.set_program(shaders.triangle_setup);
@@ -121,7 +178,25 @@ index dbe032d..e6afeab 100644
  	cmd.set_specialization_constant(0, sampling_rate_x_log2);
  	cmd.set_specialization_constant(1, sampling_rate_y_log2);
  	cmd.set_specialization_constant(2, bound_texture_has_array);
-@@ -4128,7 +4153,7 @@ void GSRenderer::transfer_overlap_barrier()
+@@ -2172,7 +2211,7 @@ void GSRenderer::dispatch_binning(Vulkan::CommandBuffer &cmd, const RenderPass &
+ 		base_primitive, instance, base_primitive + num_primitives,
+ 		1u << (inst.sampling_rate_x_log2 + inst.sampling_rate_y_log2),
+ 		// Technically we can decay to 2x SSAA here and splat, but that too complicated to support.
+-		uint32_t(field_aware_super_sampling && render_pass_instance_might_field_render(rp, instance)),
++		uint32_t(field_aware_super_sampling && render_pass_instance_might_field_render(rp, instance, field_display_fbw)),
+ 		allow_blend_demote ? BlendDemoteBudget : 0,
+ 	};
+ 
+@@ -2655,7 +2694,7 @@ void GSRenderer::dispatch_shading(Vulkan::CommandBuffer &cmd, const RenderPass &
+ 	cmd.set_program(shaders.ubershader[int(rp.feedback_color)][int(rp.feedback_depth)]);
+ 	auto snap_raster_mask = ivec2(-(1 << inst.sampling_rate_y_log2));
+ 	// Snap single-sampled raster to half-texel instead.
+-	if (inst.sampling_rate_y_log2 && field_aware_super_sampling && render_pass_instance_might_field_render(rp, instance))
++	if (inst.sampling_rate_y_log2 && field_aware_super_sampling && render_pass_instance_might_field_render(rp, instance, field_display_fbw))
+ 		snap_raster_mask.y >>= 1;
+ 
+ 	// If we're doing channel shuffle, but insist on super-sampling, we must make sure
+@@ -4128,7 +4167,7 @@ void GSRenderer::transfer_overlap_barrier()
  
  void GSRenderer::sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::Image &img, const DISPFBBits &dispfb,
                                       const SamplingRect &rect, uint32_t super_samples,
@@ -130,7 +205,7 @@ index dbe032d..e6afeab 100644
  {
  	cmd.image_barrier(img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
  	                  0, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-@@ -4151,15 +4176,16 @@ void GSRenderer::sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::I
+@@ -4151,15 +4190,16 @@ void GSRenderer::sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::I
  	auto valid_extent = rect.valid_extent;
  	if (super_samples > 1)
  	{
@@ -150,7 +225,7 @@ index dbe032d..e6afeab 100644
  
  	struct Registers
  	{
-@@ -4319,6 +4345,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4319,6 +4359,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  	if (high_resolution_scanout)
  		super_samples = 1 << (sampling_rate_x_log2 + sampling_rate_y_log2);
  
@@ -164,7 +239,7 @@ index dbe032d..e6afeab 100644
  	if (promoted1 && promoted1->get_create_info().layers < super_samples)
  		promoted1 = nullptr;
  	if (promoted2 && promoted2->get_create_info().layers < super_samples)
-@@ -4425,6 +4458,7 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4425,6 +4472,7 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  		high_resolution_scanout = false;
  		field_aware_rendering = false;
  		super_samples = 1;
@@ -172,7 +247,7 @@ index dbe032d..e6afeab 100644
  	}
  	else if (priv.smode1.CMOD == SMODE1Bits::CMOD_PROGRESSIVE && priv.smode1.LC == SMODE1Bits::LC_VGA)
  	{
-@@ -4643,13 +4677,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4643,13 +4691,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  		if (image_info.width && image_info.height)
  		{
@@ -189,7 +264,7 @@ index dbe032d..e6afeab 100644
  			device->set_name(*circuit1, "Circuit1");
  		}
  
-@@ -4701,13 +4732,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4701,13 +4746,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  		if (image_info.width && image_info.height)
  		{
@@ -206,7 +281,7 @@ index dbe032d..e6afeab 100644
  			device->set_name(*circuit2, "Circuit2");
  		}
  
-@@ -4763,11 +4791,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4763,11 +4805,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  		uint32_t horiz_resolution1 = circuit2 ? circuit2->get_width() : 0;
  
  		// Need to do all the CRTC offset math in single sampled domain to avoid lots of confusing cases later.
@@ -220,7 +295,7 @@ index dbe032d..e6afeab 100644
  
  		uint32_t magh1 = priv.display1.MAGH + 1;
  		uint32_t magh2 = priv.display2.MAGH + 1;
-@@ -4811,11 +4836,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4811,11 +4850,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  		auto effective_mode_width = mode_width;
  		auto effective_mode_height = mode_height;
  
@@ -234,7 +309,7 @@ index dbe032d..e6afeab 100644
  
  		bool is_raw_circuit1 =
  				circuit1 && !circuit2 && MMOD == PMODEBits::MMOD_ALPHA_ALP && ALP == 0xff &&
-@@ -4837,8 +4859,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4837,8 +4873,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  			                  VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
  			                  info.dst_stage, info.dst_access);
  
@@ -245,7 +320,7 @@ index dbe032d..e6afeab 100644
  			result.double_strike = double_strike;
  
  			flush_submit(0);
-@@ -4848,13 +4870,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4848,13 +4884,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  	result.internal_width = mode_width;
  	result.internal_height = mode_height;
@@ -263,7 +338,7 @@ index dbe032d..e6afeab 100644
  	}
  
  	auto merged = device->create_image(image_info);
-@@ -4920,13 +4942,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4920,13 +4956,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  			if (high_resolution_scanout)
  			{
@@ -282,7 +357,7 @@ index dbe032d..e6afeab 100644
  			}
  
  			cmd.set_viewport(vp);
-@@ -4953,13 +4975,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4953,13 +4989,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  			if (high_resolution_scanout)
  			{
@@ -302,26 +377,30 @@ index dbe032d..e6afeab 100644
  
  			cmd.set_viewport(vp);
 diff --git a/gs/gs_renderer.hpp b/gs/gs_renderer.hpp
-index d9acc50..f7cb42d 100644
+index d9acc50..938642e 100644
 --- a/gs/gs_renderer.hpp
 +++ b/gs/gs_renderer.hpp
-@@ -321,6 +321,7 @@ public:
+@@ -320,7 +320,9 @@ public:
+ 
  	SuperSampling get_max_supported_super_sampling() const;
  
- 	void set_field_aware_super_sampling(bool enable);
+-	void set_field_aware_super_sampling(bool enable);
++	// display_fbw: the FBW of the buffers the CRTC scans out (0 = unknown), see render_pass_instance_might_field_render.
++	void set_field_aware_super_sampling(bool enable, uint32_t display_fbw_1 = 0, uint32_t display_fbw_2 = 0);
 +	void set_upscale_flat_ui(bool enable);
  
  private:
  	PageTracker &tracker;
-@@ -344,6 +345,7 @@ private:
+@@ -344,6 +346,8 @@ private:
  
  	bool last_clut_update_is_read = false;
  	bool field_aware_super_sampling = false;
++	uint32_t field_display_fbw[2] = {};
 +	bool upscale_flat_ui = false;
  
  	std::vector<VkImageMemoryBarrier2> pre_image_barriers;
  	std::vector<VkImageMemoryBarrier2> post_image_barriers;
-@@ -498,7 +500,7 @@ private:
+@@ -498,7 +502,7 @@ private:
  
  	void sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::Image &img,
  	                         const DISPFBBits &dispfb, const SamplingRect &rect, uint32_t super_samples,
