@@ -17178,10 +17178,10 @@ index 0000000..ed29a2e
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_window.cpp b/ps2xRuntime/src/lib/ps2_host_window.cpp
 new file mode 100644
-index 0000000..fb23f2d
+index 0000000..db20ebb
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_window.cpp
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,194 @@
 +#include "runtime/ps2_host_window.h"
 +
 +#if defined(PS2X_HAS_GLFW)
@@ -17202,6 +17202,7 @@ index 0000000..fb23f2d
 +#include <GLFW/glfw3native.h>
 +
 +#include <chrono>
++#include <cstring>
 +#include <string>
 +#include <thread>
 +#endif
@@ -17240,12 +17241,11 @@ index 0000000..fb23f2d
 +        std::chrono::steady_clock::time_point g_armedAt{};
 +        int g_takeBacks = 0;
 +
-+        std::string frontProgram()
++        std::string programOf(HWND window)
 +        {
-+            HWND front = GetForegroundWindow();
 +            DWORD pid = 0;
-+            GetWindowThreadProcessId(front, &pid);
-+            std::string name = "an unknown program";
++            GetWindowThreadProcessId(window, &pid);
++            std::string name;
 +            if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid))
 +            {
 +                char path[MAX_PATH]{};
@@ -17257,9 +17257,30 @@ index 0000000..fb23f2d
 +                }
 +                CloseHandle(process);
 +            }
++            return name;
++        }
++
++        std::string frontProgram()
++        {
++            HWND front = GetForegroundWindow();
++            std::string name = programOf(front);
++            if (name.empty())
++                name = "an unknown program";
 +            char title[128]{};
 +            GetWindowTextA(front, title, sizeof(title));
 +            return title[0] ? name + " (\"" + title + "\")" : name;
++        }
++
++        // Windows' own picture and video takers: Snipping Tool (its overlay, opened by Print Screen or Win+Shift+S),
++        // the older screen clipper and Game Bar (Win+G). They come to the front to capture the screen, so the game
++        // stays fullscreen under them: minimised, they would capture the window behind it.
++        bool isCaptureTool(HWND window)
++        {
++            const std::string name = programOf(window);
++            for (const char *tool : {"SnippingTool.exe", "ScreenClippingHost.exe", "GameBar.exe"})
++                if (_stricmp(name.c_str(), tool) == 0)
++                    return true;
++            return false;
 +        }
 +
 +        // Over the next 2 seconds, from a helper thread: the game's window back in front whenever another program
@@ -17274,7 +17295,7 @@ index 0000000..fb23f2d
 +                {
 +                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
 +                    HWND front = GetForegroundWindow();
-+                    if (front == game || playerSwitchedAway())
++                    if (front == game || playerSwitchedAway() || isCaptureTool(front))
 +                        continue;
 +                    const DWORD frontThread = GetWindowThreadProcessId(front, nullptr);
 +                    const DWORD self = GetCurrentThreadId();
@@ -17308,6 +17329,13 @@ index 0000000..fb23f2d
 +#endif
 +            if (focused || !glfwGetWindowMonitor(window))
 +                return; // only a fullscreen window losing the front
++#if defined(_WIN32)
++            if (isCaptureTool(GetForegroundWindow()))
++            {
++                std::cerr << "[window] " << frontProgram() << " is capturing the screen: the game stays fullscreen" << std::endl;
++                return;
++            }
++#endif
 +            if (playerSwitchedAway())
 +            {
 +                glfwIconifyWindow(window); // the screen gets its own mode back; clicking it or Alt-Tab restores both
