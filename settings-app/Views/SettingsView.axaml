@@ -507,6 +507,50 @@
                     </Border>
                 </StackPanel>
                 <StackPanel>
+                    <TextBlock Classes="cap" Text="MATCH SPEED" />
+                    <Border Classes="capline" />
+                    <Border Classes="row">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Classes="label" Text="Match speed" />
+                                <TextBlock Classes="hint" TextWrapping="Wrap"
+                                           Text="How fast the fight plays. WWF No Mercy's pace is 0.862 of the game's own. Intros, menus and the end of a match keep the game's own speed" />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" MinWidth="240" VerticalAlignment="Center"
+                                      SelectedIndex="{Binding MatchSpeedIndex}" IsEnabled="{Binding PresetEnabled}">
+                                <ComboBoxItem Content="Def Jam Vendetta (default)" />
+                                <ComboBoxItem Content="WWF No Mercy" />
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+                    <Border Classes="row">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Classes="label" Text="Custom speed" />
+                                <TextBlock Classes="hint" TextWrapping="Wrap"
+                                           Text="Your own speed instead of the preset. It starts from the preset's speed. Off = the preset again" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" OnContent="" OffContent="" VerticalAlignment="Center"
+                                          IsChecked="{Binding CustomSpeed}" />
+                        </Grid>
+                    </Border>
+                    <Border Classes="row" IsVisible="{Binding CustomSpeed}">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Classes="label" Text="Speed" />
+                                <TextBlock Classes="hint" TextWrapping="Wrap"
+                                           Text="0.750 to 1.250. 1.000 = the game's own speed, lower = slower. Drag the slider or type a number" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Slider Width="200" Minimum="{Binding MinSpeed}" Maximum="{Binding MaxSpeed}"
+                                        SmallChange="0.001" LargeChange="0.01" Value="{Binding CustomMatchSpeed}" />
+                                <TextBox Width="76" VerticalAlignment="Center" Classes="mono" TextAlignment="Right"
+                                         Text="{Binding CustomSpeedText}" LostFocus="SpeedBoxLostFocus" KeyDown="SpeedBoxKeyDown" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+                <StackPanel>
                     <TextBlock Classes="cap" Text="UNLOCKS" />
                     <Border Classes="capline" />
                     <Border Classes="row">

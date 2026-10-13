@@ -64,6 +64,22 @@ internal static class Shot
         s.Multitap = false;
         s.Vibration3 = false;
         s.UnlockAll = true;
+        // match speed: the No Mercy preset, then Custom from it, a typed speed, one out of range, Custom off again
+        s.MatchSpeedIndex = 1;
+        s.CustomSpeed = true;
+        Console.WriteLine($"custom from WWF No Mercy: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
+        s.CustomSpeedText = "1.1";
+        Console.WriteLine($"typed 1.1: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
+        s.TidySpeedText();
+        Console.WriteLine($"box left: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
+        s.CustomSpeedText = "3";
+        s.TidySpeedText();
+        Console.WriteLine($"typed 3: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
+        s.CustomMatchSpeed = 0.86249;
+        Console.WriteLine($"slider at 0.86249: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
+        s.CustomSpeed = false;
+        s.CustomSpeed = true;
+        Console.WriteLine($"custom off and on again: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
         Console.WriteLine($"status: {s.Status}");
         Console.WriteLine($"summary: {s.SummaryWindow} | {s.SummaryPicture} | {s.SummaryPlayers}");
         Console.WriteLine("--- settings.toml now:");

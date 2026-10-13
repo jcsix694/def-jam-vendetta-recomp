@@ -15,6 +15,7 @@ public partial class SettingsViewModel : ObservableObject
     private static readonly string[] Modes = { "window", "borderless", "fullscreen" };
     private static readonly string[] Filters = { "fsr", "smooth", "blocky" };
     private static readonly string[] Cameras = { "vendetta", "nomercy", "wk2" };
+    private static readonly string[] SpeedPresets = { "vendetta", "nomercy" };
 
     // the properties that are settings (a change is saved); the others are worked out from them
     private static readonly HashSet<string> Saved = new()
@@ -23,7 +24,7 @@ public partial class SettingsViewModel : ObservableObject
         nameof(ShapeIndex), nameof(RendererIndex), nameof(ScaleIndex), nameof(FilterIndex), nameof(Sharpening),
         nameof(Volume), nameof(Reverb), nameof(Multitap), nameof(Vibration1), nameof(Vibration2), nameof(Vibration3),
         nameof(Vibration4), nameof(HighPoly), nameof(Sharp2D), nameof(KeyboardIndex), nameof(CheckUpdates), nameof(CameraIndex),
-        nameof(UnlockAll),
+        nameof(UnlockAll), nameof(MatchSpeedIndex), nameof(CustomSpeed), nameof(CustomMatchSpeed),
     };
 
     private readonly GameFolder _folder;
@@ -134,6 +135,58 @@ public partial class SettingsViewModel : ObservableObject
     // Controls
     // Gameplay
     [ObservableProperty] private bool _unlockAll;
+    /// <summary>The match speed preset: 0 Def Jam Vendetta (the game's own), 1 WWF No Mercy.</summary>
+    [ObservableProperty] private int _matchSpeedIndex;
+    /// <summary>Custom speed: the slider / box instead of the preset.</summary>
+    [ObservableProperty] private bool _customSpeed;
+    [ObservableProperty] private double _customMatchSpeed = 1.0;
+    /// <summary>The box beside the slider: typed speeds are used as soon as they read as a number.</summary>
+    [ObservableProperty] private string _customSpeedText = "1.000";
+    private bool _typing;
+
+    public double MinSpeed => GameSettings.MinSpeed;
+    public double MaxSpeed => GameSettings.MaxSpeed;
+    public bool PresetEnabled => !CustomSpeed;
+
+    // turning Custom speed on starts it from the preset's speed (off goes back to the preset itself)
+    partial void OnCustomSpeedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PresetEnabled));
+        if (value && !_loading)
+            CustomMatchSpeed = GameSettings.PresetSpeed(SpeedPresets[Math.Clamp(MatchSpeedIndex, 0, 1)]);
+    }
+
+    // three decimals; the box follows the slider (not while it is being typed in)
+    partial void OnCustomMatchSpeedChanged(double value)
+    {
+        var rounded = Math.Clamp(Math.Round(value, 3), GameSettings.MinSpeed, GameSettings.MaxSpeed);
+        if (rounded != value)
+        {
+            CustomMatchSpeed = rounded;
+            return;
+        }
+        if (!_typing)
+            CustomSpeedText = GameSettings.SpeedText(value);
+    }
+
+    partial void OnCustomSpeedTextChanged(string value)
+    {
+        if (_loading || !double.TryParse(value.Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var typed) || !double.IsFinite(typed))
+            return;
+        _typing = true;
+        try
+        {
+            CustomMatchSpeed = typed;
+        }
+        finally
+        {
+            _typing = false;
+        }
+    }
+
+    /// <summary>When the box is left: shows the speed in use (out of range or not a number: the speed it had).</summary>
+    public void TidySpeedText() => CustomSpeedText = GameSettings.SpeedText(CustomMatchSpeed);
     [ObservableProperty] private bool _multitap;
     [ObservableProperty] private int _keyboardIndex;   // 0-3 = players 1-4, 4 = nobody
     [ObservableProperty] private bool _vibration1;
@@ -312,13 +365,17 @@ public partial class SettingsViewModel : ObservableObject
             Vibration4 = s.Vibration[3];
             KeyboardIndex = s.Keyboard is >= 1 and <= 4 ? s.Keyboard - 1 : 4;
             UnlockAll = s.UnlockAll;
+            MatchSpeedIndex = Math.Max(0, Array.IndexOf(SpeedPresets, s.MatchSpeed));
+            CustomSpeed = s.CustomSpeed;
+            CustomMatchSpeed = s.CustomMatchSpeed;
+            CustomSpeedText = GameSettings.SpeedText(s.CustomMatchSpeed);
             CheckUpdates = s.CheckUpdates;
         }
         finally
         {
             _loading = false;
         }
-        foreach (var name in new[] { nameof(ModeHint), nameof(Summary), nameof(RefreshHint), nameof(WindowsRate) })
+        foreach (var name in new[] { nameof(ModeHint), nameof(Summary), nameof(RefreshHint), nameof(WindowsRate), nameof(PresetEnabled) })
             base.OnPropertyChanged(new PropertyChangedEventArgs(name));
     }
 
@@ -401,6 +458,9 @@ public partial class SettingsViewModel : ObservableObject
         Vibration = new[] { Vibration1, Vibration2, Vibration3, Vibration4 },
         Keyboard = KeyboardIndex is >= 0 and <= 3 ? KeyboardIndex + 1 : 0,
         UnlockAll = UnlockAll,
+        MatchSpeed = SpeedPresets[Math.Clamp(MatchSpeedIndex, 0, 1)],
+        CustomSpeed = CustomSpeed,
+        CustomMatchSpeed = CustomMatchSpeed,
         CheckUpdates = CheckUpdates,
     };
 

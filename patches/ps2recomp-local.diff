@@ -16288,10 +16288,10 @@ index 0000000..8bb1d56
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_settings.cpp b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 new file mode 100644
-index 0000000..15b357f
+index 0000000..c60b350
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_settings.cpp
-@@ -0,0 +1,520 @@
+@@ -0,0 +1,546 @@
 +#include "runtime/ps2_host_settings.h"
 +
 +#include <algorithm>
@@ -16364,6 +16364,10 @@ index 0000000..15b357f
 +            "[gameplay]\n"
 +            "unlock_all = false       # every wrestler, attire, arena and picture for every player, with or without a save.\n"
 +            "                         # The save itself is not changed (false = what the save has unlocked)\n"
++            "match_speed = \"vendetta\" # how fast the fight plays: \"vendetta\" (the game's own) or \"nomercy\" (WWF No Mercy's\n"
++            "                         # pace, 0.862); intros, menus and the end of a match keep the game's own speed\n"
++            "custom_speed = false     # true = custom_match_speed instead of match_speed\n"
++            "custom_match_speed = 1.000 # 0.750-1.250: 1.000 = the game's own speed, lower = slower\n"
 +            "\n"
 +            "[updates]\n"
 +            "check_on_open = true     # check for a new version when the game or the settings program starts\n";
@@ -16620,6 +16624,28 @@ index 0000000..15b357f
 +            bool unlockAll = false;
 +            reader.boolean("gameplay.unlock_all", unlockAll);
 +            fillSwitch("VENDETTA_UNLOCKALL", unlockAll ? "1" : "0");
++            // the fight's speed (vendetta_matchspeed.cpp, VENDETTA_MATCH_SPEED): the preset "vendetta" (1.0, the game's
++            // own, also when the line is missing) or "nomercy" (0.862, WWF No Mercy's pace); custom_speed = true takes
++            // custom_match_speed instead (0.75-1.25)
++            double speed = reader.choice("gameplay.match_speed", {"vendetta", "nomercy"}) == 1 ? 0.862 : 1.0;
++            bool customSpeed = false;
++            reader.boolean("gameplay.custom_speed", customSpeed);
++            std::string customText;
++            if (reader.take("gameplay.custom_match_speed", customText) && customSpeed)
++            {
++                char *end = nullptr;
++                const double custom = std::strtod(customText.c_str(), &end);
++                if (end != customText.c_str() && custom >= 0.75 && custom <= 1.25)
++                    speed = custom;
++                else
++                    std::cerr << "[settings] gameplay.custom_match_speed = " << customText
++                              << " is not a speed from 0.750 to 1.250; the preset is used" << std::endl;
++            }
++            {
++                std::ostringstream text;
++                text << speed;
++                fillSwitch("VENDETTA_MATCH_SPEED", text.str());
++            }
 +            // the update check when the game starts (ps2_host_update.cpp, VENDETTA_UPDATE_CHECK): the same switch as
 +            // the settings program's own check, on by default, also when the line is missing
 +            bool checkUpdates = true;

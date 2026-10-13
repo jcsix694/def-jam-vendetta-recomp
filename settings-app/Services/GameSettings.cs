@@ -37,6 +37,14 @@ public sealed class GameSettings
     public int Keyboard = 0;                // the player the keyboard plays as: 1-4, 0 = nobody (the default)
     // [gameplay]
     public bool UnlockAll;                  // every wrestler, attire, arena and picture, the save unchanged
+    public string MatchSpeed = "vendetta";  // the fight's speed: vendetta (the game's own) | nomercy (WWF No Mercy's)
+    public bool CustomSpeed;                // CustomMatchSpeed instead of the preset
+    public double CustomMatchSpeed = 1.0;   // MinSpeed-MaxSpeed, three decimals
+
+    public const double MinSpeed = 0.75, MaxSpeed = 1.25;
+    public const double NoMercySpeed = 0.862;  // WWF No Mercy's pace, measured against it
+    /// <summary>The speed of a preset (vendetta / nomercy).</summary>
+    public static double PresetSpeed(string preset) => preset == "nomercy" ? NoMercySpeed : 1.0;
     // [updates] (this program and the game)
     public bool CheckUpdates = true;        // ask GitHub for a newer version when this program or the game starts
 
@@ -84,6 +92,10 @@ public sealed class GameSettings
         "[gameplay]\n" +
         "unlock_all = false       # every wrestler, attire, arena and picture for every player, with or without a save.\n" +
         "                         # The save itself is not changed (false = what the save has unlocked)\n" +
+        "match_speed = \"vendetta\" # how fast the fight plays: \"vendetta\" (the game's own) or \"nomercy\" (WWF No Mercy's\n" +
+        "                         # pace, 0.862); intros, menus and the end of a match keep the game's own speed\n" +
+        "custom_speed = false     # true = custom_match_speed instead of match_speed\n" +
+        "custom_match_speed = 1.000 # 0.750-1.250: 1.000 = the game's own speed, lower = slower\n" +
         "\n" +
         "[updates]\n" +
         "check_on_open = true     # check for a new version when the game or the settings program starts\n";
@@ -128,6 +140,9 @@ public sealed class GameSettings
                 case "controls.vibration_4": s.Vibration[3] = Bool(value, s.Vibration[3]); break;
                 case "controls.keyboard": s.Keyboard = Int(value, s.Keyboard, 0, 4); break;
                 case "gameplay.unlock_all": s.UnlockAll = Bool(value, s.UnlockAll); break;
+                case "gameplay.match_speed": s.MatchSpeed = OneOf(value, s.MatchSpeed, "vendetta", "nomercy"); break;
+                case "gameplay.custom_speed": s.CustomSpeed = Bool(value, s.CustomSpeed); break;
+                case "gameplay.custom_match_speed": s.CustomMatchSpeed = Speed(value, s.CustomMatchSpeed); break;
                 case "updates.check_on_open": s.CheckUpdates = Bool(value, s.CheckUpdates); break;
             }
         }
@@ -168,6 +183,9 @@ public sealed class GameSettings
             ("controls", "vibration_4", Vibration[3] ? "true" : "false"),
             ("controls", "keyboard", Keyboard.ToString(CultureInfo.InvariantCulture)),
             ("gameplay", "unlock_all", UnlockAll ? "true" : "false"),
+            ("gameplay", "match_speed", Quote(MatchSpeed)),
+            ("gameplay", "custom_speed", CustomSpeed ? "true" : "false"),
+            ("gameplay", "custom_match_speed", SpeedText(CustomMatchSpeed)),
             ("updates", "check_on_open", CheckUpdates ? "true" : "false"),
         };
         foreach (var (section, key, value) in values)
@@ -272,6 +290,14 @@ public sealed class GameSettings
 
     private static int Int(string value, int fallback, int min, int max) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n >= min && n <= max ? n : fallback;
+
+    /// <summary>A speed as written in the file and shown in the program: three decimals, within the range.</summary>
+    public static string SpeedText(double speed) =>
+        Math.Clamp(Math.Round(speed, 3), MinSpeed, MaxSpeed).ToString("0.000", CultureInfo.InvariantCulture);
+
+    private static double Speed(string value, double fallback) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && double.IsFinite(n)
+            ? Math.Clamp(Math.Round(n, 3), MinSpeed, MaxSpeed) : fallback;
 
     private static bool Bool(string value, bool fallback) =>
         value.Equals("true", StringComparison.OrdinalIgnoreCase) ? true
