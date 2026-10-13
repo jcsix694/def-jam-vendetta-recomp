@@ -5,6 +5,25 @@ The newest version is at the top.
 
 ---
 
+## 0.3.0
+
+### New
+- **Match speed.** A new setting on the settings program's Gameplay page. Choose Def Jam Vendetta's own pace (the
+  default) or WWF No Mercy's slower pace. Turn on Custom speed to pick any speed from 0.750 to 1.250 with the slider,
+  or type it in. It only changes the fight itself, from the moment it starts until the match is decided. Intros,
+  menus and everything after stay at normal speed. The match clock follows the chosen speed.
+
+### Fixed
+- **Snipping Tool works in fullscreen.** Opening Snipping Tool over the game no longer drops the game to the taskbar,
+  so screenshots and screen recordings show the game instead of the window behind it.
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.2.2
 
 ### Fixed
