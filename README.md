@@ -33,6 +33,7 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 - Up to 4 players on controllers, plus the keyboard as any player
 - Vibration on Xbox-style controllers
 - Camera styles: the game's own, WWF No Mercy or Wrestle Kingdom 2
+- Match speed: the game's own pace, WWF No Mercy's slower pace or any speed you pick
 - Unlock everything, without touching your save
 
 **Easy to use**
@@ -121,7 +122,7 @@ version. Turn both checks off under About › Check for updates automatically.
 - **Sound:** volume and the arena reverb.
 - **Controls:** up to 4 players, each player's controller and vibration, which player the keyboard plays as, and what
   every button does.
-- **Gameplay:** the camera style in matches, and Unlock everything.
+- **Gameplay:** the camera style in matches, the match speed, and Unlock everything.
 - **About:** the version, your game folder and save data in one click, and what it's made with.
 
 ## Controls
@@ -154,6 +155,10 @@ Controls page.
   - **Wrestle Kingdom 2 style:** the ring seen from a corner, like a diamond. The D-pad and left stick are turned to
     match it, so up still moves up the screen.
   - Intros, entrances and finishers keep the game's own camera in every style.
+- **Match speed** (on the Gameplay page): Def Jam Vendetta's own pace (the default) or WWF No Mercy's slower pace.
+  Turn on Custom speed to pick any speed from 0.750 to 1.250 with the slider, or type it in. It only changes the fight
+  itself, from the moment it starts until the match is decided. Intros, menus and everything after stay at normal
+  speed, and the match clock follows the chosen speed.
 - **Unlock everything** (on the Gameplay page, off by default): every wrestler, attire, arena and gallery picture for
   every player, with or without a save. Your save is never changed, and anything you unlock while playing is still
   saved, so turning it off puts you back where your save is.
@@ -201,6 +206,7 @@ The game reads `settings.toml` from its folder. A switch set before `run.bat` wi
 | `VENDETTA_SPU_INTERP=linear` | the sound chip's voices interpolated linearly instead of the PS2's Gaussian |
 | `VENDETTA_CAMERA=vendetta/nomercy/wk2` | the camera style (`camera`) |
 | `VENDETTA_UNLOCKALL=1/0` | unlock everything (`unlock_all`) |
+| `VENDETTA_MATCH_SPEED=0.75..1.25` | the fight's speed (`match_speed` = `vendetta` 1.0 or `nomercy` 0.862, or `custom_speed` with `custom_match_speed`) |
 | `VENDETTA_PRESENT=opengl` | the older OpenGL window instead of the Vulkan one |
 
 F1 shows the debug panel. In the repository: `config\` (the recompiler's inputs: the function map from Ghidra, Sony
