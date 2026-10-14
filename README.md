@@ -122,7 +122,8 @@ version. Turn both checks off under About › Check for updates automatically.
 - **Sound:** volume and the arena reverb.
 - **Controls:** up to 4 players, each player's controller and vibration, which player the keyboard plays as, and what
   every button does.
-- **Gameplay:** the camera style in matches, the match speed, and Unlock everything.
+- **Gameplay:** the camera style in matches, the match speed (Def Jam Vendetta, WWF No Mercy or your own), and Unlock
+  everything.
 - **About:** the version, your game folder and save data in one click, and what it's made with.
 
 ## Controls
