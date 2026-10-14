@@ -2650,7 +2650,7 @@ index 509fd07..71243e7 100644
  
      std::string CodeGenerator::translateVU_VMTIR(const Instruction &inst)
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..ec80f47 100644
+index 589d768..0189154 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -383,12 +383,21 @@ add_library(ps2_runtime STATIC
@@ -2754,7 +2754,7 @@ index 589d768..ec80f47 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
-@@ -518,6 +578,18 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
+@@ -518,10 +578,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
      )
      target_link_libraries(ps2EntryRunner PRIVATE rlImGui imgui)
      target_compile_definitions(ps2EntryRunner PRIVATE PS2X_ENABLE_DEBUG_UI=1)
@@ -2773,6 +2773,30 @@ index 589d768..ec80f47 100644
  endif()
  
  ps2x_stage_ffmpeg_runtime_dlls(ps2EntryRunner)
+ 
++# The program's icon (the window's title bar, the taskbar, Explorer): an .ico built in as GLFW_ICON, the resource
++# GLFW's window class loads (raylib's window and the Vulkan one are both GLFW windows). Without it: Windows' blank one.
++set(PS2X_WINDOW_ICON "" CACHE FILEPATH "an .ico for the program and its window (Windows)")
++if(MSVC AND PS2X_WINDOW_ICON AND EXISTS "${PS2X_WINDOW_ICON}")
++    file(TO_CMAKE_PATH "${PS2X_WINDOW_ICON}" PS2X_WINDOW_ICON_PATH)
++    set(PS2X_WINDOW_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/ps2x_window_icon.rc")
++    set(PS2X_WINDOW_ICON_RES "${CMAKE_CURRENT_BINARY_DIR}/ps2x_window_icon.res")
++    file(CONFIGURE OUTPUT "${PS2X_WINDOW_ICON_RC}" CONTENT "GLFW_ICON ICON \"${PS2X_WINDOW_ICON_PATH}\"\n")
++    # rc.exe run directly, not as an RC source: Ninja's RC rule needs CMake's cmcldeps, which not every CMake has
++    set(PS2X_RC_EXE "${CMAKE_RC_COMPILER}")
++    if(NOT PS2X_RC_EXE)
++        find_program(PS2X_RC_EXE rc REQUIRED)
++    endif()
++    add_custom_command(OUTPUT "${PS2X_WINDOW_ICON_RES}"
++        COMMAND "${PS2X_RC_EXE}" /nologo /fo "${PS2X_WINDOW_ICON_RES}" "${PS2X_WINDOW_ICON_RC}"
++        DEPENDS "${PS2X_WINDOW_ICON_RC}" "${PS2X_WINDOW_ICON_PATH}" VERBATIM)
++    set_source_files_properties("${PS2X_WINDOW_ICON_RES}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
++    target_sources(ps2EntryRunner PRIVATE "${PS2X_WINDOW_ICON_RES}")
++endif()
++
+ if(PS2X_IS_VITA)
+     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1") 
+     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
 diff --git a/ps2xRuntime/cmake/ReleaseMode.cmake b/ps2xRuntime/cmake/ReleaseMode.cmake
 index 92ef0d5..163ceb0 100644
 --- a/ps2xRuntime/cmake/ReleaseMode.cmake
