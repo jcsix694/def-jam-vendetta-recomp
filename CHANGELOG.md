@@ -5,6 +5,28 @@ The newest version is at the top.
 
 ---
 
+## 0.4.0
+
+### New
+- **Updating by hand from the zip is spotted.** If you unzip a new version over your install instead of using Update,
+  the settings program now notices that the game still needs building and shows "The game needs rebuilding" on its
+  Play page. Press **Rebuild now** and it is done for you. From this version on, the game also asks Rebuild or Play
+  when it starts in that case. Your saves and settings stay as they are.
+- **The logo in the window's title bar.** In a window, the game now shows the Def Jam Vendetta Recompiled logo in the
+  top left corner, the same one as on the taskbar.
+
+### Better
+- **WWF No Mercy's pace is now 0.86** of the game's own speed (it was 0.862), a rounder number for the same feel.
+- **New settings slot into older settings files neatly.** A setting a new version adds to your settings file now goes
+  in the right place, with its own explanation.
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.3.0
 
 ### New
