@@ -23,6 +23,7 @@
 #include <vector>
 
 void installVendettaAnimations(PS2Runtime &runtime); // vendetta_animations.cpp: body animations from mods\ (a folder)
+void installVendettaClipSounds(PS2Runtime &runtime); // vendetta_clipsounds.cpp: sound events of animations from mods
 void installVendettaMovies(PS2Runtime &runtime);     // vendetta_movies.cpp: VENDETTA_MOVIELOG, the movie picture flips
 void installVendettaIop();                           // vendetta_iop.cpp: IOP routines run natively (SNDDRV's mixer)
 void installVendettaWidescreen(PS2Runtime &runtime); // vendetta_widescreen.cpp: the match's view widened (VENDETTA_WIDESCREEN)
@@ -557,6 +558,7 @@ namespace
         startFreezeWatch(runtime);
         vendetta_store::install(runtime); // guest memory above 32 MB for mod data (before its users)
         installVendettaAnimations(runtime);
+        installVendettaClipSounds(runtime);
         installVendettaMovies(runtime);
         installVendettaIop();
         installVendettaWidescreen(runtime);

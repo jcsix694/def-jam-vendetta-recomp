@@ -35,4 +35,9 @@ instructions = [
   { address = "0x0015674c", value = "0x3c020200" }, # lui $v0, 0x0200
   { address = "0x00156758", value = "0x244200e0" }, # addiu $v0, $v0, 0xE0
   { address = "0x0015678c", value = "0xafa90064" }, # sw $t1, 0x64($sp): the count (was $s5, 3)
+  # The sound step FUN_001b05e0 names bank 1 clips up to 4095 from a table in the store's fixed area at 0x02001000
+  # (was 2,002, from 0x0025A790): overrides/vendetta_clipsounds.cpp copies the game's names there and names new clips.
+  { address = "0x001b06c8", value = "0x2ac21000" }, # slti $v0, $s6, 0x1000 (was 0x7D3)
+  { address = "0x001b06d0", value = "0x3c030200" }, # lui $v1, 0x0200 (a delay slot; was 0x26)
+  { address = "0x001b06d8", value = "0x24631000" }, # addiu $v1, $v1, 0x1000 (was -0x5870)
 ]

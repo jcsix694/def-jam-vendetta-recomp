@@ -36,7 +36,8 @@ namespace vendetta_store
 
     // The fixed area: the store's first 64 KB (0x02000000-0x0200FFFF), for data the game's code finds at an address
     // patched into it before translation (config: [patches]), so the address can't move. Each user keeps to its own
-    // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp). Returns the guest address of
+    // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp); 0x1000-0xD2CF the clip
+    // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp). Returns the guest address of
     // `offset`, its memory committed, or 0.
     constexpr uint32_t kFixedArea = 0x02000000u;
     constexpr uint32_t kFixedSize = 0x10000u;

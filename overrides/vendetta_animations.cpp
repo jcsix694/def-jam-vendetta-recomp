@@ -21,6 +21,10 @@
 //  - "replace": "animations": game clips (by the names in the tables at 0x25A790 / 0x259AB8) get new bytes; the index
 //    entry points at them. A replacement changes the clip everywhere the game uses it; mods apply in load order, so a
 //    later mod's replacement of the same clip wins.
+//  - sounds: an animation's settings file beside it (the same name, .json) lists its sound events: { "sounds": [
+//    { "frame": 12, "sound": "Swing (whoosh)", "value": 3 } ] } (vendetta_clipsounds.cpp). A new clip plays only
+//    those (none without the list); a replaced clip with the list plays those in place of the game's, without it the
+//    game's own.
 //  - "wrestlers": a game wrestler's moveset slots ({ "84": "Jericho Entrance" }): a new animation in a slot gets a
 //    move of its own (a copy of the slot's move with the clip changed); the move records are copied to the store with
 //    room for them. FUN_00102938 (play a moveset slot) reads the slot before it starts the clip, so it is hooked too.
@@ -34,6 +38,7 @@
 #include "ps2_runtime.h"
 #include "game_overrides.h"
 #include "runtime/ee_scheduler.h"
+#include "vendetta_clipsounds.h"
 #include "vendetta_mods.h"
 #include "vendetta_store.h"
 
@@ -239,6 +244,8 @@ namespace vendetta_animations
         std::string fileName;
         std::vector<uint8_t> bytes;
         uint32_t address = 0; // in the store, once placed
+        bool hasSounds = false; // its settings file has a "sounds" list
+        std::vector<vendetta_clipsounds::Event> sounds;
     };
 
     std::map<std::filesystem::path, ModClip> g_modClips;
@@ -260,6 +267,25 @@ namespace vendetta_animations
             std::cerr << "[mods] " << mod.name << ": " << what << " " << relative << " skipped: "
                       << (why.empty() ? "can't be read" : why) << std::endl;
             return nullptr;
+        }
+        // its settings beside it: the same name, .json
+        std::filesystem::path settingsFile = file;
+        settingsFile.replace_extension(".json");
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(settingsFile, ec))
+        {
+            std::vector<uint8_t> text;
+            vendetta_mods::Json settings;
+            const std::string where = mod.name + ": " + settingsFile.filename().string();
+            if (!readFile(settingsFile, text) ||
+                !vendetta_mods::parseJson(std::string(text.begin(), text.end()), settings, why) || !settings.isObject())
+                std::cerr << "[mods] " << where << " can't be read" << (why.empty() ? "" : ": " + why)
+                          << " - the animation is used without it" << std::endl;
+            else if (const vendetta_mods::Json *sounds = settings.find("sounds"))
+            {
+                clip.hasSounds = true;
+                clip.sounds = vendetta_clipsounds::readSounds(*sounds, where, lastFrameOf(clip.bytes));
+            }
         }
         return &g_modClips.emplace(file, std::move(clip)).first->second;
     }
@@ -449,8 +475,12 @@ namespace vendetta_animations
                     clip.name = item.name;
                     clip.from = item.clip->modName;
                     pointIndexAt(1, clip.index, clip.address);
+                    const std::string soundName = vendetta_clipsounds::nameNewClip(clip.index);
                     std::cerr << "[mods] " << clip.from << ": added " << clip.name << " as clip " << clip.index << " ("
-                              << lastFrameOf(item.clip->bytes) + 1u << " frames, " << clip.size << " bytes)" << std::endl;
+                              << lastFrameOf(item.clip->bytes) + 1u << " frames, " << clip.size << " bytes, sounds as "
+                              << soundName << ")" << std::endl;
+                    if (item.clip->hasSounds)
+                        vendetta_clipsounds::setSounds(soundName, item.clip->sounds, clip.from + " (" + clip.name + ")");
                     clips.push_back(clip);
                 }
                 write32(kBank1 + 8u, static_cast<uint32_t>(clips.size()));
@@ -508,6 +538,8 @@ namespace vendetta_animations
                               << oldLastFrame + 1u << " frames) with " << modClip->fileName << " ("
                               << lastFrameOf(modClip->bytes) + 1u << " frames, " << modClip->bytes.size() << " bytes)"
                               << std::endl;
+                    if (modClip->hasSounds)
+                        vendetta_clipsounds::setSounds(clip->name, modClip->sounds, mod.name + " (" + modClip->fileName + ")");
                     clip->address = modClip->address;
                     clip->size = static_cast<uint32_t>(modClip->bytes.size());
                     clip->from = mod.name;
@@ -823,6 +855,7 @@ namespace vendetta_animations
         dumpClips(); // the game's own bytes, before any mod
         applyMods();
         applyWrestlers();
+        vendetta_clipsounds::place();
         poisonUnused();
         vendetta_store::report();
         if (envOn("VENDETTA_ANIMLIST"))
