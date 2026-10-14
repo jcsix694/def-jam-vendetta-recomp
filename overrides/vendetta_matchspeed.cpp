@@ -1,5 +1,5 @@
 // Def Jam Vendetta (USA, SLUS-20639) - the match's speed (VENDETTA_MATCH_SPEED=<factor>, 0.75-1.25; settings.toml
-// gameplay.match_speed / custom_speed / custom_match_speed: "vendetta" = 1.0, "nomercy" = 0.862, WWF No Mercy's pace).
+// gameplay.match_speed / custom_speed / custom_match_speed: "vendetta" = 1.0, "nomercy" = 0.86, WWF No Mercy's pace).
 // Copied into ps2xRuntime/src/runner/ by tools/sync_generated.py; edit this file in the repo's overrides/ folder.
 //
 // The fight runs on a float time step, not on whole frames: 0x22FBD4 = this picture's step, read by 114 routines (the

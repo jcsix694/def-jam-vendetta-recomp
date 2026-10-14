@@ -206,7 +206,7 @@ The game reads `settings.toml` from its folder. A switch set before `run.bat` wi
 | `VENDETTA_SPU_INTERP=linear` | the sound chip's voices interpolated linearly instead of the PS2's Gaussian |
 | `VENDETTA_CAMERA=vendetta/nomercy/wk2` | the camera style (`camera`) |
 | `VENDETTA_UNLOCKALL=1/0` | unlock everything (`unlock_all`) |
-| `VENDETTA_MATCH_SPEED=0.75..1.25` | the fight's speed (`match_speed` = `vendetta` 1.0 or `nomercy` 0.862, or `custom_speed` with `custom_match_speed`) |
+| `VENDETTA_MATCH_SPEED=0.75..1.25` | the fight's speed (`match_speed` = `vendetta` 1.0 or `nomercy` 0.86, or `custom_speed` with `custom_match_speed`) |
 | `VENDETTA_PRESENT=opengl` | the older OpenGL window instead of the Vulkan one |
 
 F1 shows the debug panel. In the repository: `config\` (the recompiler's inputs: the function map from Ghidra, Sony

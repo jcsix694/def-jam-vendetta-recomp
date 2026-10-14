@@ -42,7 +42,7 @@ public sealed class GameSettings
     public double CustomMatchSpeed = 1.0;   // MinSpeed-MaxSpeed, three decimals
 
     public const double MinSpeed = 0.75, MaxSpeed = 1.25;
-    public const double NoMercySpeed = 0.862;  // WWF No Mercy's pace, measured against it
+    public const double NoMercySpeed = 0.86;   // WWF No Mercy's pace, measured against it
     /// <summary>The speed of a preset (vendetta / nomercy).</summary>
     public static double PresetSpeed(string preset) => preset == "nomercy" ? NoMercySpeed : 1.0;
     // [updates] (this program and the game)
@@ -93,7 +93,7 @@ public sealed class GameSettings
         "unlock_all = false       # every wrestler, attire, arena and picture for every player, with or without a save.\n" +
         "                         # The save itself is not changed (false = what the save has unlocked)\n" +
         "match_speed = \"vendetta\" # how fast the fight plays: \"vendetta\" (the game's own) or \"nomercy\" (WWF No Mercy's\n" +
-        "                         # pace, 0.862); intros, menus and the end of a match keep the game's own speed\n" +
+        "                         # pace, 0.86); intros, menus and the end of a match keep the game's own speed\n" +
         "custom_speed = false     # true = custom_match_speed instead of match_speed\n" +
         "custom_match_speed = 1.000 # 0.750-1.250: 1.000 = the game's own speed, lower = slower\n" +
         "\n" +

@@ -514,7 +514,7 @@
                             <StackPanel VerticalAlignment="Center" Spacing="2">
                                 <TextBlock Classes="label" Text="Match speed" />
                                 <TextBlock Classes="hint" TextWrapping="Wrap"
-                                           Text="How fast the fight plays. WWF No Mercy's pace is 0.862 of the game's own. Intros, menus and the end of a match keep the game's own speed" />
+                                           Text="How fast the fight plays. WWF No Mercy's pace is 0.86 of the game's own. Intros, menus and the end of a match keep the game's own speed" />
                             </StackPanel>
                             <ComboBox Grid.Column="1" MinWidth="240" VerticalAlignment="Center"
                                       SelectedIndex="{Binding MatchSpeedIndex}" IsEnabled="{Binding PresetEnabled}">

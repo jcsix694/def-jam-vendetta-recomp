@@ -16288,7 +16288,7 @@ index 0000000..8bb1d56
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_settings.cpp b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 new file mode 100644
-index 0000000..c60b350
+index 0000000..8b26bfa
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 @@ -0,0 +1,546 @@
@@ -16365,7 +16365,7 @@ index 0000000..c60b350
 +            "unlock_all = false       # every wrestler, attire, arena and picture for every player, with or without a save.\n"
 +            "                         # The save itself is not changed (false = what the save has unlocked)\n"
 +            "match_speed = \"vendetta\" # how fast the fight plays: \"vendetta\" (the game's own) or \"nomercy\" (WWF No Mercy's\n"
-+            "                         # pace, 0.862); intros, menus and the end of a match keep the game's own speed\n"
++            "                         # pace, 0.86); intros, menus and the end of a match keep the game's own speed\n"
 +            "custom_speed = false     # true = custom_match_speed instead of match_speed\n"
 +            "custom_match_speed = 1.000 # 0.750-1.250: 1.000 = the game's own speed, lower = slower\n"
 +            "\n"
@@ -16625,9 +16625,9 @@ index 0000000..c60b350
 +            reader.boolean("gameplay.unlock_all", unlockAll);
 +            fillSwitch("VENDETTA_UNLOCKALL", unlockAll ? "1" : "0");
 +            // the fight's speed (vendetta_matchspeed.cpp, VENDETTA_MATCH_SPEED): the preset "vendetta" (1.0, the game's
-+            // own, also when the line is missing) or "nomercy" (0.862, WWF No Mercy's pace); custom_speed = true takes
++            // own, also when the line is missing) or "nomercy" (0.86, WWF No Mercy's pace); custom_speed = true takes
 +            // custom_match_speed instead (0.75-1.25)
-+            double speed = reader.choice("gameplay.match_speed", {"vendetta", "nomercy"}) == 1 ? 0.862 : 1.0;
++            double speed = reader.choice("gameplay.match_speed", {"vendetta", "nomercy"}) == 1 ? 0.86 : 1.0;
 +            bool customSpeed = false;
 +            reader.boolean("gameplay.custom_speed", customSpeed);
 +            std::string customText;
