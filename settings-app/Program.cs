@@ -43,6 +43,8 @@ internal static class Program
         }
         // --update: started by the game's update popup (the new version's notes open at once)
         ViewModels.UpdateViewModel.OpenOnUpdate = args.Contains("--update");
+        // --rebuild: started by the game's popup when it is older than its files (the rebuild starts at once)
+        ViewModels.UpdateViewModel.OpenOnRebuild = args.Contains("--rebuild");
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 

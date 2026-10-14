@@ -88,6 +88,10 @@ public sealed class GameFolder
     public ProcessStartInfo SetupStart(string? disc) =>
         disc == null ? PythonStart(SetupScript, "--data", Data) : PythonStart(SetupScript, "--data", Data, "--disc", disc);
 
+    /// <summary>The setup again after a release's files were copied in by hand (--after-copy: with no record of what the
+    /// game was last built from, it is all built afresh).</summary>
+    public ProcessStartInfo RebuildAfterCopyStart() => PythonStart(SetupScript, "--data", Data, "--after-copy");
+
     /// <summary>A build's log, every attempt kept one after another under a line with its date (a failed try is still
     /// there when the next one works). Past 20 MB it starts afresh.</summary>
     public static StreamWriter OpenRunLog(string path)

@@ -65,8 +65,8 @@ public partial class UpdateViewModel : ObservableObject
     // --- the page shown: none (the normal pages), notes (what's new), working, done, failed ---
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Active), nameof(IsNotes), nameof(IsWorking), nameof(IsDone), nameof(IsFailed),
-        nameof(ShowNotice), nameof(NavDownloadNow), nameof(NavDownloadDone), nameof(NavRebuildNow), nameof(NavRebuildDone),
-        nameof(NavRebuildNext), nameof(NavDoneNow), nameof(NavDoneNext), nameof(Status))]
+        nameof(ShowNotice), nameof(ShowRebuildNotice), nameof(NavDownloadNow), nameof(NavDownloadDone), nameof(NavRebuildNow),
+        nameof(NavRebuildDone), nameof(NavRebuildNext), nameof(NavDoneNow), nameof(NavDoneNext), nameof(Status))]
     private string _mode = "none";
 
     public bool Active => Mode != "none";
@@ -77,13 +77,33 @@ public partial class UpdateViewModel : ObservableObject
 
     // --- the notice on Play ---
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowNotice), nameof(NewVersion), nameof(NoticeTitle), nameof(NoticePoints), nameof(NoticeMore),
-        nameof(NoticeSize), nameof(NavTitle), nameof(NotesTitle))]
+    [NotifyPropertyChangedFor(nameof(ShowNotice), nameof(ShowRebuildNotice), nameof(NewVersion), nameof(NoticeTitle),
+        nameof(NoticePoints), nameof(NoticeMore), nameof(NoticeSize), nameof(NavTitle), nameof(NotesTitle))]
     private Release? _available;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowNotice))]
+    [NotifyPropertyChangedFor(nameof(ShowNotice), nameof(ShowRebuildNotice))]
     private bool _later;
+
+    // --- the notice on Play when the game is older than its files (a release copied over the install by hand) ---
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowRebuildNotice), nameof(RebuildTitle), nameof(RebuildText))]
+    private string? _staleVersion; // the files' version, while the game was built from older ones
+
+    private string? _staleBuilt;   // the version the game was built from (null: no record, built by 0.3.0 or earlier)
+    private bool _afterCopy;       // the rebuild running is one after a copy by hand, not an update's
+
+    /// <summary>Started by the game's own popup (--rebuild): the rebuild starts at once when the game needs it.</summary>
+    public static bool OpenOnRebuild { get; set; }
+
+    public bool ShowRebuildNotice => StaleVersion != null && !Active && !ShowNotice;
+    public string RebuildTitle => "The game needs rebuilding";
+
+    public string RebuildText =>
+        $"Your files are version {StaleVersion}, but the game was built from {(_staleBuilt != null ? "version " + _staleBuilt : "an older version")}: " +
+        "the new files were copied in without rebuilding it, so you are still playing the old one. Rebuild it once to play " +
+        $"version {StaleVersion} ({(_staleBuilt != null ? "a few minutes" : "about 10 to 15 minutes, as everything is built afresh")}). " +
+        "Your saves and settings stay as they are.";
 
     public bool ShowNotice => Available != null && !Later && !Active && CanUpdate;
     public string NewVersion => Available?.Version.ToString(3) ?? _toVersion;
@@ -195,6 +215,17 @@ public partial class UpdateViewModel : ObservableObject
             Resume(journal);
             return;
         }
+        if (!inSetup && Updater.StaleGame(_folder) is { } stale)
+        {
+            _staleBuilt = stale.Built;
+            StaleVersion = stale.Files;
+            Updater.Log(_folder, $"the game was built from {stale.Built ?? "an older version"}, its files are {stale.Files}: a rebuild is offered");
+            if (OpenOnRebuild)
+            {
+                RebuildNow();
+                return;
+            }
+        }
         if (!inSetup && CanUpdate && OpenOnUpdate)
         {
             // the player pressed Update in the game's popup: straight to the new version's notes and its Update button
@@ -275,6 +306,7 @@ public partial class UpdateViewModel : ObservableObject
     {
         if (Available is not { } release)
             return;
+        _afterCopy = false;
         _release = release;
         _toVersion = release.Version.ToString(3);
         foreach (var s in Steps)
@@ -366,6 +398,27 @@ public partial class UpdateViewModel : ObservableObject
         }
     }
 
+    /// <summary>The game rebuilt from the files in place (a release copied over the install by hand): the update's
+    /// rebuild and finish, with nothing downloaded and nothing to put back.</summary>
+    [RelayCommand]
+    private void RebuildNow()
+    {
+        if (StaleVersion is not { } version)
+            return;
+        _afterCopy = true;
+        _toVersion = version;
+        foreach (var s in Steps)
+            s.State = "next";
+        Percent = 0;
+        TimeLine = "";
+        LastLine = "";
+        WorkingTitle = $"Rebuilding the game for version {version}";
+        Mode = "working";
+        _clock.Restart();
+        Updater.Log(_folder, $"rebuild for {version} started (the files were copied in by hand)");
+        StartRebuild();
+    }
+
     private void StartRebuild()
     {
         SetStep(3);
@@ -381,7 +434,7 @@ public partial class UpdateViewModel : ObservableObject
         }
         try
         {
-            _rebuild = Process.Start(_folder.SetupStart(null));
+            _rebuild = Process.Start(_afterCopy ? _folder.RebuildAfterCopyStart() : _folder.SetupStart(null));
         }
         catch (Exception ex)
         {
@@ -485,7 +538,8 @@ public partial class UpdateViewModel : ObservableObject
         Percent = 1;
         Stage = 2;
         Available = null;
-        DoneTitle = $"Updated to version {_toVersion}";
+        StaleVersion = null;
+        DoneTitle = _afterCopy ? $"The game is rebuilt: version {_toVersion}" : $"Updated to version {_toVersion}";
         CheckText = $"Up to date (version {_toVersion}).";
         Mode = "done";
     }
@@ -525,7 +579,9 @@ public partial class UpdateViewModel : ObservableObject
 
     private void ShowFailed(string kind, string reason, string kept)
     {
-        KeptVersion = $"You still have version {kept}, exactly as it was. Your game, saves and settings work as before.";
+        KeptVersion = _afterCopy
+            ? "Your game is as it was (the older build): Play still starts it, and your saves and settings work as before."
+            : $"You still have version {kept}, exactly as it was. Your game, saves and settings work as before.";
         FailTitle = kind == "busy" ? "The update can't start yet" : "The update couldn't finish";
         FailReason = reason;
         FailAdvice = kind switch
@@ -545,6 +601,11 @@ public partial class UpdateViewModel : ObservableObject
     [RelayCommand]
     private async Task TryAgain()
     {
+        if (_afterCopy)
+        {
+            RebuildNow();
+            return;
+        }
         if (Available == null)
         {
             // after a restart the release isn't known yet: ask again
@@ -637,6 +698,14 @@ public partial class UpdateViewModel : ObservableObject
             if (shown != last)
                 yield return last = shown;
         }
+    }
+
+    /// <summary>For pictures of the pages (--shot): the notice when the game is older than its files.</summary>
+    public void ShowRebuildSample(string? built)
+    {
+        _sample = true;
+        _staleBuilt = built;
+        StaleVersion = "0.3.1";
     }
 
     public void ShowSample(string page)

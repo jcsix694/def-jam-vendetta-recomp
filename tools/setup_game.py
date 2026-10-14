@@ -1,8 +1,13 @@
 # A player's first-run setup, step by step (run by Def Jam Vendetta Recompiled Settings; also by hand):
-#   python tools/setup_game.py --data <install folder> [--disc <disc.chd | disc.iso>]
+#   python tools/setup_game.py --data <install folder> [--disc <disc.chd | disc.iso>] [--after-copy]
 # 1. the disc -> disc/ + game/ in the install folder, 2. Microsoft's C++ build tools (installed when missing: one
 # Windows prompt), 3. PS2Recomp's recompiler, 4. the game's code -> C++, 5. the game, 6. "Def Jam Vendetta
 # Recompiled.exe" in the install folder. The build folders are build/recomp and build/game there.
+# A player's install (one with release-manifest.txt) keeps a copy of the list it was built from in
+# build/built-from-manifest.txt: a later build marks every file that differs from it as changed now, so files copied in
+# by hand with older dates (a release's files are all dated two days before it) are still rebuilt. --after-copy (the
+# settings program, when the files were copied in by hand): with no such copy, the build folders go and it is all built
+# afresh, as nothing tells which files changed.
 #
 # What it prints for a program to follow (each on its own line, besides everything the tools print):
 #   [step] <n> <of> <title>    [progress] <0-1 within the step>    [done]    [error] <what went wrong>
@@ -23,6 +28,8 @@ import urllib.request
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PS2RECOMP = os.path.join(SRC, 'PS2Recomp')
 GAME_EXE = 'Def Jam Vendetta Recompiled.exe'
+MANIFEST = 'release-manifest.txt'
+BUILT_FROM = os.path.join('build', 'built-from-manifest.txt')
 VS_INSTALLER_URL = 'https://aka.ms/vs/17/release/vs_BuildTools.exe'
 VS_COMPONENTS = ['Microsoft.VisualStudio.Workload.VCTools', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
                  'Microsoft.VisualStudio.Component.VC.CMake.Project', 'Microsoft.VisualStudio.Component.Windows11SDK.22621']
@@ -334,6 +341,42 @@ def step_game(env, data):
     return os.path.join(build, 'ps2xRuntime')
 
 
+def read_manifest(path):
+    """release-manifest.txt: "sha256 size path" lines (paths below the install folder, with /), # comments."""
+    files = {}
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            parts = line.rstrip('\n').split(' ', 2)
+            if len(parts) == 3 and not line.startswith('#') and '..' not in parts[2]:
+                files[parts[2]] = parts[0]
+    return files
+
+
+def mark_changed_files(data, after_copy):
+    """Files that differ from the release the game was last built from are dated now, so the build sees them."""
+    manifest = os.path.join(data, MANIFEST)
+    built_from = os.path.join(data, BUILT_FROM)
+    if not os.path.isfile(manifest):
+        return  # a developer's copy: git and the build's own dates
+    if not os.path.isfile(built_from):
+        if after_copy:
+            for folder in ('game', 'recomp'):
+                shutil.rmtree(os.path.join(data, 'build', folder), ignore_errors=True)
+            say('no record of what the game was last built from: building it all afresh')
+        return
+    old, new = read_manifest(built_from), read_manifest(manifest)
+    root = os.path.dirname(data)
+    now = time.time()
+    marked = 0
+    for rel, digest in new.items():
+        path = os.path.join(root, *rel.split('/'))
+        if old.get(rel) != digest and os.path.isfile(path):
+            os.utime(path, (now, now))
+            marked += 1
+    if marked:
+        say(f'{marked} files changed since the game was last built: marked as changed')
+
+
 def step_finish(out_dir, data):
     step(6, STEPS[5])
     exe = os.path.join(out_dir, 'ps2EntryRunner.exe')
@@ -346,6 +389,11 @@ def step_finish(out_dir, data):
         shutil.copyfile(source, os.path.join(data, name + '.new'))
     for _, name in files:
         os.replace(os.path.join(data, name + '.new'), os.path.join(data, name))
+    # what it was built from: the settings program and the game compare it with the release's files
+    if os.path.isfile(os.path.join(data, MANIFEST)):
+        built_from = os.path.join(data, BUILT_FROM)
+        shutil.copyfile(os.path.join(data, MANIFEST), built_from + '.new')
+        os.replace(built_from + '.new', built_from)
     say(f'the game: {os.path.join(data, GAME_EXE)}')
     progress(1.0)
 
@@ -354,10 +402,13 @@ def main():
     parser = argparse.ArgumentParser(description='First-run setup: your disc -> Def Jam Vendetta Recompiled.exe')
     parser.add_argument('--data', required=True, help='the install folder (disc/, game/, the game program, build/)')
     parser.add_argument('--disc', help='your disc: .chd or .iso (USA, SLUS-20639)')
+    parser.add_argument('--after-copy', action='store_true',
+                        help="a release's files were copied in by hand: with no record of the last build, build afresh")
     args = parser.parse_args()
     data = os.path.abspath(args.data)
     try:
         step_disc(data, args.disc)
+        mark_changed_files(data, args.after_copy)
         env = step_tools()
         fix_future_dates(SRC)
         recompiler = step_recompiler(env, data)

@@ -397,6 +397,42 @@ public static class Updater
 
     public static string LogPath(GameFolder folder) => Path.Combine(folder.LogsPath, "update.log");
 
+    /// <summary>The copy of the release's list the setup keeps once it has built the game (tools\setup_game.py).</summary>
+    private static string BuiltFromManifest(GameFolder folder) => Path.Combine(folder.Data, "build", "built-from-manifest.txt");
+
+    /// <summary>Is the game program older than the release's files? A release copied over an install by hand replaces
+    /// the files but not the game, which is built on the player's PC: then this is the version the files are, and the
+    /// version the game was built from (null when there is no record of it: built by version 0.3.0 or earlier). Null
+    /// when the game matches its files, or for a developer's copy.</summary>
+    public static (string Files, string? Built)? StaleGame(GameFolder folder)
+    {
+        if (!CanUpdate(folder) || folder.GameExe == null)
+            return null;
+        try
+        {
+            var files = File.ReadAllText(InstalledManifest(folder));
+            var builtPath = BuiltFromManifest(folder);
+            var built = File.Exists(builtPath) ? File.ReadAllText(builtPath) : null;
+            if (built == files)
+                return null;
+            return (ManifestVersion(files) ?? CurrentText, built == null ? null : ManifestVersion(built));
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>"# Def Jam Vendetta Recompiled X.Y.Z", the list's first line.</summary>
+    private static string? ManifestVersion(string manifest)
+    {
+        var first = manifest.Split('\n', 2)[0].Trim();
+        var start = "# " + Top.TrimEnd('/') + " ";
+        return first.StartsWith(start) && TryParseVersion(first[start.Length..], out var v)
+            ? v.ToString(3)
+            : null;
+    }
+
     public static void Log(GameFolder folder, string line)
     {
         try

@@ -251,36 +251,72 @@ public sealed class GameSettings
             }
             if (current != section)
                 continue;
-            if (trimmed.Length > 0)
+            // a setting's line, or an indented comment line carrying on the comment of the one above
+            if (trimmed.Length > 0 || (sectionEnd == i - 1 && IsCommentCarryOn(lines[i])))
                 sectionEnd = i;
             var eq = trimmed.IndexOf('=');
             if (eq < 0 || !trimmed[..eq].Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
                 continue;
-            var line = lines[i];
-            var valueStart = line.IndexOf('=') + 1;
-            while (valueStart < line.Length && line[valueStart] == ' ')
-                valueStart++;
-            var body = StripComment(line);
-            var oldValue = body[valueStart..].TrimEnd();
-            var comment = line[(valueStart + oldValue.Length)..];
-            // keep the comment's column where the old value was padded to it
-            if (comment.StartsWith(' ') && value.Length != oldValue.Length)
-            {
-                var spaces = comment.Length - comment.TrimStart(' ').Length;
-                comment = new string(' ', Math.Max(1, spaces + oldValue.Length - value.Length)) + comment.TrimStart(' ');
-            }
-            lines[i] = line[..valueStart] + value + comment;
+            lines[i] = WithValue(lines[i], value);
             return;
         }
+        // a missing line comes with its comment from the default file
+        var added = DefaultLines(section, key) is { Count: > 0 } block
+            ? block.Select((line, n) => n == 0 ? WithValue(line, value) : line).ToList()
+            : new List<string> { $"{key} = {value}" };
         if (sectionEnd < 0)
         {
             if (lines.Count > 0 && lines[^1].Trim().Length > 0)
                 lines.Add("");
             lines.Add($"[{section}]");
-            lines.Add($"{key} = {value}");
+            lines.AddRange(added);
         }
         else
-            lines.Insert(sectionEnd + 1, $"{key} = {value}");
+            lines.InsertRange(sectionEnd + 1, added);
+    }
+
+    private static bool IsCommentCarryOn(string line) => line.StartsWith(' ') && line.TrimStart().StartsWith('#');
+
+    /// <summary>The line's value replaced, its spacing and comment kept.</summary>
+    private static string WithValue(string line, string value)
+    {
+        var valueStart = line.IndexOf('=') + 1;
+        while (valueStart < line.Length && line[valueStart] == ' ')
+            valueStart++;
+        var body = StripComment(line);
+        var oldValue = body[valueStart..].TrimEnd();
+        var comment = line[(valueStart + oldValue.Length)..];
+        // keep the comment's column where the old value was padded to it
+        if (comment.StartsWith(' ') && value.Length != oldValue.Length)
+        {
+            var spaces = comment.Length - comment.TrimStart(' ').Length;
+            comment = new string(' ', Math.Max(1, spaces + oldValue.Length - value.Length)) + comment.TrimStart(' ');
+        }
+        return line[..valueStart] + value + comment;
+    }
+
+    /// <summary>A setting's line in the default file and the comment lines carrying on below it; empty when it has none.</summary>
+    private static List<string> DefaultLines(string section, string key)
+    {
+        var lines = DefaultFile.Split('\n');
+        var current = "";
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var trimmed = StripComment(lines[i]).Trim();
+            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            {
+                current = trimmed[1..^1].Trim().ToLowerInvariant();
+                continue;
+            }
+            var eq = trimmed.IndexOf('=');
+            if (current != section || eq < 0 || !trimmed[..eq].Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var block = new List<string> { lines[i] };
+            while (i + 1 < lines.Length && IsCommentCarryOn(lines[i + 1]))
+                block.Add(lines[++i]);
+            return block;
+        }
+        return new List<string>();
     }
 
     private static string Quote(string text) => "\"" + text + "\"";

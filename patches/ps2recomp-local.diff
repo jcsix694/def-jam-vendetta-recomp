@@ -16840,10 +16840,10 @@ index 0000000..c60b350
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_update.cpp b/ps2xRuntime/src/lib/ps2_host_update.cpp
 new file mode 100644
-index 0000000..ed29a2e
+index 0000000..f1303d5
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_update.cpp
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,402 @@
 +#include "runtime/ps2_host_update.h"
 +
 +#include <iostream>
@@ -16934,10 +16934,10 @@ index 0000000..ed29a2e
 +            return std::filesystem::path(path).parent_path();
 +        }
 +
-+        // release-manifest.txt's first line: "# <title> X.Y.Z"
-+        bool installedVersion(const std::filesystem::path &folder, Version &out)
++        // a release list's first line: "# <title> X.Y.Z"
++        bool manifestVersion(const std::filesystem::path &path, Version &out)
 +        {
-+            std::ifstream file(folder / "release-manifest.txt");
++            std::ifstream file(path);
 +            std::string line;
 +            if (!file || !std::getline(file, line))
 +                return false;
@@ -16945,6 +16945,27 @@ index 0000000..ed29a2e
 +            if (line.rfind(start, 0) != 0)
 +                return false;
 +            return parseVersion(line.substr(start.size()), out);
++        }
++
++        bool installedVersion(const std::filesystem::path &folder, Version &out)
++        {
++            return manifestVersion(folder / "release-manifest.txt", out);
++        }
++
++        // The list of the release the game was last built from: the setup copies release-manifest.txt there once it
++        // has built the game. Differing from release-manifest.txt (or missing) = the release's files were copied over
++        // the install by hand, without the rebuild an update does.
++        const char *kBuiltFromFile = "build/built-from-manifest.txt";
++
++        bool readWhole(const std::filesystem::path &path, std::string &out)
++        {
++            std::ifstream file(path, std::ios::binary);
++            if (!file)
++                return false;
++            std::ostringstream text;
++            text << file.rdbuf();
++            out = text.str();
++            return true;
 +        }
 +
 +        // The answer to one GET: the status code and the body (0 = no answer).
@@ -17042,15 +17063,16 @@ index 0000000..ed29a2e
 +            return end == std::string::npos ? std::string() : json.substr(at + 1, end - at - 1);
 +        }
 +
-+        // The popup's two buttons say Update and Play (a message box's Yes and No, renamed as it opens).
++        // The popup's two buttons say Update (or Rebuild) and Play (a message box's Yes and No, renamed as it opens).
 +        HHOOK g_hook = nullptr;
++        const wchar_t *g_yesText = L"Update";
 +
 +        LRESULT CALLBACK renameButtons(int code, WPARAM wparam, LPARAM lparam)
 +        {
 +            if (code == HCBT_ACTIVATE)
 +            {
 +                const HWND box = reinterpret_cast<HWND>(wparam);
-+                SetDlgItemTextW(box, IDYES, L"Update");
++                SetDlgItemTextW(box, IDYES, g_yesText);
 +                SetDlgItemTextW(box, IDNO, L"Play");
 +                UnhookWindowsHookEx(g_hook);
 +                g_hook = nullptr;
@@ -17059,13 +17081,9 @@ index 0000000..ed29a2e
 +            return CallNextHookEx(g_hook, code, wparam, lparam);
 +        }
 +
-+        bool askUpdate(const std::string &latest, const std::string &installed)
++        bool askYesPlay(const std::wstring &text, const wchar_t *yes)
 +        {
-+            const std::wstring text =
-+                L"Version " + wide(latest) + L" is available. You have version " + wide(installed) +
-+                L".\n\nUpdate opens the settings program, where you can see what's new and update in a few minutes. "
-+                L"Your saves and settings stay as they are.\n\nPlay starts the game now. You won't be asked about "
-+                L"version " + wide(latest) + L" again.";
++            g_yesText = yes;
 +            g_hook = SetWindowsHookExW(WH_CBT, renameButtons, nullptr, GetCurrentThreadId());
 +            const int choice = MessageBoxW(nullptr, text.c_str(), wide(config().title).c_str(),
 +                                           MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON1 | MB_SETFOREGROUND | MB_TOPMOST);
@@ -17077,9 +17095,30 @@ index 0000000..ed29a2e
 +            return choice == IDYES;
 +        }
 +
-+        bool startLauncher(const std::filesystem::path &program)
++        bool askUpdate(const std::string &latest, const std::string &installed)
 +        {
-+            std::wstring command = L"\"" + program.wstring() + L"\" --update";
++            return askYesPlay(
++                L"Version " + wide(latest) + L" is available. You have version " + wide(installed) +
++                    L".\n\nUpdate opens the settings program, where you can see what's new and update in a few minutes. "
++                    L"Your saves and settings stay as they are.\n\nPlay starts the game now. You won't be asked about "
++                    L"version " + wide(latest) + L" again.",
++                L"Update");
++        }
++
++        bool askRebuild(const std::string &files, const std::string &built)
++        {
++            return askYesPlay(
++                L"Your files are version " + wide(files) + L", but this game was built from " + wide(built) +
++                    L": the new files were copied in without rebuilding it, so it is still the old game.\n\nRebuild "
++                    L"opens the settings program, which rebuilds the game from your files (a few minutes, or about 10 "
++                    L"to 15 when everything has to be built afresh). Your saves and settings stay as they are.\n\nPlay "
++                    L"starts the old game now.",
++                L"Rebuild");
++        }
++
++        bool startLauncher(const std::filesystem::path &program, const wchar_t *what)
++        {
++            std::wstring command = L"\"" + program.wstring() + L"\" " + what;
 +            STARTUPINFOW startup{};
 +            startup.cb = sizeof(startup);
 +            PROCESS_INFORMATION process{};
@@ -17100,15 +17139,47 @@ index 0000000..ed29a2e
 +        const Config &cfg = config();
 +        if (cfg.repo.empty())
 +            return true;
++        const std::filesystem::path folder = programFolder();
++        Version installed{};
++        if (!installedVersion(folder, installed))
++            return true; // not a player's install (no release-manifest.txt): a developer's build never checks
++        const std::filesystem::path launcher = folder.parent_path() / std::filesystem::path(wide(cfg.launcher));
++
++        // the game older than its files: a rebuild offered at every start until it has one (whether or not updates
++        // are checked for)
++        {
++            std::string files, built;
++            Version builtVersion{};
++            const bool known = readWhole(folder / kBuiltFromFile, built);
++            if (readWhole(folder / "release-manifest.txt", files) && known && built == files)
++                std::cerr << "[update] the game was built from " << versionText(installed) << ", as its files are" << std::endl;
++            else
++            {
++                const std::string builtText = !known ? "an older version"
++                                              : manifestVersion(folder / kBuiltFromFile, builtVersion)
++                                                  ? "version " + versionText(builtVersion)
++                                                  : "another version";
++                std::cerr << "[update] the game was built from " << builtText << " but its files are "
++                          << versionText(installed) << " (copied in by hand?): asking to rebuild" << std::endl;
++                if (askRebuild(versionText(installed), builtText))
++                {
++                    if (startLauncher(launcher, L"--rebuild"))
++                    {
++                        std::cerr << "[update] the player chose Rebuild: " << cfg.launcher
++                                  << " --rebuild started, the game ends" << std::endl;
++                        return false;
++                    }
++                    std::cerr << "[update] couldn't start " << launcher.string() << ": playing" << std::endl;
++                }
++                else
++                    std::cerr << "[update] the player chose to play the old game" << std::endl;
++            }
++        }
 +        if (const char *check = std::getenv("VENDETTA_UPDATE_CHECK"); check && check[0] == '0')
 +        {
 +            std::cerr << "[update] checking for updates is off (settings: check_on_open)" << std::endl;
 +            return true;
 +        }
-+        const std::filesystem::path folder = programFolder();
-+        Version installed{};
-+        if (!installedVersion(folder, installed))
-+            return true; // not a player's install (no release-manifest.txt): a developer's build never checks
 +
 +        std::string url = "https://api.github.com/repos/" + cfg.repo + "/releases/latest";
 +        if (const char *test = std::getenv("VENDETTA_UPDATE_URL"); test && *test)
@@ -17165,8 +17236,7 @@ index 0000000..ed29a2e
 +            std::cerr << "[update] the player chose Play" << std::endl;
 +            return true;
 +        }
-+        const std::filesystem::path launcher = folder.parent_path() / std::filesystem::path(wide(cfg.launcher));
-+        if (!startLauncher(launcher))
++        if (!startLauncher(launcher, L"--update"))
 +        {
 +            std::cerr << "[update] couldn't start " << launcher.string() << ": playing" << std::endl;
 +            return true;

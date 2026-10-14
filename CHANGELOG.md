@@ -20,6 +20,11 @@ The newest version is at the top.
 ### Good to know
 - To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
   settings stay as they are.
+- **Updating by hand from the zip?** The zip doesn't contain the game itself: the game is built on your PC from your
+  disc, and only the update in the settings program rebuilds it. Unzipping a new version over your install keeps the
+  old game. To fix it, close the game and the settings program, then in the `files` folder delete
+  `Def Jam Vendetta Recompiled.exe` **and** the `build` folder. Open the settings program and press build (about 10 to
+  15 minutes, as everything is built afresh). Your saves and settings stay as they are.
 - After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
   **More info**, then **Run anyway**.
 - Mod support is actively being worked on and will come in a future update.

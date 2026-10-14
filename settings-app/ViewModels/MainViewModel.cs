@@ -246,6 +246,8 @@ public partial class MainViewModel : ObservableObject
             case "setup2": InSetup = true; Setup.ShowSample(0.62, false); return;
             case "setupdone": InSetup = true; Setup.ShowSample(1, true); return;
             case "update-notice": PageIndex = 0; Updates.ShowSample("notice"); return;
+            case "rebuild-notice": PageIndex = 0; Updates.ShowRebuildSample("0.3.0"); return;
+            case "rebuild-notice-old": PageIndex = 0; Updates.ShowRebuildSample(null); return;
             case "update-notes": Updates.ShowSample("notes"); return;
             case "update-working": Updates.ShowSample("working"); return;
             case "update-done": Updates.ShowSample("done"); return;

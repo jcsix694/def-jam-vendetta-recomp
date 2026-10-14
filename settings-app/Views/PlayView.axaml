@@ -37,6 +37,21 @@
                 </Grid>
             </Border>
 
+            <!-- the game older than its files: a release copied over the install by hand -->
+            <Border BorderBrush="{StaticResource VAccent}" BorderThickness="1" CornerRadius="8" Padding="18,16" Background="#1f2530"
+                    IsVisible="{Binding Updates.ShowRebuildNotice}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="{Binding Updates.RebuildTitle}" FontSize="15" FontWeight="SemiBold" Foreground="#ffffff" />
+                        <TextBlock FontSize="13" Foreground="{StaticResource VText2}" TextWrapping="Wrap" Text="{Binding Updates.RebuildText}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="8" MinWidth="170">
+                        <Button Classes="accent" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Rebuild now"
+                                Command="{Binding Updates.RebuildNowCommand}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
             <Grid ColumnDefinitions="*,*" ColumnSpacing="28">
                 <StackPanel>
                     <TextBlock Classes="cap" Text="YOUR GAME" />
