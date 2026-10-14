@@ -61,9 +61,14 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 <td><img src="images/game-combo.jpg" alt="A combo"></td>
 <td><img src="images/game-wins.jpg" alt="Spider wins"></td>
 </tr>
+<tr>
+<td><img src="images/game-four.jpg" alt="Four players, with the Wrestle Kingdom 2 camera"></td>
+<td><img src="images/game-lift.jpg" alt="Steel lifts Scarface, with the WWF No Mercy camera"></td>
+<td><img src="images/game-blazin.jpg" alt="Joe's Handstand Headshot"></td>
+</tr>
 </table>
 
-<sub>All taken on PC at the default settings: 16×, Sharp 2D, widescreen.</sub>
+<sub>All taken on PC at the default settings: 16×, Sharp 2D, widescreen (the last row also shows the other camera styles).</sub>
 
 ## Install
 
