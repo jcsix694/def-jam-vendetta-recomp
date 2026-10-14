@@ -22,9 +22,9 @@
 //    entry points at them. A replacement changes the clip everywhere the game uses it; mods apply in load order, so a
 //    later mod's replacement of the same clip wins.
 //  - sounds: an animation's settings file beside it (the same name, .json) lists its sound events: { "sounds": [
-//    { "frame": 12, "sound": "Swing (whoosh)", "value": 3 } ] } (vendetta_clipsounds.cpp). A new clip plays only
-//    those (none without the list); a replaced clip with the list plays those in place of the game's, without it the
-//    game's own.
+//    { "frame": 12, "sound": "Swing (whoosh)", "value": 3 } ] } (vendetta_clipsounds.cpp). A mod's animation, new or
+//    replacing a game clip, plays exactly that list: without one it is silent (a replaced clip never keeps the game's
+//    sounds, which were made for other movements).
 //  - "wrestlers": a game wrestler's moveset slots ({ "84": "Jericho Entrance" }): a new animation in a slot gets a
 //    move of its own (a copy of the slot's move with the clip changed); the move records are copied to the store with
 //    room for them. FUN_00102938 (play a moveset slot) reads the slot before it starts the clip, so it is hooked too.
@@ -538,8 +538,8 @@ namespace vendetta_animations
                               << oldLastFrame + 1u << " frames) with " << modClip->fileName << " ("
                               << lastFrameOf(modClip->bytes) + 1u << " frames, " << modClip->bytes.size() << " bytes)"
                               << std::endl;
-                    if (modClip->hasSounds)
-                        vendetta_clipsounds::setSounds(clip->name, modClip->sounds, mod.name + " (" + modClip->fileName + ")");
+                    // only the file's sounds: none listed = silent
+                    vendetta_clipsounds::setSounds(clip->name, modClip->sounds, mod.name + " (" + modClip->fileName + ")");
                     clip->address = modClip->address;
                     clip->size = static_cast<uint32_t>(modClip->bytes.size());
                     clip->from = mod.name;

@@ -15,8 +15,8 @@
 //    ZNEW<clip> (adjmk's names) at 0x02005000 + 16 x (clip - 2003), the rest "error" (the game's default name at
 //    0x29A298, which has no entry).
 //  - FUN_001c60d8 is hooked: a key a mod gave events answers with the mod's entry (in the store, the file's layout),
-//    every other key goes to the game's own search. So the game's sounds come from its own code and file, and a mod
-//    can give a replaced game clip new events too.
+//    every other key goes to the game's own search. So the game's sounds come from its own code and file, and a game
+//    clip a mod replaces plays only the events the mod lists (none = an entry of 0: silent).
 // The first lookup checks the loaded file (sorted, every event's value count as in the table below) and prints it.
 #include "vendetta_clipsounds.h"
 
