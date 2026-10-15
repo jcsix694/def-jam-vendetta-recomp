@@ -98,7 +98,11 @@ public sealed class GameSettings
         "custom_match_speed = 1.000 # 0.750-1.250: 1.000 = the game's own speed, lower = slower\n" +
         "\n" +
         "[updates]\n" +
-        "check_on_open = true     # check for a new version when the game or the settings program starts\n";
+        "check_on_open = true     # check for a new version when the game or the settings program starts\n" +
+        "\n" +
+        "[play]\n" +
+        "project = \"\"             # what the game plays when started on its own: a project (projects\\<name>), \"\" = the\n" +
+        "                         # original game (no mods); the settings program's Play page sets it\n";
 
     public static GameSettings Load(string path)
     {
@@ -147,6 +151,22 @@ public sealed class GameSettings
             }
         }
         return s;
+    }
+
+    /// <summary>[play] project: the project last picked on the Play page ("" = the original game).</summary>
+    public static string LoadProject(string path) =>
+        File.Exists(path) ? Parse(File.ReadAllLines(path)).LastOrDefault(kv => kv.Key == "play.project").Value ?? "" : "";
+
+    /// <summary>Writes [play] project alone (the other lines as they are).</summary>
+    public static void SaveProject(string path, string project)
+    {
+        var lines = (File.Exists(path) ? File.ReadAllText(path) : DefaultFile).Replace("\r\n", "\n").Split('\n').ToList();
+        if (lines.Count > 0 && lines[^1] == "")
+            lines.RemoveAt(lines.Count - 1);
+        SetLine(lines, "play", "project", Quote(project));
+        var temp = path + ".new";
+        File.WriteAllText(temp, string.Join("\n", lines) + "\n", new UTF8Encoding(false));
+        File.Move(temp, path, overwrite: true);
     }
 
     /// <summary>Writes the values into the file (the default file first when there is none), each in its own line.</summary>

@@ -6,6 +6,7 @@
 //
 //   {
 //     "name": "Briggs Makeover", "author": "…", "version": 1, "description": "…",
+//     "category": "Movesets",                                 the settings program's Mods page groups by it (not read here)
 //     "needs": ["No Mercy Entrances"],                       other mods this one uses (they load first)
 //     "replace": {                                           things the game already has, by the game's names:
 //       "animations": { "N61A1_AP": "animations/Jericho Entrance.bin" }    changed everywhere they are used
@@ -14,9 +15,14 @@
 //     "wrestlers": { "Briggs": "wrestlers/Briggs.json" }                  moveset slots: { "84": "Jericho Entrance" }
 //   }
 //
-// Load order: mods\order.txt (one mod folder per line; a later one wins when two change the same thing), the others
-// alphabetically, and a mod always after the mods it needs. A mod whose needs are missing is skipped, with a message.
-// VENDETTA_MODS=0: none (the plain game). VENDETTA_MODS_DIR=<folder>: another mods folder (test runs).
+// Projects: mods\ is the library of every installed mod; a project (projects\<name>\project.json) lists the mods ticked
+// in it, in load order ("mods": ["<mod folder or name>", ...]), and keeps its own memory cards (projects\<name>\saves\mc0
+// and mc1). The game plays a project when started with --project "<name>" (or VENDETTA_PROJECT=<name>, which
+// settings.toml's [play] project fills); without one it is the original game: no mods, its own saves (game\mc0).
+// Load order: the project's list (a later one wins when two change the same thing), and a mod always after the mods it
+// needs. A mod whose needs are missing, or that isn't installed, is skipped with a message.
+// VENDETTA_MODS=0: none. VENDETTA_MODS_DIR=<folder>: every mod in that folder, no project (test runs; mods\order.txt
+// orders them: one mod folder per line, moved to the end in that order).
 #pragma once
 
 #include <filesystem>
@@ -62,6 +68,16 @@ namespace vendetta_mods
         std::filesystem::path folder;
         Json manifest;
     };
+
+    // The project being played (projects\<name>\): its name, folder, the mods ticked in it (as project.json names them, in
+    // load order); null = the original game (no project asked for, or its project.json can't be read: then a message).
+    struct Project
+    {
+        std::string name;
+        std::filesystem::path folder;
+        std::vector<std::string> mods;
+    };
+    const Project *currentProject();
 
     // The enabled mods in load order (read once; later calls return the same list).
     const std::vector<Mod> &loadedMods();

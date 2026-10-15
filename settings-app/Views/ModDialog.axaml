@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VendettaSettings.ViewModels"
+             x:Class="VendettaSettings.Views.ModDialog"
+             x:DataType="vm:ModsViewModel">
+    <!-- over the whole window: Install a mod, Remove from library -->
+    <Border Background="#8c000000">
+        <Border Width="540" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="26,24" CornerRadius="10"
+                Background="{StaticResource VPanel}" BorderBrush="{StaticResource VLine}" BorderThickness="1"
+                BoxShadow="0 18 50 0 #80000000">
+            <StackPanel Spacing="14">
+                <!-- Install -->
+                <StackPanel Spacing="14" IsVisible="{Binding IsInstall}">
+                    <TextBlock Classes="h1" FontSize="17" Text="{Binding InstallTitle}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Classes="hint" TextTrimming="CharacterEllipsis">
+                        <Run Text="From " />
+                        <Run Text="{Binding InstallFrom}" FontFamily="{StaticResource VMono}" />
+                    </TextBlock>
+                    <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+                        <TextBlock Classes="key" Text="Version" />
+                        <TextBlock Grid.Column="1" Text="{Binding InstallVersion}" FontSize="13.5" />
+                        <TextBlock Grid.Row="1" Classes="key" Text="What it is" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding InstallDescription}" FontSize="13.5" TextWrapping="Wrap"
+                                   Foreground="{StaticResource VText2}" />
+                        <TextBlock Grid.Row="2" Classes="key" Text="Category" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding InstallCategory}" FontSize="13.5" />
+                        <TextBlock Grid.Row="3" Classes="key" Text="Changes" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding InstallChanges}" FontSize="13.5" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="4" Classes="key" Text="Needs" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding InstallNeeds}" FontSize="13.5" TextWrapping="Wrap"
+                                   Classes.warn="{Binding InstallNeedsMissing}" />
+                    </Grid>
+                    <Border Classes="note" IsVisible="{Binding InstallReplaces}">
+                        <TextBlock Text="{Binding InstallReplacesText}" TextWrapping="Wrap" FontSize="13" />
+                    </Border>
+                    <Border Classes="note warn" IsVisible="{Binding InstallNeedsMissing}">
+                        <TextBlock TextWrapping="Wrap" FontSize="13"
+                                   Text="It needs a mod you don't have: install that too, or the game skips this one." />
+                    </Border>
+                    <CheckBox Content="{Binding TickTooText}" IsChecked="{Binding TickToo}" IsVisible="{Binding CanTickToo}" />
+                </StackPanel>
+
+                <!-- Remove -->
+                <StackPanel Spacing="12" IsVisible="{Binding IsRemove}">
+                    <TextBlock Classes="h1" FontSize="17" Text="{Binding RemoveTitle}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding RemoveText}" TextWrapping="Wrap" Foreground="{StaticResource VText2}" LineHeight="21" />
+                    <ItemsControl ItemsSource="{Binding RemoveUsers}" IsVisible="{Binding RemoveHasUsers}" Margin="4,0,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <TextBlock Classes="mono" Text="{Binding}" Margin="0,2" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Classes="hint" LineHeight="19" Text="{Binding RemoveNote}" />
+                </StackPanel>
+
+                <TextBlock Classes="bad" TextWrapping="Wrap" Text="{Binding DialogError}"
+                           IsVisible="{Binding DialogError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" Margin="0,4,0,0">
+                    <Button Classes="outline" Height="34" Content="Cancel" Command="{Binding CancelDialogCommand}" IsCancel="True" />
+                    <Button Classes="accent" Content="Install" Command="{Binding ConfirmDialogCommand}" IsDefault="True"
+                            IsVisible="{Binding IsInstall}" />
+                    <Button Classes="redfill" Content="Remove" Command="{Binding ConfirmDialogCommand}" IsVisible="{Binding IsRemove}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Border>
+</UserControl>

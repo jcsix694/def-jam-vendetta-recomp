@@ -52,24 +52,89 @@
                 </Grid>
             </Border>
 
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="28">
+            <Grid ColumnDefinitions="400,*" ColumnSpacing="28">
+                <!-- what to play: the original game and the projects -->
                 <StackPanel>
-                    <TextBlock Classes="cap" Text="YOUR GAME" />
+                    <TextBlock Classes="cap" Text="WHAT TO PLAY" />
                     <Border Classes="capline" Margin="0,8,0,8" />
-                    <Grid ColumnDefinitions="130,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
-                        <TextBlock Classes="key" Text="Game" />
-                        <TextBlock Grid.Column="1" Classes="mono" Text="{Binding DiscTitle}" />
-                        <TextBlock Grid.Row="1" Classes="key" Text="Serial" />
-                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="mono" Text="SLUS-20639" VerticalAlignment="Center" />
-                            <Border Classes="tag good" IsVisible="{Binding HasGame}"><TextBlock Text="✓ checked" /></Border>
-                        </StackPanel>
-                        <TextBlock Grid.Row="2" Classes="key" Text="Save data" />
-                        <TextBlock Grid.Row="2" Grid.Column="1" Classes="mono" Text="{Binding SaveLine}" />
-                    </Grid>
+                    <ListBox Classes="choices" ItemsSource="{Binding Projects.Choices}" SelectedItem="{Binding Projects.Selected}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:PlayChoice">
+                                <Grid ColumnDefinitions="64,*" ColumnSpacing="12">
+                                    <Border Width="64" Height="48" CornerRadius="4" ClipToBounds="True" Background="{StaticResource VPanel2}"
+                                            BorderBrush="{StaticResource VLine}" BorderThickness="1">
+                                        <Panel>
+                                            <Image Source="{Binding Picture}" Stretch="UniformToFill" IsVisible="{Binding HasPicture}" />
+                                            <Image Source="/Assets/icon.png" Width="34" Height="34" IsVisible="{Binding IsOriginal}" />
+                                            <TextBlock Text="NO PICTURE" FontSize="8.5" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding ShowNoPicture}" />
+                                        </Panel>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontSize="14.5" FontWeight="SemiBold" Foreground="#f0f0f2" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Line}" FontSize="12.5" Classes="muted" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <WrapPanel Margin="0,10,0,0" ItemSpacing="8" LineSpacing="8">
+                        <Button Classes="outline" BorderBrush="{StaticResource VAccent}" Command="{Binding Projects.NewCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="+" FontSize="16" Margin="0,-2,0,0" VerticalAlignment="Center" />
+                                <TextBlock Text="New project" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="outline" Content="Copy" Command="{Binding Projects.CopyCommand}" IsEnabled="{Binding Projects.IsProject}" />
+                        <Button Classes="outline" Content="Rename" Command="{Binding Projects.RenameCommand}" IsEnabled="{Binding Projects.IsProject}" />
+                        <Button Classes="outline danger" Content="Delete" Command="{Binding Projects.DeleteCommand}" IsEnabled="{Binding Projects.IsProject}" />
+                    </WrapPanel>
                 </StackPanel>
+
+                <!-- the one picked -->
                 <StackPanel Grid.Column="1">
-                    <TextBlock Classes="cap" Text="HOW IT WILL OPEN" />
+                    <TextBlock Classes="cap" Text="{Binding Projects.Heading}" />
+                    <Border Classes="capline" Margin="0,8,0,8" />
+                    <Grid ColumnDefinitions="130,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
+                        <TextBlock Classes="key" Text="Mods" />
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <StackPanel Spacing="4" IsVisible="{Binding Projects.IsOriginal}">
+                                <TextBlock Classes="mono" Text="None" />
+                                <TextBlock Classes="hint" Text="The original game never loads mods. Make a project to play some." />
+                            </StackPanel>
+                            <StackPanel Spacing="4" IsVisible="{Binding Projects.HasMods}">
+                                <ItemsControl ItemsSource="{Binding Projects.SelectedMods}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <TextBlock Classes="mono" Text="{Binding}" Margin="0,1" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Classes="hint" Text="In load order: a later mod wins." />
+                            </StackPanel>
+                            <StackPanel Spacing="4" IsVisible="{Binding Projects.NoMods}">
+                                <TextBlock Classes="mono" Text="None ticked yet" />
+                                <TextBlock Classes="hint" Text="Tick mods for this project on the Mods page." />
+                            </StackPanel>
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" Classes="key" Text="Save data" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Classes="mono" Text="{Binding Projects.SaveLine}" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="2" Classes="key" Text="Folder" VerticalAlignment="Center" />
+                        <WrapPanel Grid.Row="2" Grid.Column="1" ItemSpacing="8" LineSpacing="8">
+                            <Button Classes="outline small" Content="Open folder" Command="{Binding Projects.OpenFolderCommand}" />
+                            <Button Classes="outline small" Content="Make a desktop shortcut" Command="{Binding Projects.MakeShortcutCommand}" />
+                        </WrapPanel>
+                    </Grid>
+
+                    <Grid ColumnDefinitions="130,*" Margin="0,10,0,0" IsVisible="{Binding Projects.IsOriginal}">
+                        <TextBlock Classes="key" Text="Game" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="mono" Text="{Binding DiscTitle}" VerticalAlignment="Center" />
+                            <Border Classes="tag good" IsVisible="{Binding HasGame}"><TextBlock Text="✓ SLUS-20639" /></Border>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Classes="cap" Text="HOW IT WILL OPEN" Margin="0,26,0,0" />
                     <Border Classes="capline" Margin="0,8,0,8" />
                     <Grid ColumnDefinitions="130,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
                         <TextBlock Classes="key" Text="Window" />

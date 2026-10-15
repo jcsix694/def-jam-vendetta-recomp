@@ -4,6 +4,7 @@
 #include "ps2_runtime_macros.h"
 #include "game_overrides.h"
 #include "vendetta_store.h"
+#include "vendetta_mods.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/gs/ps2_gs_memory.h"
 #include "runtime/ps2_host_profile.h"
@@ -551,7 +552,11 @@ namespace
         // alone); SIGNAL / FINISH (bits 0-1, from the GS front end on the worker) only reach a dead stack slot. So that
         // read needs no fence (VENDETTA_CHAIN_VERIFY=1 checks it, VENDETTA_CHAIN_CSR_EXEMPT=0 turns it off).
         runtime.chain().allowUnfencedCsrRead(0x1A16C0u);
-        ps2_game_overrides::setWindowTitle(runtime, "Def Jam Vendetta Recompiled | @jcsix on X | jcsix694 on GitHub");
+        // a project (vendetta_mods.h: --project "<name>") is named in the title
+        const vendetta_mods::Project *project = vendetta_mods::currentProject();
+        ps2_game_overrides::setWindowTitle(runtime, "Def Jam Vendetta Recompiled | " +
+                                                        (project ? project->name + " | " : std::string()) +
+                                                        "@jcsix on X | jcsix694 on GitHub");
         startThreadDump(runtime);
         startPadWatch(runtime);
         startHostProfile(runtime);
@@ -568,15 +573,25 @@ namespace
         installVendettaMenu(runtime);
         installVendettaMatchSpeed(runtime);
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
-        const std::filesystem::path image = paths.elfDirectory.parent_path() / "disc" / "SLUS-20639.iso";
-        if (!std::filesystem::exists(image))
+        // a project keeps its own memory cards: projects\<name>\saves\mc0 (and mc1 beside it); the original game keeps
+        // the ones beside the program's game folder
+        if (project)
         {
-            std::cerr << "[vendetta] disc image not found: " << image.string() << std::endl;
-            return;
+            paths.mcRoot = project->folder / "saves" / "mc0";
+            std::error_code ec;
+            std::filesystem::create_directories(paths.mcRoot, ec);
+            std::filesystem::create_directories(project->folder / "saves" / "mc1", ec);
+            std::cerr << "[projects] " << project->name << "'s memory cards: " << paths.mcRoot.string() << std::endl;
         }
-        paths.cdImage = image;
+        const std::filesystem::path image = paths.elfDirectory.parent_path() / "disc" / "SLUS-20639.iso";
+        if (std::filesystem::exists(image))
+        {
+            paths.cdImage = image;
+            std::cout << "[vendetta] disc image: " << image.string() << std::endl;
+        }
+        else
+            std::cerr << "[vendetta] disc image not found: " << image.string() << std::endl;
         PS2Runtime::setIoPaths(paths);
-        std::cout << "[vendetta] disc image: " << image.string() << std::endl;
     }
 }
 

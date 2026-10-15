@@ -18,6 +18,8 @@ public partial class MainViewModel : ObservableObject
     public SettingsViewModel Settings { get; }
     public SetupViewModel Setup { get; }
     public UpdateViewModel Updates { get; }
+    public ProjectsViewModel Projects { get; }
+    public ModsViewModel Mods { get; }
 
     private readonly bool _readOnly;
 
@@ -29,6 +31,10 @@ public partial class MainViewModel : ObservableObject
         Setup = new SetupViewModel(folder, FinishSetup);
         Updates = new UpdateViewModel(folder, () => Settings.CheckUpdates, () => Exit());
         InSetup = folder.NeedsSetup;
+        Projects = new ProjectsViewModel(folder, readOnly, () => GameRunning, text => Message = text);
+        Projects.PickedChanged += OnStatusChanged;
+        // a tick on the Mods page shows on the Play page's line at once
+        Mods = new ModsViewModel(folder, readOnly, text => Message = text, () => Projects.Reload(Projects.Key));
         Updates.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(UpdateViewModel.Mode) or nameof(UpdateViewModel.ShowNotice))
@@ -79,7 +85,7 @@ public partial class MainViewModel : ObservableObject
     {
         foreach (var name in new[]
                  {
-                     nameof(IsPlay), nameof(IsSettings), nameof(IsAbout), nameof(IsDisplay), nameof(IsGraphics),
+                     nameof(IsPlay), nameof(IsMods), nameof(IsSettings), nameof(IsAbout), nameof(IsDisplay), nameof(IsGraphics),
                      nameof(IsSound), nameof(IsControls), nameof(IsGameplay), nameof(ShowOpenFolder),
                  })
             OnPropertyChanged(name);
@@ -113,6 +119,7 @@ public partial class MainViewModel : ObservableObject
     public bool IsPlay => PageIndex == 0;
     public bool IsSettings => PageIndex == 1;
     public bool IsAbout => PageIndex == 2;
+    public bool IsMods => PageIndex == 3;
     public bool IsDisplay => IsSettings && Settings.TabIndex == 0;
     public bool IsGraphics => IsSettings && Settings.TabIndex == 1;
     public bool IsSound => IsSettings && Settings.TabIndex == 2;
@@ -140,6 +147,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (!value && Message == GameFolder.AlreadyRunning)
             Message = "";
+        if (!value)
+            Projects.Reload(Projects.Key); // a save may have been made
         OnStatusChanged();
     }
 
@@ -159,7 +168,7 @@ public partial class MainViewModel : ObservableObject
             if (GameRunning) return "The game is running";
             if (Updates.ShowNotice && IsPlay) return "Update available";
             if (IsSettings) return Settings.Status.Length > 0 ? Settings.Status : "Saved as you change them";
-            return CanPlay ? "Ready to play" : "The game isn't built yet";
+            return CanPlay ? "Ready to play · " + Projects.SelectedName : "The game isn't built yet";
         }
     }
 
@@ -185,7 +194,6 @@ public partial class MainViewModel : ObservableObject
 
     public bool HasGame => Folder.HasGame;
     public string DiscTitle => Folder.HasGame ? "Def Jam Vendetta · PS2 · USA" : "Not set up yet";
-    public string SaveLine => Folder.HasSave ? "Saved · game\\mc0" : "No save yet";
     // during the setup PLAY waits for the build to finish
     public bool CanPlay => Folder.HasGame && Folder.GameExe != null && !GameRunning && (!InSetup || Setup.Done) && !Updates.IsWorking;
     public string GameExeName => Folder.GameExe is { } exe ? Path.GetFileName(exe) : "not built yet";
@@ -199,6 +207,13 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand] private void ShowGameplay() => ShowSettingsTab(4);
     [RelayCommand] private void ShowAbout() => PageIndex = 2;
 
+    [RelayCommand]
+    private void ShowMods()
+    {
+        Mods.Open(Projects.Key); // the library read again, the ticks for the Play page's pick
+        PageIndex = 3;
+    }
+
     private void ShowSettingsTab(int tab)
     {
         Settings.TabIndex = tab;
@@ -209,7 +224,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task Play()
     {
-        if (Folder.Play(out var game) is { } error)
+        if (Folder.Play(Projects.Key, out var game) is { } error)
         {
             Message = error;
             return;
@@ -223,7 +238,7 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand] private void OpenFolder() => GameFolder.Open(Folder.Root);
-    [RelayCommand] private void OpenSaves() => GameFolder.Open(Folder.SavesPath);
+    [RelayCommand] private void OpenSaves() => GameFolder.Open(Projects.SavesPath);
     [RelayCommand] private void OpenX() => GameFolder.Open(XUrl);
     [RelayCommand] private void OpenGitHub() => GameFolder.Open(GitHubUrl);
     [RelayCommand] private void OpenLicence() => GameFolder.OpenText(Path.Combine(Folder.SourceRoot, "LICENSE"));
@@ -254,6 +269,14 @@ public partial class MainViewModel : ObservableObject
             case "update-failed": Updates.ShowSample("failed"); return;
             case "update-buildfailed": Updates.ShowSample("buildfailed"); return;
             case "setupfailed": InSetup = true; Setup.ShowSampleError(); return;
+            case "play-new": PageIndex = 0; Projects.ShowSample("new"); return;
+            case "play-copy": PageIndex = 0; Projects.ShowSample("copy"); return;
+            case "play-rename": PageIndex = 0; Projects.ShowSample("rename"); return;
+            case "play-delete": PageIndex = 0; Projects.ShowSample("delete"); return;
+            case "play-project": PageIndex = 0; Projects.ShowSample("project"); return;
+            case "mods": Mods.ShowSample("", Projects.Key); PageIndex = 3; return;
+            case "mods-install": Mods.ShowSample("install", Projects.Key); PageIndex = 3; return;
+            case "mods-remove": Mods.ShowSample("remove", Projects.Key); PageIndex = 3; return;
             case "about": PageIndex = 2; break;
             case "display": ShowSettingsTab(0); break;
             case "graphics": ShowSettingsTab(1); break;

@@ -35,6 +35,20 @@ internal static class Program
                 Console.WriteLine(shown);
             return;
         }
+        // Dev: the Play page's projects (new, copy, rename, delete, bad names, the pick saved) on a scratch folder
+        // (VENDETTA_ROOT): --selftest-projects
+        if (args.Length >= 1 && args[0] == "--selftest-projects")
+        {
+            Shot.SelfTestProjects();
+            return;
+        }
+        // Dev: the Mods page (ticks, needs, order, search, install a zip, remove) on a scratch folder (VENDETTA_ROOT):
+        // --selftest-mods <a mod's zip>
+        if (args.Length >= 2 && args[0] == "--selftest-mods")
+        {
+            Shot.SelfTestMods(args[1]);
+            return;
+        }
         // Dev: the saving checked on a scratch folder (VENDETTA_ROOT): --selftest [play]
         if (args.Length >= 1 && args[0] == "--selftest")
         {

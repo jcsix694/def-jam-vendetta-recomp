@@ -16312,10 +16312,10 @@ index 0000000..8bb1d56
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_settings.cpp b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 new file mode 100644
-index 0000000..8b26bfa
+index 0000000..852e59e
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_settings.cpp
-@@ -0,0 +1,546 @@
+@@ -0,0 +1,554 @@
 +#include "runtime/ps2_host_settings.h"
 +
 +#include <algorithm>
@@ -16394,7 +16394,11 @@ index 0000000..8b26bfa
 +            "custom_match_speed = 1.000 # 0.750-1.250: 1.000 = the game's own speed, lower = slower\n"
 +            "\n"
 +            "[updates]\n"
-+            "check_on_open = true     # check for a new version when the game or the settings program starts\n";
++            "check_on_open = true     # check for a new version when the game or the settings program starts\n"
++            "\n"
++            "[play]\n"
++            "project = \"\"             # what the game plays when started on its own: a project (projects\\<name>), \"\" = the\n"
++            "                         # original game (no mods); the settings program's Play page sets it\n";
 +
 +        std::string trim(const std::string &text)
 +        {
@@ -16575,8 +16579,8 @@ index 0000000..8b26bfa
 +            {
 +                for (const auto &[key, value] : m_values)
 +                {
-+                    if (key.rfind("updates.", 0) == 0)
-+                        continue; // [updates]: the settings program may keep more of its own there
++                    if (key.rfind("updates.", 0) == 0 || key.rfind("play.", 0) == 0)
++                        continue; // [updates] / [play]: the settings program may keep more of its own there
 +                    std::cerr << "[settings] " << m_file.string() << ": " << key << " is not a setting (ignored)" << std::endl;
 +                }
 +            }
@@ -16675,6 +16679,10 @@ index 0000000..8b26bfa
 +            bool checkUpdates = true;
 +            reader.boolean("updates.check_on_open", checkUpdates);
 +            fillSwitch("VENDETTA_UPDATE_CHECK", checkUpdates ? "1" : "0");
++            // [play] project: what the game plays when started without --project (the settings program's last choice;
++            // the game's own code reads VENDETTA_PROJECT); empty = the original game
++            if (std::string project; reader.take("play.project", project) && !project.empty())
++                fillSwitch("VENDETTA_PROJECT", project);
 +
 +            // the ones the runtime already reads as switches
 +            if (const int renderer = reader.choice("graphics.renderer", {"gpu", "cpu"}); renderer >= 0)

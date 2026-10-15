@@ -287,6 +287,146 @@
             <Setter Property="Foreground" Value="{StaticResource VDisabled}" />
         </Style>
 
+        <!-- the Play page's "What to play": one card each, the picked one outlined in the accent -->
+        <Style Selector="ListBox.choices">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <StackPanel Spacing="8" />
+                </ItemsPanelTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ListBox.choices ListBoxItem">
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Background" Value="{StaticResource VPanel}" />
+            <Setter Property="BorderBrush" Value="#2f2f33" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="ListBox.choices ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="CornerRadius" Value="7" />
+        </Style>
+        <Style Selector="ListBox.choices ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource VPanel2}" />
+            <Setter Property="BorderBrush" Value="{StaticResource VLine}" />
+        </Style>
+        <Style Selector="ListBox.choices ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#24364f" />
+            <Setter Property="BorderBrush" Value="{StaticResource VAccent}" />
+        </Style>
+        <Style Selector="ListBox.choices ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#2a3f5c" />
+            <Setter Property="BorderBrush" Value="{StaticResource VAccent}" />
+        </Style>
+        <Style Selector="ListBox.choices ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#24364f" />
+            <Setter Property="BorderBrush" Value="{StaticResource VAccent}" />
+        </Style>
+
+        <!-- the Mods page: category buttons, a group's heading, a mod's line, its "needs" tag, a note over the list -->
+        <Style Selector="Button.chipbtn">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="11,0" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Background" Value="{StaticResource VPanel2}" />
+            <Setter Property="BorderBrush" Value="{StaticResource VLine}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource VText2}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.chipbtn.on">
+            <Setter Property="Background" Value="{StaticResource VAccentDim}" />
+            <Setter Property="BorderBrush" Value="{StaticResource VAccent}" />
+            <Setter Property="Foreground" Value="#ffffff" />
+        </Style>
+        <Style Selector="Button.chipbtn.on:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#33598c" />
+            <Setter Property="BorderBrush" Value="{StaticResource VAccent}" />
+            <Setter Property="Foreground" Value="#ffffff" />
+        </Style>
+        <Style Selector="Button.grouphead, Button.rowpick">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="2,4" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+        <Style Selector="Button.grouphead:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.rowpick:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.modrow">
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Background" Value="{StaticResource VPanel}" />
+            <Setter Property="BorderBrush" Value="#2f2f33" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Border.modrow.picked">
+            <Setter Property="Background" Value="#24364f" />
+            <Setter Property="BorderBrush" Value="{StaticResource VAccent}" />
+        </Style>
+        <Style Selector="Border.needtag">
+            <Setter Property="BorderBrush" Value="{StaticResource VLine}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="6,1" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.needtag TextBlock">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Foreground" Value="{StaticResource VText2}" />
+        </Style>
+        <Style Selector="Border.note">
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Background" Value="#1f2a38" />
+            <Setter Property="BorderBrush" Value="#36557d" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Border.note TextBlock">
+            <Setter Property="Foreground" Value="#cfe2ff" />
+        </Style>
+        <Style Selector="Border.note.warn">
+            <Setter Property="Background" Value="#3a2f1c" />
+            <Setter Property="BorderBrush" Value="#8a6a2a" />
+        </Style>
+        <Style Selector="Border.note.warn TextBlock">
+            <Setter Property="Foreground" Value="#f0d9a8" />
+        </Style>
+        <Style Selector="Button.outline.arrow">
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+        </Style>
+
+        <!-- a smaller grey button, and a red one (Delete) -->
+        <Style Selector="Button.outline.small">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button.outline.danger">
+            <Setter Property="Foreground" Value="#ff8a80" />
+        </Style>
+        <Style Selector="Button.redfill">
+            <Setter Property="Background" Value="#c4413a" />
+            <Setter Property="Foreground" Value="#ffffff" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="13.5" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.redfill:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#d9534a" />
+            <Setter Property="Foreground" Value="#ffffff" />
+        </Style>
+
         <Style Selector="ComboBox">
             <Setter Property="Background" Value="{StaticResource VNav}" />
             <Setter Property="BorderBrush" Value="{StaticResource VLine}" />

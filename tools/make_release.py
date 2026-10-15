@@ -40,7 +40,7 @@ DEPS = {
     'libdwarf': ('out/recomp/_deps/libdwarf-src', ()),
     'rabbitizer': ('out/recomp/_deps/rabbitizer-src', ('tests/',)),
 }
-FORBIDDEN = ('disc/', 'game/', 'generated/', 'shots/', 'mc0/', 'mc1/', 'logs/', 'mods/', 'dist/')
+FORBIDDEN = ('disc/', 'game/', 'generated/', 'shots/', 'mc0/', 'mc1/', 'logs/', 'mods/', 'projects/', 'dist/')
 FORBIDDEN_SUFFIX = ('.chd', '.iso', '.elf', '.p2s')
 
 README = r"""Def Jam Vendetta Recompiled

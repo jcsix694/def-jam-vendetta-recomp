@@ -267,14 +267,22 @@ namespace vendetta_mods
                 std::cerr << "[mods] off (VENDETTA_MODS=0)" << std::endl;
                 return mods;
             }
-            // VENDETTA_MODS_DIR=<folder>: another mods folder (test runs)
+            // VENDETTA_MODS_DIR=<folder>: every mod in another folder, no project (test runs); otherwise the project's
+            // ticked mods from the library mods\, and the original game has none
             const char *dir = std::getenv("VENDETTA_MODS_DIR");
-            const std::filesystem::path root = dir && *dir ? std::filesystem::path(dir)
-                                                           : PS2Runtime::getIoPaths().elfDirectory.parent_path() / "mods";
-            if (dir && *dir)
+            const bool testFolder = dir && *dir;
+            const Project *project = testFolder ? nullptr : currentProject();
+            if (!testFolder && !project)
+            {
+                std::cerr << "[mods] the original game: no mods (a project plays them)" << std::endl;
+                return mods;
+            }
+            const std::filesystem::path root = testFolder ? std::filesystem::path(dir)
+                                                          : PS2Runtime::getIoPaths().elfDirectory.parent_path() / "mods";
+            if (testFolder)
                 std::cerr << "[mods] folder " << root.string() << " (VENDETTA_MODS_DIR)" << std::endl;
             std::error_code ec;
-            if (!std::filesystem::is_directory(root, ec))
+            if (!std::filesystem::is_directory(root, ec) && testFolder)
                 return mods;
 
             // every folder with a readable mod.json
@@ -289,7 +297,8 @@ namespace vendetta_mods
                 std::ifstream file(mod.folder / "mod.json", std::ios::binary);
                 if (!file)
                 {
-                    std::cerr << "[mods] " << mod.folderName << ": no mod.json - skipped" << std::endl;
+                    if (testFolder)
+                        std::cerr << "[mods] " << mod.folderName << ": no mod.json - skipped" << std::endl;
                     continue;
                 }
                 std::stringstream text;
@@ -308,9 +317,27 @@ namespace vendetta_mods
             std::sort(found.begin(), found.end(), [](const Mod &a, const Mod &b)
                       { return lower(a.folderName) < lower(b.folderName); });
 
-            // order.txt: the mods it names move to the end, in its order (later wins)
             std::vector<Mod> ordered;
+            if (project)
             {
+                // the project's ticked mods, in its order (later wins)
+                for (const std::string &want : project->mods)
+                {
+                    auto it = std::find_if(found.begin(), found.end(), [&](const Mod &m)
+                                           { return lower(m.folderName) == lower(want) || lower(m.name) == lower(want); });
+                    if (it == found.end())
+                    {
+                        std::cerr << "[mods] " << project->name << ": \"" << want
+                                  << "\" is ticked but isn't installed in mods\\ - skipped" << std::endl;
+                        continue;
+                    }
+                    ordered.push_back(std::move(*it));
+                    found.erase(it);
+                }
+            }
+            else
+            {
+                // order.txt: the mods it names move to the end, in its order (later wins)
                 std::ifstream order(root / "order.txt");
                 std::vector<std::string> names;
                 std::string line;
@@ -328,7 +355,7 @@ namespace vendetta_mods
                                            { return lower(m.folderName) == want || lower(m.name) == want; });
                     if (it == found.end())
                     {
-                        std::cerr << "[mods] order.txt names \"" << want << "\", which isn't a mod in mods\\" << std::endl;
+                        std::cerr << "[mods] order.txt names \"" << want << "\", which isn't a mod in that folder" << std::endl;
                         continue;
                     }
                     named.push_back(std::move(*it));
@@ -355,8 +382,9 @@ namespace vendetta_mods
                                                          { return &m != &mod && provides(m, need.text); });
                         if (!present)
                         {
-                            std::cerr << "[mods] " << mod.name << " needs \"" << need.text
-                                      << "\", which isn't in mods\\ - skipped" << std::endl;
+                            std::cerr << "[mods] " << mod.name << " needs \"" << need.text << "\", which "
+                                      << (project ? "isn't ticked in the project" : "isn't in that folder") << " - skipped"
+                                      << std::endl;
                             ok = false;
                         }
                     }
@@ -406,6 +434,72 @@ namespace vendetta_mods
         const std::string body = text.rfind("\xEF\xBB\xBF", 0) == 0 ? text.substr(3) : text;
         JsonReader reader(body);
         return reader.read(out, error);
+    }
+
+    namespace
+    {
+        // --project "<name>" / --project=<name> on the game's command line, else VENDETTA_PROJECT (settings.toml's
+        // [play] project fills it); empty = the original game
+        std::string askedProject()
+        {
+#if defined(_MSC_VER)
+            for (int i = 1; i < __argc; ++i)
+            {
+                const std::string arg = __argv[i];
+                if (arg == "--project" && i + 1 < __argc)
+                    return __argv[i + 1];
+                if (arg.rfind("--project=", 0) == 0)
+                    return arg.substr(10);
+            }
+#endif
+            const char *env = std::getenv("VENDETTA_PROJECT");
+            return env ? env : "";
+        }
+
+        std::unique_ptr<Project> findProject()
+        {
+            const std::string name = askedProject();
+            if (name.empty())
+                return nullptr;
+            if (name.find_first_of("\\/:") != std::string::npos || name == "." || name == "..")
+            {
+                std::cerr << "[projects] \"" << name << "\" isn't a project's name - playing the original game" << std::endl;
+                return nullptr;
+            }
+            auto project = std::make_unique<Project>();
+            project->name = name;
+            project->folder = PS2Runtime::getIoPaths().elfDirectory.parent_path() / "projects" / name;
+            std::ifstream file(project->folder / "project.json", std::ios::binary);
+            Json manifest;
+            std::string error;
+            std::stringstream text;
+            if (file)
+                text << file.rdbuf();
+            if (!file || !parseJson(text.str(), manifest, error) || !manifest.isObject())
+            {
+                std::cerr << "[projects] " << name << ": " << (project->folder / "project.json").string()
+                          << (file ? " can't be read" + (error.empty() ? std::string() : ": " + error) : std::string(" is missing"))
+                          << " - playing the original game" << std::endl;
+                return nullptr;
+            }
+            if (const Json *mods = manifest.find("mods"))
+            {
+                if (!mods->isArray())
+                    std::cerr << "[projects] " << name << ": \"mods\" should be a list of mod folders - no mods" << std::endl;
+                else
+                    for (const Json &m : mods->items)
+                        if (m.isString() && !m.text.empty())
+                            project->mods.push_back(m.text);
+            }
+            std::cerr << "[projects] playing " << name << ": " << project->mods.size() << " mod(s) ticked" << std::endl;
+            return project;
+        }
+    }
+
+    const Project *currentProject()
+    {
+        static const std::unique_ptr<Project> project = findProject();
+        return project.get();
     }
 
     const std::vector<Mod> &loadedMods()

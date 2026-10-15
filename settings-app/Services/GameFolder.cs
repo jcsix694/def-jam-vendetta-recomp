@@ -155,12 +155,36 @@ public sealed class GameFolder
         }
     }
 
-    private static void Shortcut(string link, string target, string startIn, string icon)
+    /// <summary>A desktop shortcut that plays one project ("" = the original game) whatever the Play page last picked.
+    /// Returns what went wrong, or null.</summary>
+    public string? CreateProjectShortcut(string project)
+    {
+        if (GameExe is not { } exe)
+            return "The game isn't built yet.";
+        var settings = Environment.ProcessPath ?? Path.Combine(Root, "Def Jam Vendetta Recompiled Settings.exe");
+        var name = project.Length == 0 ? "Original game" : project;
+        try
+        {
+            var where = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            Shortcut(Path.Combine(where, $"Def Jam Vendetta Recompiled - {name}.lnk"), exe, Data, settings, PlayArguments(project));
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"Couldn't make the shortcut: {ex.Message}";
+        }
+    }
+
+    /// <summary>The game's command line for a project ("" = the original game).</summary>
+    public string PlayArguments(string project) => $"\"{ElfPath}\" --project \"{project}\"";
+
+    private static void Shortcut(string link, string target, string startIn, string icon, string arguments = "")
     {
         var type = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("no WScript.Shell");
         dynamic shell = Activator.CreateInstance(type)!;
         dynamic shortcut = shell.CreateShortcut(link);
         shortcut.TargetPath = target;
+        shortcut.Arguments = arguments;
         shortcut.WorkingDirectory = startIn;
         shortcut.IconLocation = icon + ",0";
         shortcut.Save();
@@ -204,9 +228,10 @@ public sealed class GameFolder
         return new GameFolder(folder, Directory.Exists(files) ? files : folder);
     }
 
-    /// <summary>Starts the game; what it prints goes to <c>logs\game.log</c> / <c>game.log.err</c>. Returns why it couldn't,
-    /// or null with <paramref name="game"/> = the process that ends when the game does.</summary>
-    public string? Play(out Process? game)
+    /// <summary>Starts the game playing <paramref name="project"/> ("" = the original game); what it prints goes to
+    /// <c>logs\game.log</c> / <c>game.log.err</c>. Returns why it couldn't, or null with <paramref name="game"/> = the
+    /// process that ends when the game does.</summary>
+    public string? Play(string project, out Process? game)
     {
         game = null;
         if (GameExe is not { } exe)
@@ -221,7 +246,7 @@ public sealed class GameFolder
         // program: in fullscreen it then couldn't take the screen over. This program was just clicked, so it may let
         // the game come to the front.
         AllowSetForegroundWindow(AsfwAny);
-        var start = new ProcessStartInfo(exe, $"\"{ElfPath}\"")
+        var start = new ProcessStartInfo(exe, PlayArguments(project))
         {
             WorkingDirectory = Data,
             UseShellExecute = true,

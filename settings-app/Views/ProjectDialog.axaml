@@ -1,0 +1,88 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VendettaSettings.ViewModels"
+             x:Class="VendettaSettings.Views.ProjectDialog"
+             x:DataType="vm:ProjectsViewModel">
+    <!-- over the whole window: New project, Copy, Rename (a name), Delete (are you sure) -->
+    <Border Background="#8c000000">
+        <Border Width="520" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="26,24" CornerRadius="10"
+                Background="{StaticResource VPanel}" BorderBrush="{StaticResource VLine}" BorderThickness="1"
+                BoxShadow="0 18 50 0 #80000000">
+            <StackPanel Spacing="18">
+                <TextBlock Classes="h1" FontSize="17" Text="{Binding DialogTitle}" TextTrimming="CharacterEllipsis" />
+
+                <!-- a name: New project, Copy, Rename -->
+                <StackPanel Spacing="6" IsVisible="{Binding IsNameDialog}">
+                    <TextBlock Classes="key" Text="Name" />
+                    <TextBox x:Name="NameBox" Text="{Binding DialogName}" MaxLength="60" />
+                    <TextBlock Classes="hint" FontFamily="{StaticResource VMono}" Text="{Binding FolderHint}" />
+                </StackPanel>
+
+                <!-- New project: a picture and the memory card -->
+                <StackPanel Spacing="6" IsVisible="{Binding IsNew}">
+                    <TextBlock Classes="key">
+                        <Run Text="Picture" />
+                        <Run Text=" (optional, shown in the list)" Foreground="{StaticResource VMuted}" />
+                    </TextBlock>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Border Width="64" Height="48" CornerRadius="4" ClipToBounds="True" Background="{StaticResource VPanel2}"
+                                BorderBrush="{StaticResource VLine}" BorderThickness="1">
+                            <Panel>
+                                <Image Source="{Binding NewPicture}" Stretch="UniformToFill" IsVisible="{Binding HasNewPicture}" />
+                                <TextBlock Text="NONE" FontSize="9" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           IsVisible="{Binding NoNewPicture}" />
+                            </Panel>
+                        </Border>
+                        <Button Classes="outline small" Content="Choose a picture…" Click="OnChoosePicture" VerticalAlignment="Center" />
+                        <Button Classes="outline small" Content="Remove" Command="{Binding RemovePictureCommand}" VerticalAlignment="Center"
+                                IsVisible="{Binding HasNewPicture}" />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Spacing="8" IsVisible="{Binding IsNew}">
+                    <TextBlock Classes="key" Text="Memory card" />
+                    <RadioButton GroupName="card" IsChecked="{Binding EmptyCard}" Content="Start with an empty memory card" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <RadioButton GroupName="card" IsChecked="{Binding CopySave}" Content="Copy the save from" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding SaveSources}" SelectedItem="{Binding SaveSource}" MinWidth="180"
+                                  IsEnabled="{Binding CopySave}" VerticalAlignment="Center">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:SaveSource">
+                                    <TextBlock Text="{Binding Label}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+                    <TextBlock Classes="hint" Margin="28,0,0,0" Text="A copy: the two saves go their own ways after this." />
+                </StackPanel>
+                <TextBlock Classes="hint" IsVisible="{Binding IsNew}" Text="No mods are ticked yet: tick them on the Mods page." />
+
+                <TextBlock Classes="hint" IsVisible="{Binding IsCopy}"
+                           Text="The copy has the same mods ticked, the same picture and a copy of the saves. The mods themselves stay in your library, once." />
+                <TextBlock Classes="hint" IsVisible="{Binding IsRename}"
+                           Text="A desktop shortcut made for the old name stops working: make a new one after." />
+
+                <!-- Delete -->
+                <StackPanel Spacing="10" IsVisible="{Binding IsDelete}">
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Foreground="{StaticResource VText2}">
+                        <Run Text="The project and" />
+                        <Run Text="its saves" FontWeight="SemiBold" Foreground="#ffffff" />
+                        <Run Text="(its memory cards) are deleted. This can't be undone." />
+                    </TextBlock>
+                    <TextBlock Classes="hint" LineHeight="19"
+                               Text="Its mods stay installed: they are in your mods library, and other projects may use them." />
+                </StackPanel>
+
+                <TextBlock Classes="bad" TextWrapping="Wrap" Text="{Binding DialogError}"
+                           IsVisible="{Binding DialogError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" Margin="0,4,0,0">
+                    <Button Classes="outline" Height="34" Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" />
+                    <Button Classes="accent" Content="{Binding ConfirmText}" Command="{Binding ConfirmCommand}" IsDefault="True"
+                            IsVisible="{Binding IsNameDialog}" />
+                    <Button Classes="redfill" Content="{Binding ConfirmText}" Command="{Binding ConfirmCommand}"
+                            IsVisible="{Binding IsDelete}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Border>
+</UserControl>
