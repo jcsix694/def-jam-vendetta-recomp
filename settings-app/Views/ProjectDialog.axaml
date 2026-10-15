@@ -3,19 +3,116 @@
              xmlns:vm="using:VendettaSettings.ViewModels"
              x:Class="VendettaSettings.Views.ProjectDialog"
              x:DataType="vm:ProjectsViewModel">
-    <!-- over the whole window: New project, Copy, Rename (a name), Delete (are you sure) -->
+    <!-- over the whole window: New project, Copy, Rename (a name), Delete (are you sure), Export to share, Import -->
     <Border Background="#8c000000">
-        <Border Width="520" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="26,24" CornerRadius="10"
+        <Border Width="{Binding DialogWidth}" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="26,24" CornerRadius="10"
                 Background="{StaticResource VPanel}" BorderBrush="{StaticResource VLine}" BorderThickness="1"
                 BoxShadow="0 18 50 0 #80000000">
             <StackPanel Spacing="18">
-                <TextBlock Classes="h1" FontSize="17" Text="{Binding DialogTitle}" TextTrimming="CharacterEllipsis" />
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="h1" FontSize="17" Text="{Binding DialogTitle}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Classes="hint" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" IsVisible="{Binding IsImport}">
+                        <Run Text="From " />
+                        <Run Text="{Binding ImportFrom}" FontFamily="{StaticResource VMono}" />
+                    </TextBlock>
+                </StackPanel>
 
-                <!-- a name: New project, Copy, Rename -->
+                <!-- Export: what goes in the zip -->
+                <StackPanel Spacing="14" IsVisible="{Binding IsExport}">
+                    <TextBlock TextWrapping="Wrap" LineHeight="21" Foreground="{StaticResource VText2}"
+                               Text="One zip to share. Whoever imports it gets the project and every mod it ticks, ready to play." />
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="26,*">
+                            <PathIcon Width="14" Height="12" Foreground="{StaticResource VGood}" VerticalAlignment="Top" Margin="0,3,0,0"
+                                      HorizontalAlignment="Left" Data="M1,6.5 L5,10.5 L13,1.5" />
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="The project" />
+                                <TextBlock Classes="hint" Text="Its name, picture and load order" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid ColumnDefinitions="26,*">
+                            <PathIcon Width="14" Height="12" Foreground="{StaticResource VGood}" VerticalAlignment="Top" Margin="0,3,0,0"
+                                      HorizontalAlignment="Left" Data="M1,6.5 L5,10.5 L13,1.5" />
+                            <StackPanel Grid.Column="1" Spacing="3">
+                                <TextBlock>
+                                    <Run Text="{Binding ExportModsTitle}" />
+                                    <Run Text="{Binding ExportModsSize}" Foreground="{StaticResource VHint}" FontSize="12.5" />
+                                </TextBlock>
+                                <TextBlock Classes="mono" Foreground="{StaticResource VText2}" TextWrapping="Wrap" Text="{Binding ExportModsList}" />
+                            </StackPanel>
+                        </Grid>
+                        <CheckBox IsChecked="{Binding ExportSaves}" IsEnabled="{Binding ExportCanSaves}" VerticalContentAlignment="Top">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Its saves" />
+                                <TextBlock Classes="hint" Text="{Binding ExportSavesHint}" IsVisible="{Binding ExportCanSaves}" />
+                                <TextBlock Classes="hint" Text="It has no save yet: they start with an empty memory card." IsVisible="{Binding ExportNoSaves}" />
+                            </StackPanel>
+                        </CheckBox>
+                    </StackPanel>
+                    <Border Classes="note warn" IsVisible="{Binding ExportHasMissing}">
+                        <TextBlock Text="{Binding ExportMissingText}" TextWrapping="Wrap" FontSize="13" LineHeight="19" />
+                    </Border>
+                    <StackPanel Spacing="6">
+                        <TextBlock Classes="key" Text="Save as" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBox Text="{Binding ExportPath}" FontFamily="{StaticResource VMono}" FontSize="12.5" />
+                            <Button Grid.Column="1" Classes="outline small" Content="Choose…" Click="OnChooseExport" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Classes="hint" IsVisible="{Binding ExportPathExists}"
+                                   Text="A file with that name is there already: exporting replaces it." />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- a name: New project, Copy, Rename, Import -->
                 <StackPanel Spacing="6" IsVisible="{Binding IsNameDialog}">
                     <TextBlock Classes="key" Text="Name" />
                     <TextBox x:Name="NameBox" Text="{Binding DialogName}" MaxLength="60" />
-                    <TextBlock Classes="hint" FontFamily="{StaticResource VMono}" Text="{Binding FolderHint}" />
+                    <TextBlock Classes="hint" FontFamily="{StaticResource VMono}" Text="{Binding FolderHint}" IsVisible="{Binding ShowFolderHint}" />
+                    <TextBlock Classes="hint" Text="{Binding ImportNameHint}" IsVisible="{Binding IsImport}" />
+                </StackPanel>
+
+                <!-- Import: each mod's fate, the saves -->
+                <StackPanel Spacing="12" IsVisible="{Binding IsImport}">
+                    <StackPanel>
+                        <TextBlock Classes="cap" Text="{Binding ImportModsHeading}" />
+                        <Border Classes="capline" Margin="0,8,0,0" />
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{Binding ImportMods}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><StackPanel Spacing="10" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ImportModRow">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock TextTrimming="CharacterEllipsis">
+                                            <Run Text="{Binding Name}" />
+                                            <Run Text="{Binding Version}" Foreground="{StaticResource VHint}" FontSize="12.5" />
+                                        </TextBlock>
+                                        <TextBlock Classes="hint" Text="{Binding Line}" Classes.warn="{Binding LineWarn}" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" FontSize="12.5" VerticalAlignment="Center" Text="{Binding FateText}"
+                                               IsVisible="{Binding IsFixed}" Classes.good="{Binding FateGood}" Foreground="{StaticResource VText2}" />
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}" SelectedIndex="{Binding Choice}"
+                                              IsVisible="{Binding IsChoice}" VerticalAlignment="Center" MinWidth="180" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Classes="hint" IsVisible="{Binding ImportNoMods}"
+                               Text="Nothing is ticked in it: it plays like the original game, with its own save." />
+                    <TextBlock Classes="hint" LineHeight="19" Text="{Binding ImportNote}" IsVisible="{Binding ImportHasNote}" />
+                    <Border Classes="note warn" IsVisible="{Binding ImportHasMissing}">
+                        <TextBlock Text="{Binding ImportMissingText}" TextWrapping="Wrap" FontSize="13" LineHeight="19" />
+                    </Border>
+                    <CheckBox IsChecked="{Binding ImportUseSaves}" IsVisible="{Binding ImportHasSaves}" VerticalContentAlignment="Top">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Use the saves that came with it" />
+                            <TextBlock Classes="hint" Text="Their profile and unlocks. Off: it starts with an empty memory card." />
+                        </StackPanel>
+                    </CheckBox>
+                    <TextBlock Classes="hint" IsVisible="{Binding ImportNoSaves}"
+                               Text="It came without saves: it starts with an empty memory card." />
                 </StackPanel>
 
                 <!-- New project: a picture and the memory card -->
@@ -78,7 +175,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" Margin="0,4,0,0">
                     <Button Classes="outline" Height="34" Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" />
                     <Button Classes="accent" Content="{Binding ConfirmText}" Command="{Binding ConfirmCommand}" IsDefault="True"
-                            IsVisible="{Binding IsNameDialog}" />
+                            IsVisible="{Binding ShowConfirm}" />
                     <Button Classes="redfill" Content="{Binding ConfirmText}" Command="{Binding ConfirmCommand}"
                             IsVisible="{Binding IsDelete}" />
                 </StackPanel>

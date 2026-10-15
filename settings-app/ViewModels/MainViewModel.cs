@@ -35,6 +35,11 @@ public partial class MainViewModel : ObservableObject
         Projects.PickedChanged += OnStatusChanged;
         // a tick on the Mods page shows on the Play page's line at once
         Mods = new ModsViewModel(folder, readOnly, text => Message = text, () => Projects.Reload(Projects.Key));
+        Projects.ModsChanged += () =>
+        {
+            if (IsMods)
+                Mods.Open(Projects.Key); // an import put mods in the library
+        };
         Updates.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(UpdateViewModel.Mode) or nameof(UpdateViewModel.ShowNotice))
@@ -274,6 +279,8 @@ public partial class MainViewModel : ObservableObject
             case "play-rename": PageIndex = 0; Projects.ShowSample("rename"); return;
             case "play-delete": PageIndex = 0; Projects.ShowSample("delete"); return;
             case "play-project": PageIndex = 0; Projects.ShowSample("project"); return;
+            case "play-export": PageIndex = 0; Projects.ShowSample("export"); return;
+            case "play-import": PageIndex = 0; Projects.ShowSample("import"); return;
             case "mods": Mods.ShowSample("", Projects.Key); PageIndex = 3; return;
             case "mods-install": Mods.ShowSample("install", Projects.Key); PageIndex = 3; return;
             case "mods-remove": Mods.ShowSample("remove", Projects.Key); PageIndex = 3; return;

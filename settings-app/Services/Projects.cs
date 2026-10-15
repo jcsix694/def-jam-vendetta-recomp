@@ -24,7 +24,8 @@ public static class Projects
     public const string SaveFolder = "BASLUS-20639GAMEDATA";
     public const int MaxNameLength = 60;
     private static readonly string[] PictureTypes = { ".png", ".jpg", ".jpeg" };
-    private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
+    // names written as they are (an apostrophe stays one, not \u0027): people read project.json by hand
+    private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static string RootOf(GameFolder folder) => Path.Combine(folder.Data, "projects");
     public static string FolderOf(GameFolder folder, string name) => Path.Combine(RootOf(folder), name);

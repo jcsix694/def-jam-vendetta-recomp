@@ -1230,7 +1230,7 @@ namespace vendetta_moves
                 at[n] = pak + 0xCu + 4u * n + read32(pak + 0xCu + 4u * n);
             std::vector<uint32_t> sorted = at;
             std::sort(sorted.begin(), sorted.end());
-            const uint32_t end = pak + read32(pak + 4u);
+            const uint32_t end = pak + 8u + read32(pak + 4u); // the size field counts from after the 8-byte "PAK " + size header
             std::vector<uint32_t> moved(count);
             for (uint32_t n = 0; n < count; ++n)
             {

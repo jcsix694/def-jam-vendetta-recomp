@@ -143,6 +143,144 @@ internal static class Shot
         Console.WriteLine("  mods folder: " + string.Join(", ", Directory.GetDirectories(ModLibrary.RootOf(folder)).Select(Path.GetFileName)));
     }
 
+    /// <summary>Dev only (--selftest-share &lt;project&gt;, with VENDETTA_ROOT = a scratch copy of the folder holding that
+    /// project and its mods): export it, import it back (the same mods, another version kept or taken, a mod new to the
+    /// library), and the zips that must be refused.</summary>
+    public static void SelfTestShare(string name)
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VENDETTA_ROOT")))
+        {
+            Console.WriteLine("--selftest-share exports, imports and changes mods: set VENDETTA_ROOT to a scratch copy of the folder first");
+            return;
+        }
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        var folder = GameFolder.Find();
+        var p = new ProjectsViewModel(folder, readOnly: false, () => false, text => Console.WriteLine("  says: " + text));
+        var outDir = Path.Combine(folder.Data, "shared");
+        Directory.CreateDirectory(outDir);
+        void Pick(string key) => p.Selected = p.Choices.First(c => c.Key == key);
+        void ShowProject(string key)
+        {
+            var dir = Projects.FolderOf(folder, key);
+            Console.WriteLine($"  {key}\\project.json: " + File.ReadAllText(Path.Combine(dir, "project.json")).ReplaceLineEndings(" ").Replace("  ", ""));
+            Console.WriteLine($"  {key}\\ files: " + string.Join(", ", Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(dir, f))));
+        }
+        void ShowLibrary() => Console.WriteLine("  library: " + string.Join(", ", ModLibrary.List(folder).Select(m => $"{m.FolderName} (v{(m.Version.Length > 0 ? m.Version : "-")})")));
+        void ShowImport()
+        {
+            Console.WriteLine($"import dialog: {p.DialogTitle} | from {Path.GetFileName(p.ImportFrom)} | name '{p.DialogName}' | {p.ImportNameHint}");
+            Console.WriteLine($"  {p.ImportModsHeading}");
+            foreach (var r in p.ImportMods)
+                Console.WriteLine($"    {r.Name} {r.Version} | {r.Line} | " + (r.IsChoice ? $"[{string.Join(" / ", r.Choices)}] = {r.Choices[r.Choice]}" : r.FateText));
+            if (p.ImportHasNote) Console.WriteLine($"  note: {p.ImportNote}");
+            if (p.ImportHasMissing) Console.WriteLine($"  missing: {p.ImportMissingText}");
+            Console.WriteLine($"  saves came with it: {p.ImportHasSaves}, use them: {p.ImportUseSaves}");
+        }
+        string Export(string key, bool saves)
+        {
+            Pick(key);
+            p.ExportCommand.Execute(null);
+            Console.WriteLine($"export dialog: {p.DialogTitle} | {p.ExportModsTitle}{p.ExportModsSize} | {p.ExportModsList} | saves possible {p.ExportCanSaves}" +
+                              (p.ExportHasMissing ? $" | warning: {p.ExportMissingText}" : "") + $" | default {Path.GetFileName(p.ExportPath)}");
+            p.SetExportPath(Path.Combine(outDir, ProjectShare.DefaultFileName(key)));
+            p.ExportSaves = saves;
+            p.ConfirmCommand.Execute(null);
+            using var zip = System.IO.Compression.ZipFile.OpenRead(p.ExportPath);
+            Console.WriteLine($"  zip ({new FileInfo(p.ExportPath).Length} bytes): " + string.Join(", ", zip.Entries.Select(e => e.FullName).Where(n => !n.Contains("/moves/") && !n.Contains("/wrestlers/"))) +
+                              $" + {zip.Entries.Count(e => e.FullName.Contains("/moves/") || e.FullName.Contains("/wrestlers/"))} move / wrestler files");
+            using (var r = new StreamReader(zip.GetEntry("project.json")!.Open()))
+                Console.WriteLine("  its project.json: " + r.ReadToEnd().ReplaceLineEndings(" ").Replace("  ", ""));
+            return p.ExportPath;
+        }
+
+        // a save in the project, so it can go with it
+        var saveDir = Path.Combine(Projects.FolderOf(folder, name), "saves", "mc0", Projects.SaveFolder);
+        Directory.CreateDirectory(saveDir);
+        File.WriteAllText(Path.Combine(saveDir, "test save.bin"), "a pretend save");
+        p.Reload(name);
+        ShowLibrary();
+
+        Console.WriteLine("\n1. export with its saves");
+        var zipPath = Export(name, saves: true);
+
+        Console.WriteLine("\n2. export a project ticking a mod that isn't installed");
+        if (p.Choices.Any(c => c.Key == "Missing mod"))
+            Export("Missing mod", saves: false);
+
+        Console.WriteLine("\n3. import it back: the name is taken, the mods are the same as the library's");
+        p.PickImport(zipPath);
+        ShowImport();
+        var temp = Directory.GetDirectories(Path.GetTempPath(), "Vendetta import *").OrderByDescending(Directory.GetCreationTimeUtc).First();
+        p.ConfirmCommand.Execute(null);
+        Console.WriteLine($"  picked now: '{p.Key}'; temporary folder gone: {!Directory.Exists(temp)}");
+        ShowProject(p.Key);
+        ShowLibrary();
+
+        var mod = ModLibrary.List(folder).First(m => m.Is(Projects.List(folder).First(x => x.Name == name).Mods[0]));
+        var manifest = Path.Combine(mod.Folder, "mod.json");
+        var exported = File.ReadAllText(manifest);
+        var changed = System.Text.Json.Nodes.JsonNode.Parse(exported)!.AsObject();
+        changed["version"] = "2";
+        File.WriteAllText(manifest, changed.ToJsonString());
+
+        Console.WriteLine("\n4. the library's copy changed to v2: import, keep mine");
+        p.PickImport(zipPath);
+        ShowImport();
+        p.ImportMods.First(r => r.IsChoice).Choice = 1;
+        Console.WriteLine($"  keep mine picked: note: {p.ImportNote}");
+        p.ImportUseSaves = false;
+        p.ConfirmCommand.Execute(null);
+        ShowProject(p.Key);
+        ShowLibrary();
+
+        Console.WriteLine("\n5. import again, update to theirs");
+        p.PickImport(zipPath);
+        p.ConfirmCommand.Execute(null);
+        ShowLibrary();
+        Console.WriteLine($"  the library's mod.json is the shared one again: {File.ReadAllText(manifest) == exported}");
+
+        Console.WriteLine("\n6. the mod removed from the library: import installs it");
+        ModLibrary.Remove(folder, mod);
+        p.Reload(p.Key);
+        ShowLibrary();
+        p.PickImport(zipPath);
+        ShowImport();
+        p.DialogName = "Shared " + name;
+        p.ConfirmCommand.Execute(null);
+        ShowProject(p.Key);
+        ShowLibrary();
+
+        Console.WriteLine("\n7. cancelled: the temporary folder goes");
+        p.PickImport(zipPath);
+        temp = Directory.GetDirectories(Path.GetTempPath(), "Vendetta import *").OrderByDescending(Directory.GetCreationTimeUtc).First();
+        p.CancelCommand.Execute(null);
+        Console.WriteLine($"  temporary folder gone: {!Directory.Exists(temp)}");
+
+        Console.WriteLine("\n8. zips that are refused or mistaken");
+        var modZip = Path.Combine(outDir, "a mod.zip");
+        System.IO.Compression.ZipFile.CreateFromDirectory(ModLibrary.List(folder).First().Folder, modZip);
+        Console.Write("  a mod's zip on Import:"); p.PickImport(modZip);
+        Console.WriteLine("  the shared project's zip on Install a mod: " + ModLibrary.Open(folder, zipPath).Error);
+        var junk = Path.Combine(outDir, "not a project.zip");
+        using (var z = System.IO.Compression.ZipFile.Open(junk, System.IO.Compression.ZipArchiveMode.Create))
+            z.CreateEntry("readme.txt");
+        Console.Write("  a zip with neither:"); p.PickImport(junk);
+        var evil = Path.Combine(outDir, "climbs out.zip");
+        using (var z = System.IO.Compression.ZipFile.Open(evil, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            using (var w = new StreamWriter(z.CreateEntry("project.json").Open()))
+                w.Write("{\"format\":1,\"name\":\"Bad/Name:\",\"mods\":[\"Nobody's mod\"]}");
+            using (var w = new StreamWriter(z.CreateEntry("../../climbed out.txt").Open()))
+                w.Write("never written");
+        }
+        p.PickImport(evil);
+        ShowImport();
+        var climbed = Directory.GetFiles(Path.GetTempPath(), "climbed out.txt").Length + Directory.GetFiles(Path.GetDirectoryName(Path.GetTempPath().TrimEnd('\\'))!, "climbed out.txt").Length;
+        Console.WriteLine($"  'climbed out.txt' written outside its folder: {climbed > 0}");
+        p.ConfirmCommand.Execute(null);
+        ShowProject(p.Key);
+    }
+
     /// <summary>Dev only (--selftest, with VENDETTA_ROOT = a scratch copy of the folder): changes settings the way the
     /// pages do, prints settings.toml after each, and with "play" starts the game as PLAY does.</summary>
     public static void SelfTest(bool play)

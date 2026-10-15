@@ -2,7 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VendettaSettings.ViewModels"
              x:Class="VendettaSettings.Views.PlayView"
-             x:DataType="vm:MainViewModel">
+             x:DataType="vm:MainViewModel"
+             DragDrop.AllowDrop="True">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="26,22" Spacing="18">
             <TextBlock Classes="h1" Text="Play" />
@@ -85,6 +86,7 @@
                                 <TextBlock Text="New project" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+                        <Button Classes="outline" Content="Import…" Click="OnImport" ToolTip.Tip="A project someone shared: its zip" />
                         <Button Classes="outline" Content="Copy" Command="{Binding Projects.CopyCommand}" IsEnabled="{Binding Projects.IsProject}" />
                         <Button Classes="outline" Content="Rename" Command="{Binding Projects.RenameCommand}" IsEnabled="{Binding Projects.IsProject}" />
                         <Button Classes="outline danger" Content="Delete" Command="{Binding Projects.DeleteCommand}" IsEnabled="{Binding Projects.IsProject}" />
@@ -123,6 +125,8 @@
                         <WrapPanel Grid.Row="2" Grid.Column="1" ItemSpacing="8" LineSpacing="8">
                             <Button Classes="outline small" Content="Open folder" Command="{Binding Projects.OpenFolderCommand}" />
                             <Button Classes="outline small" Content="Make a desktop shortcut" Command="{Binding Projects.MakeShortcutCommand}" />
+                            <Button Classes="outline small" BorderBrush="{StaticResource VAccent}" Content="Export to share…"
+                                    Command="{Binding Projects.ExportCommand}" IsVisible="{Binding Projects.IsProject}" />
                         </WrapPanel>
                     </Grid>
 

@@ -153,7 +153,7 @@ namespace vendetta_animations
         {
             const uint32_t base = bankBase(bank);
             const uint32_t count = read32(base + 8u);
-            const uint32_t end = base + read32(base + 4u);
+            const uint32_t end = base + 8u + read32(base + 4u); // the size field counts from after the 8-byte "PAK " + size header
             std::vector<Clip> &clips = g_clips[bank];
             clips.assign(count, Clip{});
             for (uint32_t i = 0; i < count; ++i)

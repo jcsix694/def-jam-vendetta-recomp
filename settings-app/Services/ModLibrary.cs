@@ -187,7 +187,9 @@ public static class ModLibrary
                 using var zip = ZipFile.OpenRead(source);
                 var (entry, top) = FindManifest(zip);
                 if (entry == null)
-                    return (null, "That zip has no mod.json, so it isn't a mod.");
+                    return (null, zip.Entries.Any(e => e.FullName.Replace('\\', '/').TrimStart('/').Equals("project.json", StringComparison.OrdinalIgnoreCase))
+                        ? "That's a shared project, not a mod: import it on the Play page."
+                        : "That zip has no mod.json, so it isn't a mod.");
                 using var reader = new StreamReader(entry.Open());
                 mod = FromJson(JsonNode.Parse(reader.ReadToEnd())?.AsObject(), source,
                     top.Length > 0 ? top : Path.GetFileNameWithoutExtension(source));
@@ -213,7 +215,7 @@ public static class ModLibrary
     }
 
     /// <summary>mod.json at the zip's top, else in one folder (the shallowest); the folder's name ("" at the top).</summary>
-    private static (ZipArchiveEntry? Entry, string Top) FindManifest(ZipArchive zip)
+    internal static (ZipArchiveEntry? Entry, string Top) FindManifest(ZipArchive zip)
     {
         ZipArchiveEntry? best = null;
         var bestDepth = int.MaxValue;
@@ -250,7 +252,10 @@ public static class ModLibrary
             if (Directory.Exists(package.Source))
                 CopyDir(package.Source, temp);
             else
-                Unzip(package.Source, temp);
+            {
+                using (var zip = ZipFile.OpenRead(package.Source))
+                    Unzip(package.Source, FindManifest(zip).Top, temp);
+            }
             if (!File.Exists(Path.Combine(temp, "mod.json")))
                 throw new InvalidOperationException("no mod.json after unpacking");
             if (package.Replaces != null && Directory.Exists(package.Replaces.Folder))
@@ -267,11 +272,11 @@ public static class ModLibrary
         }
     }
 
-    // the zip's files into the folder: from its mod.json's folder down (the files above or beside it are not the mod's)
-    private static void Unzip(string zipPath, string to)
+    /// <summary>The zip's files into the folder, from the folder <paramref name="top"/> down ("" = all; the files above or
+    /// beside it are left out). A name that climbs out of the folder ("..\") is never written.</summary>
+    internal static void Unzip(string zipPath, string top, string to)
     {
         using var zip = ZipFile.OpenRead(zipPath);
-        var (_, top) = FindManifest(zip);
         var prefix = top.Length > 0 ? top + "/" : "";
         var full = Path.GetFullPath(to) + Path.DirectorySeparatorChar;
         Directory.CreateDirectory(to);

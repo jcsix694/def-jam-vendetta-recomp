@@ -40,4 +40,25 @@ public partial class ProjectDialog : UserControl
         if (files.Count > 0 && files[0].TryGetLocalPath() is { } path)
             model.SetNewPicture(path);
     }
+
+    private async void OnChooseExport(object? sender, RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this)?.StorageProvider is not { } storage || Model is not { } model)
+            return;
+        var start = Path.GetDirectoryName(model.ExportPath) is { Length: > 0 } dir && Directory.Exists(dir)
+            ? await storage.TryGetFolderFromPathAsync(dir) : null;
+        var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = $"Export {model.SelectedName}",
+            SuggestedFileName = Path.GetFileName(model.ExportPath),
+            SuggestedStartLocation = start,
+            DefaultExtension = "zip",
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType("A shared project (.zip)") { Patterns = new[] { "*.zip" } },
+            },
+        });
+        if (file?.TryGetLocalPath() is { } path)
+            model.SetExportPath(path);
+    }
 }

@@ -25,6 +25,31 @@ public sealed class PlayChoice
 /// <summary>A save to copy into a new project: the original game's ("") or a project's.</summary>
 public sealed record SaveSource(string Label, string Key);
 
+/// <summary>One of a shared project's mods in the Import dialog: what happens to it, and for another version of one the
+/// library has, the choice (update to theirs / keep mine).</summary>
+public partial class ImportModRow : ObservableObject
+{
+    public required ImportMod Item { get; init; }
+    public required Action Changed { get; init; }
+    public string Name => Item.Theirs.Name;
+    public string Version => Item.Theirs.Version.Length > 0 ? "v" + Item.Theirs.Version : "";
+    public required string Line { get; init; }
+    public bool LineWarn => Item.Fate == ImportFate.Differs;
+    public bool IsChoice => Item.Fate == ImportFate.Differs;
+    public bool IsFixed => !IsChoice;
+    public string FateText => Item.Fate == ImportFate.New ? "Installed with it" : "Yours is used";
+    public bool FateGood => Item.Fate == ImportFate.New;
+    public required IReadOnlyList<string> Choices { get; init; }
+
+    [ObservableProperty] private int _choice;
+
+    partial void OnChoiceChanged(int value)
+    {
+        Item.UseTheirs = value == 0;
+        Changed();
+    }
+}
+
 /// <summary>The Play page's "What to play": the original game and the projects (projects\&lt;name&gt;), the one picked
 /// (remembered in settings.toml's [play] project, so the game plays it when started on its own too), and New / Copy /
 /// Rename / Delete / Open folder / a desktop shortcut.</summary>
@@ -159,15 +184,21 @@ public partial class ProjectsViewModel : ObservableObject
 
     // --- the dialog: New project, Copy, Rename, Delete ---
 
-    public enum DialogKind { None, New, Copy, Rename, Delete }
+    public enum DialogKind { None, New, Copy, Rename, Delete, Export, Import }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DialogOpen), nameof(IsNameDialog), nameof(IsNew), nameof(IsCopy), nameof(IsRename),
-        nameof(IsDelete), nameof(DialogTitle), nameof(ConfirmText))]
+        nameof(IsDelete), nameof(IsExport), nameof(IsImport), nameof(ShowConfirm), nameof(ShowFolderHint),
+        nameof(DialogWidth), nameof(DialogTitle), nameof(ConfirmText))]
     private DialogKind _dialog;
 
     public bool DialogOpen => Dialog != DialogKind.None;
-    public bool IsNameDialog => Dialog is DialogKind.New or DialogKind.Copy or DialogKind.Rename;
+    public bool IsNameDialog => Dialog is DialogKind.New or DialogKind.Copy or DialogKind.Rename or DialogKind.Import;
+    public bool IsExport => Dialog == DialogKind.Export;
+    public bool IsImport => Dialog == DialogKind.Import;
+    public bool ShowConfirm => Dialog != DialogKind.None && Dialog != DialogKind.Delete;
+    public bool ShowFolderHint => Dialog is DialogKind.New or DialogKind.Copy or DialogKind.Rename;
+    public double DialogWidth => Dialog is DialogKind.Export or DialogKind.Import ? 600 : 520;
     public bool IsNew => Dialog == DialogKind.New;
     public bool IsCopy => Dialog == DialogKind.Copy;
     public bool IsRename => Dialog == DialogKind.Rename;
@@ -179,6 +210,8 @@ public partial class ProjectsViewModel : ObservableObject
         DialogKind.Copy => $"Copy {SelectedName}",
         DialogKind.Rename => $"Rename {SelectedName}",
         DialogKind.Delete => $"Delete {SelectedName}?",
+        DialogKind.Export => $"Export {SelectedName}",
+        DialogKind.Import => _import is { } i ? $"Import {i.Name}?" : "Import",
         _ => "",
     };
 
@@ -188,6 +221,8 @@ public partial class ProjectsViewModel : ObservableObject
         DialogKind.Copy => "Copy",
         DialogKind.Rename => "Rename",
         DialogKind.Delete => $"Delete {SelectedName}",
+        DialogKind.Export => "Export",
+        DialogKind.Import => "Import",
         _ => "",
     };
 
@@ -195,7 +230,12 @@ public partial class ProjectsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(FolderHint))]
     private string _dialogName = "";
 
-    partial void OnDialogNameChanged(string value) => DialogError = "";
+    partial void OnDialogNameChanged(string value)
+    {
+        DialogError = "";
+        OnPropertyChanged(nameof(ImportNameHint));
+        OnPropertyChanged(nameof(ImportNote));
+    }
 
     public string FolderHint => $"Its folder: projects\\{DialogName.Trim()}";
 
@@ -289,6 +329,7 @@ public partial class ProjectsViewModel : ObservableObject
     {
         Dialog = DialogKind.None;
         DialogError = "";
+        DropImport();
     }
 
     [RelayCommand]
@@ -317,6 +358,13 @@ public partial class ProjectsViewModel : ObservableObject
                 error = Projects.Delete(_folder, Key);
                 pick = "";
                 break;
+            case DialogKind.Export:
+                ConfirmExport();
+                return;
+            case DialogKind.Import:
+                error = _import == null ? "Nothing to import." : ProjectShare.Import(_folder, _import, name, ImportUseSaves && ImportHasSaves);
+                pick = name;
+                break;
             default:
                 return;
         }
@@ -330,12 +378,234 @@ public partial class ProjectsViewModel : ObservableObject
             DialogKind.New => $"{name} is made.",
             DialogKind.Copy => $"{name} is made, a copy of {SelectedName}.",
             DialogKind.Rename => $"Renamed to {name}.",
+            DialogKind.Import => ImportDone(name),
             _ => $"{SelectedName} is deleted.",
         };
+        if (Dialog == DialogKind.Import)
+        {
+            DropImport();
+            ModsChanged?.Invoke();
+        }
         Dialog = DialogKind.None;
         Reload(pick);
         _say(done);
     }
+
+    /// <summary>An import put mods in the library (the Mods page reads it again).</summary>
+    public event Action? ModsChanged;
+
+    // --- Export to share ---
+
+    private ExportPlan? _export;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ExportPathExists))]
+    private string _exportPath = "";
+
+    partial void OnExportPathChanged(string value) => DialogError = "";
+
+    [ObservableProperty] private bool _exportSaves;
+
+    public string ExportModsTitle => _export is { } e
+        ? (e.Mods.Count switch { 0 => "No mods", 1 => "Its mod", var n => $"Its {n} mods" }) : "";
+    public string ExportModsSize => _export is { Mods.Count: > 0 } e ? " · " + ProjectShare.Size(e.ModBytes) : "";
+    public string ExportModsList => _export is { } e
+        ? (e.Mods.Count > 0 ? string.Join(" · ", e.Mods.Select(m => m.Version.Length > 0 ? $"{m.Name} v{m.Version}" : m.Name))
+            : "Nothing is ticked: whoever imports it plays the original game with its own save.") : "";
+    public bool ExportCanSaves => _export?.Project.HasSave ?? false;
+    public bool ExportNoSaves => !ExportCanSaves;
+    public string ExportSavesHint => $"Your profile and what you’ve unlocked in {SelectedName}. Off: they start with an empty memory card.";
+    public bool ExportHasMissing => _export is { Missing.Count: > 0 };
+    public string ExportMissingText => _export is { Missing.Count: > 0 } e
+        ? (e.Missing.Count == 1
+            ? $"“{e.Missing[0]}” is ticked in {SelectedName} but isn’t in your library, so it can’t go in. The project still works without it."
+            : $"{string.Join(", ", e.Missing.Select(m => $"“{m}”"))} are ticked in {SelectedName} but aren’t in your library, so they can’t go in. The project still works without them.")
+        : "";
+    public bool ExportPathExists => ExportPath.Length > 0 && File.Exists(ExportPath);
+
+    [RelayCommand]
+    private void Export()
+    {
+        if (IsOriginal || Selected == null)
+            return;
+        var project = Projects.List(_folder).FirstOrDefault(p => p.Name == Key);
+        if (project == null)
+            return;
+        _export = ProjectShare.PlanExport(_folder, project);
+        ExportSaves = false;
+        ExportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ProjectShare.DefaultFileName(project.Name));
+        foreach (var name in new[]
+                 {
+                     nameof(ExportModsTitle), nameof(ExportModsSize), nameof(ExportModsList), nameof(ExportCanSaves),
+                     nameof(ExportNoSaves), nameof(ExportSavesHint), nameof(ExportHasMissing), nameof(ExportMissingText),
+                     nameof(ExportPathExists),
+                 })
+            OnPropertyChanged(name);
+        DialogError = "";
+        Dialog = DialogKind.Export;
+    }
+
+    /// <summary>The file picked with Choose… (a .zip).</summary>
+    public void SetExportPath(string path) =>
+        ExportPath = path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? path : path + ".zip";
+
+    private void ConfirmExport()
+    {
+        if (_export == null)
+            return;
+        var path = ExportPath.Trim();
+        if (path.Length == 0 || !Path.IsPathFullyQualified(path))
+        {
+            DialogError = "Choose where to save it.";
+            return;
+        }
+        if (!path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            path += ".zip";
+        if (Path.GetDirectoryName(path) is not { } dir || !Directory.Exists(dir))
+        {
+            DialogError = "That folder isn't there.";
+            return;
+        }
+        if (ProjectShare.Export(_export, ExportSaves && ExportCanSaves, path) is { } error)
+        {
+            DialogError = error;
+            return;
+        }
+        var name = SelectedName;
+        Dialog = DialogKind.None;
+        _export = null;
+        _say($"{name} is exported: {path}");
+    }
+
+    // --- Import ---
+
+    private ImportPlan? _import;
+    public ObservableCollection<ImportModRow> ImportMods { get; } = new();
+
+    [ObservableProperty] private bool _importUseSaves = true;
+
+    public string ImportFrom => _import?.Source ?? "";
+    public string ImportModsHeading => _import is { } i
+        ? (i.Mods.Count switch { 0 => "NO MODS", 1 => "ITS MOD", var n => $"ITS {n} MODS" }) : "";
+    public bool ImportNoMods => _import is { Mods.Count: 0 };
+    public bool ImportHasSaves => _import?.HasSaves ?? false;
+    public bool ImportNoSaves => !ImportHasSaves;
+    public bool ImportHasMissing => _import is { Missing.Count: > 0 };
+    public string ImportMissingText => _import is { Missing.Count: > 0 } i
+        ? $"It ticks {string.Join(", ", i.Missing)}, which {(i.Missing.Count == 1 ? "wasn’t" : "weren’t")} shared with it and you don’t have: the game skips {(i.Missing.Count == 1 ? "it" : "them")}."
+        : "";
+
+    public string ImportNameHint
+    {
+        get
+        {
+            if (_import == null)
+                return "";
+            if (Projects.CheckName(_folder, _import.Name) == null)
+                return $"Its folder: projects\\{DialogName.Trim()}";
+            return $"You have a project called {_import.Name} already, so this one gets a new name.";
+        }
+    }
+
+    /// <summary>What the choices mean, for each mod the library has another version of.</summary>
+    public string ImportNote
+    {
+        get
+        {
+            if (_import == null)
+                return "";
+            var lines = new List<string>();
+            var name = DialogName.Trim().Length > 0 ? DialogName.Trim() : _import.Name;
+            foreach (var m in _import.Mods.Where(m => m.Fate == ImportFate.Differs))
+            {
+                var theirs = m.Theirs.Version.Length > 0 ? "v" + m.Theirs.Version : "their copy";
+                var mine = m.Mine!.Version.Length > 0 ? "v" + m.Mine.Version : "your copy";
+                var users = ModLibrary.UsedBy(_folder, m.Mine);
+                if (!m.UseTheirs)
+                    lines.Add($"Keeping yours: {name} plays {m.Theirs.Name} {mine}, which may not be what its maker tested.");
+                else if (users.Count > 0)
+                    lines.Add($"Updating {m.Theirs.Name}: {string.Join(", ", users)} {(users.Count == 1 ? "gets" : "get")} {theirs} as well, since every project shares the one library.");
+                else
+                    lines.Add($"Updating {m.Theirs.Name}: {theirs} takes your copy’s place in the library.");
+            }
+            return string.Join("\n", lines);
+        }
+    }
+
+    public bool ImportHasNote => ImportNote.Length > 0;
+
+    /// <summary>A shared project's zip picked (or dropped): read, and the Import dialog shown.</summary>
+    public void PickImport(string path)
+    {
+        if (Busy())
+            return;
+        DropImport();
+        var (plan, error) = ProjectShare.OpenImport(_folder, path);
+        if (plan == null)
+        {
+            _say(error ?? "That isn't a shared project.");
+            return;
+        }
+        _import = plan;
+        foreach (var m in plan.Mods)
+        {
+            var mine = m.Mine;
+            var users = mine != null ? ModLibrary.UsedBy(_folder, mine) : new List<string>();
+            var line = m.Fate switch
+            {
+                ImportFate.New => "New to your library",
+                ImportFate.Same => "The same one is in your library",
+                _ => (mine!.Version.Length > 0 && mine.Version == m.Theirs.Version
+                         ? $"You have a different copy of v{mine.Version}"
+                         : mine.Version.Length > 0 ? $"You have v{mine.Version}" : "You have another copy") +
+                     (users.Count > 0 ? $", used by {string.Join(", ", users)} too" : ""),
+            };
+            var theirs = m.Theirs.Version.Length > 0 ? $" (v{m.Theirs.Version})" : "";
+            var keep = mine?.Version.Length > 0 ? $" (v{mine.Version})" : "";
+            ImportMods.Add(new ImportModRow
+            {
+                Item = m,
+                Line = line,
+                Choices = new[] { "Update to theirs" + theirs, "Keep mine" + keep },
+                Changed = () =>
+                {
+                    OnPropertyChanged(nameof(ImportNote));
+                    OnPropertyChanged(nameof(ImportHasNote));
+                },
+            });
+        }
+        ImportUseSaves = plan.HasSaves;
+        DialogName = FreeName(plan.Name);
+        foreach (var name in new[]
+                 {
+                     nameof(ImportFrom), nameof(ImportModsHeading), nameof(ImportNoMods), nameof(ImportHasSaves),
+                     nameof(ImportNoSaves), nameof(ImportHasMissing), nameof(ImportMissingText), nameof(ImportNameHint),
+                     nameof(ImportNote), nameof(ImportHasNote), nameof(DialogTitle),
+                 })
+            OnPropertyChanged(name);
+        DialogError = "";
+        Dialog = DialogKind.Import;
+    }
+
+    private string ImportDone(string name)
+    {
+        var added = _import?.Mods.Count(m => m.Fate == ImportFate.New) ?? 0;
+        var updated = _import?.Mods.Count(m => m.Fate == ImportFate.Differs && m.UseTheirs) ?? 0;
+        var parts = new List<string>();
+        if (added > 0)
+            parts.Add(added == 1 ? "1 mod installed" : $"{added} mods installed");
+        if (updated > 0)
+            parts.Add(updated == 1 ? "1 updated" : $"{updated} updated");
+        return $"{name} is imported" + (parts.Count > 0 ? $" ({string.Join(", ", parts)})." : ".");
+    }
+
+    private void DropImport()
+    {
+        ProjectShare.Discard(_import);
+        _import = null;
+        ImportMods.Clear();
+    }
+
 
     private string FreeName(string start)
     {
@@ -348,10 +618,16 @@ public partial class ProjectsViewModel : ObservableObject
     /// <summary>For pictures (--shot): a dialog open.</summary>
     public void ShowSample(string which)
     {
-        if (which != "new" && Choices.Count > 1)
-            Selected = Choices[1];
+        if (which != "new" && which != "import" && Choices.Count > 1)
+            Selected = Choices.FirstOrDefault(c => c.Key == Environment.GetEnvironmentVariable("VENDETTA_SHOT_PROJECT")) ?? Choices[1];
         switch (which)
         {
+            case "export": Export(); break;
+            // VENDETTA_SHOT_SHARE=<a shared project's zip>: shown being imported
+            case "import":
+                if (Environment.GetEnvironmentVariable("VENDETTA_SHOT_SHARE") is { Length: > 0 } zip)
+                    PickImport(zip);
+                break;
             case "new": New(); DialogName = "WK3"; break;
             case "copy": Copy(); break;
             case "rename": Rename(); break;

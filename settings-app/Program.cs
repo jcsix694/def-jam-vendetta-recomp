@@ -49,6 +49,13 @@ internal static class Program
             Shot.SelfTestMods(args[1]);
             return;
         }
+        // Dev: sharing a project (export, import back, another version, refused zips) on a scratch folder (VENDETTA_ROOT):
+        // --selftest-share <a project's name>
+        if (args.Length >= 2 && args[0] == "--selftest-share")
+        {
+            Shot.SelfTestShare(args[1]);
+            return;
+        }
         // Dev: the saving checked on a scratch folder (VENDETTA_ROOT): --selftest [play]
         if (args.Length >= 1 && args[0] == "--selftest")
         {
