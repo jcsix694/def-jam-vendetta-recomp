@@ -48,7 +48,7 @@ namespace vendetta_clipsounds
     constexpr uint32_t kNamesOffset = 0x5000u;   // the new clips' names, 16 bytes each
     constexpr uint32_t kFirstTimeOnly = 0x10000000u;
 
-    // The events the game's own animations use (DEFJAM.AAD's 2,602 entries), by name (adjmk's names), with the number
+    // The events the game's own animations use (DEFJAM.AAD's 2,602 entries), by name (our names; the old ones still read), with the number
     // of values each one always carries.
     struct Kind
     {
@@ -57,17 +57,20 @@ namespace vendetta_clipsounds
         uint32_t values;
     };
     constexpr Kind kKinds[] = {
-        {0x09, "Footstep", 1}, {0x1F, "Footstep, running", 1}, {0x0B, "Swing (whoosh)", 1}, {0x04, "Grab", 1},
-        {0x00, "Handling", 1}, {0x37, "Struggle", 1}, {0x1D, "Slap", 1}, {0x03, "Body hit", 1},
+        {0x09, "Footstep", 1}, {0x1F, "Footstep, running", 1}, {0x0B, "Swing", 1}, {0x04, "Grab", 1},
+        {0x00, "Hit", 1}, {0x37, "Struggle", 1}, {0x1D, "Slap", 1}, {0x03, "Body hit", 1},
         {0x06, "Impact on the floor", 1}, {0x08, "Block", 0}, {0x38, "Body on the mat", 1}, {0x07, "Heavy fall", 0},
         {0x05, "Stomp", 0}, {0x0A, "Ropes", 0}, {0x1C, "Clap", 1}, {0x0D, "Grunt", 1}, {0x49, "Hurt cry", 1},
         {0x10013, "Voice: intro line", 0}, {0x10014, "Voice: win line", 0}, {0x3A, "Special punch", 0},
         {0x44, "Special kick", 0}, {0x39, "Special corkscrew", 0}, {0x47, "Special chest hit", 0},
         {0x45, "Special (chest, women)", 1}, {0x46, "Special (behind)", 0}, {0x11, "Crowd: knockdown cheer", 1},
-        {0x10012, "Music stinger", 2}, {0x10002, "Music event", 1}, {0x10005, "Crowd bed: start", 0},
+        {0x10012, "FLEX shout", 2}, {0x10002, "Music event", 1}, {0x10005, "Crowd bed: start", 0},
         {0x10006, "Crowd bed: stop", 0}, {0x10009, "Quieten the game", 0}, {0x10008, "Sound back to normal", 0},
         {0x1000B, "Blazin' sound: start", 0}, {0x1000C, "Blazin' sound: stop", 0}, {0x10017, "Controller vibration", 1},
     };
+
+    // Earlier names still accepted in a mod's files (adjmk's: 0x00 is the hit itself, 0x10012 the FLEX shout).
+    constexpr Kind kOldNames[] = {{0x0B, "Swing (whoosh)", 1}, {0x00, "Handling", 1}, {0x10012, "Music stinger", 2}};
 
     const Kind *kindOf(uint32_t id)
     {
@@ -170,6 +173,12 @@ namespace vendetta_clipsounds
                 id = kind.id;
                 return true;
             }
+        for (const Kind &kind : kOldNames)
+            if (lower(kind.name) == lower(value.text))
+            {
+                id = kind.id;
+                return true;
+            }
         char *end = nullptr;
         const unsigned long parsed = std::strtoul(value.text.c_str(), &end, 0);
         if (value.text.empty() || *end != '\0')
@@ -183,7 +192,7 @@ namespace vendetta_clipsounds
         std::vector<Event> events;
         if (!list.isArray())
         {
-            std::cerr << "[mods] " << where << ": \"sounds\" should be a list: [{ \"frame\": 12, \"sound\": \"Swing (whoosh)\", "
+            std::cerr << "[mods] " << where << ": \"sounds\" should be a list: [{ \"frame\": 12, \"sound\": \"Swing\", "
                       << "\"value\": 3 }] - no sounds" << std::endl;
             return events;
         }
@@ -206,7 +215,9 @@ namespace vendetta_clipsounds
                           << "number - skipped" << std::endl;
                 continue;
             }
-            const vendetta_mods::Json *firstTime = item.find("first_time_only");
+            const vendetta_mods::Json *firstTime = item.find("first time only");
+            if (!firstTime)
+                firstTime = item.find("first_time_only");
             if (firstTime && firstTime->type == vendetta_mods::Json::Type::Bool && firstTime->boolean)
                 id |= kFirstTimeOnly;
             Event event;

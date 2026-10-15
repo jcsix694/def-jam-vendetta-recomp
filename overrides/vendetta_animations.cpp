@@ -40,6 +40,7 @@
 #include "runtime/ee_scheduler.h"
 #include "vendetta_clipsounds.h"
 #include "vendetta_mods.h"
+#include "vendetta_moves.h"
 #include "vendetta_store.h"
 
 #include <algorithm>
@@ -316,6 +317,7 @@ namespace vendetta_animations
     {
         std::string name;
         ModClip *clip = nullptr;
+        int moveClip = -1; // one of a new move's animations (vendetta_moves), its place in that list
     };
 
     // The mods' "new" animations, in load order; a name added again by a later mod replaces the earlier one.
@@ -436,6 +438,19 @@ namespace vendetta_animations
         uint32_t replaced = 0, skipped = 0, moved = 0, addedCount = 0;
 
         std::vector<NewClip> added = collectNewClips(byName);
+        // the new moves' animations after them, each move's in a row (vendetta_moves.h)
+        const std::vector<vendetta_moves::ClipToAdd> moveClips = vendetta_moves::clipsToAdd();
+        for (size_t i = 0; i < moveClips.size(); ++i)
+        {
+            ModClip clip;
+            clip.modName = moveClips[i].from;
+            clip.fileName = moveClips[i].name;
+            clip.bytes = *moveClips[i].bytes;
+            clip.hasSounds = true; // a move's animation plays exactly its settings file's sounds (none = silent)
+            clip.sounds = *moveClips[i].sounds;
+            ModClip &kept = g_modClips[std::filesystem::path("move clip " + std::to_string(i))] = std::move(clip);
+            added.push_back({moveClips[i].name, &kept, static_cast<int>(i)});
+        }
         const uint32_t room = kMaxClipId + 1u - kExpectedCount1;
         if (added.size() > room)
         {
@@ -481,6 +496,8 @@ namespace vendetta_animations
                               << soundName << ")" << std::endl;
                     if (item.clip->hasSounds)
                         vendetta_clipsounds::setSounds(soundName, item.clip->sounds, clip.from + " (" + clip.name + ")");
+                    if (item.moveClip >= 0)
+                        vendetta_moves::clipNumbered(static_cast<size_t>(item.moveClip), clip.index);
                     clips.push_back(clip);
                 }
                 write32(kBank1 + 8u, static_cast<uint32_t>(clips.size()));
@@ -621,6 +638,7 @@ namespace vendetta_animations
             std::string animation;
         };
         std::map<std::pair<uint32_t, uint32_t>, Change> changes; // (attire, slot) -> what goes there
+        std::map<std::pair<uint32_t, uint32_t>, Change> moveSlots; // (attire, slot) -> a new move (its record in .clip)
         for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
         {
             const vendetta_mods::Json *wrestlers = mod.manifest.find("wrestlers");
@@ -662,10 +680,23 @@ namespace vendetta_animations
                                   << "\" isn't a moveset slot (0-127) - skipped" << std::endl;
                         continue;
                     }
+                    // a new move (vendetta_moves.h) by its name on screen or its folder's name
+                    if (const int moveRecord = value.isString() ? vendetta_moves::recordOf(value.text) : -1; moveRecord >= 0)
+                    {
+                        for (uint32_t attire : attires)
+                        {
+                            Change &change = moveSlots[{attire, static_cast<uint32_t>(slot)}];
+                            if (!change.modName.empty() && change.modName != mod.name)
+                                std::cerr << "[mods] " << mod.name << ": " << wrestler << " slot " << slot << " was also set by "
+                                          << change.modName << " - " << mod.name << "'s is used (later in the load order)" << std::endl;
+                            change = {static_cast<uint32_t>(moveRecord), mod.name, wrestler, value.text};
+                        }
+                        continue;
+                    }
                     const auto found = value.isString() ? newClips.find(upper(value.text)) : newClips.end();
                     if (found == newClips.end())
                     {
-                        std::cerr << "[mods] " << mod.name << ": " << wrestler << " slot " << slot << ": no new animation called \""
+                        std::cerr << "[mods] " << mod.name << ": " << wrestler << " slot " << slot << ": no new move or new animation called \""
                                   << value.text << "\" (a mod's \"new\" list names them) - skipped" << std::endl;
                         continue;
                     }
@@ -679,6 +710,16 @@ namespace vendetta_animations
                     }
                 }
             }
+        }
+        // new moves straight into their slots (a moveset slot's top four bits are never read; kept as they were)
+        for (const auto &[where, change] : moveSlots)
+        {
+            const uint32_t slotAddress = movesetAddress(where.first) + 2u * where.second;
+            const uint16_t value = read16(slotAddress);
+            const uint16_t newValue = static_cast<uint16_t>((value == 0xFFFFu ? 0u : (value & 0xF000u)) | change.clip);
+            std::memcpy(g_rdram + (slotAddress & PS2_RAM_MASK), &newValue, 2);
+            std::cerr << "[mods] " << change.modName << ": " << change.wrestler << " (attire row " << where.first << ") slot "
+                      << where.second << ": the new move " << change.animation << " (move " << change.clip << ")" << std::endl;
         }
         if (changes.empty())
             return;
@@ -852,8 +893,10 @@ namespace vendetta_animations
             return;
         }
         readClips();
+        vendetta_moves::prepare(rdram); // the mods' new moves: read and checked (not added yet)
         dumpClips(); // the game's own bytes, before any mod
         applyMods();
+        vendetta_moves::apply(); // the new moves' records, names, cameras (their clips were added just above)
         applyWrestlers();
         vendetta_clipsounds::place();
         poisonUnused();
