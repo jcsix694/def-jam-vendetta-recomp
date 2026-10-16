@@ -38,6 +38,9 @@ namespace vendetta_clipsounds
     // clip's ZNEW name), in place of the game's; no events = silent. A later call for the same name wins.
     void setSounds(const std::string &soundName, const std::vector<Event> &events, const std::string &from);
 
-    // Once the mods are in: the events go into the store, where the game's sound code reads them.
+    // Once the match's mods are in: the events go into the store's match area, where the game's sound code reads them.
     void place();
+
+    // A new match: every mod's events forgotten (the game's own play again until place()).
+    void reset();
 }

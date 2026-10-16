@@ -4,6 +4,8 @@
 
 #include "ps2_runtime.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <map>
 #include <string>
@@ -19,7 +21,10 @@ namespace vendetta_store
         PS2Memory *g_memory = nullptr;
         uint32_t g_bootTop = kStart + kFixedSize;         // the boot area grows up after the fixed area
         uint32_t g_committed = kStart;                    // [kStart, g_committed) is usable
+        uint32_t g_matchBottom = kEnd;                    // the match area grows down from the end: [g_matchBottom, kEnd)
+        uint32_t g_matchCommitted = kEnd;                 // [g_matchCommitted, kEnd) is usable
         std::map<std::string, uint64_t> g_used;           // bytes by user (padding included)
+        std::map<std::string, uint64_t> g_matchUsed;      // the same, this match
 
         std::string kilobytes(uint64_t bytes)
         {
@@ -35,18 +40,44 @@ namespace vendetta_store
 
     uint32_t allocate(Area area, uint32_t size, const char *user, uint32_t alignment, uint32_t phase)
     {
-        (void)area; // one area today (Boot); see the header for the match area
         if (!g_memory || alignment == 0u || (alignment & (alignment - 1u)) != 0u || phase >= alignment)
         {
             std::cerr << "[store] " << user << ": can't place " << size << " bytes (store not ready or a bad alignment)"
                       << std::endl;
             return 0u;
         }
+        if (area == Area::Match)
+        {
+            // down from the match area's bottom: the highest start at or below bottom - size, `phase` past a multiple
+            uint64_t start = static_cast<uint64_t>(g_matchBottom) - size;
+            start = ((start - phase) & ~static_cast<uint64_t>(alignment - 1u)) + phase;
+            if (size > g_matchBottom - g_bootTop || start < g_bootTop || start > g_matchBottom)
+            {
+                std::cerr << "[store] " << user << ": no room for " << kilobytes(size) << " in the match area ("
+                          << kilobytes(g_matchBottom - g_bootTop) << " left)" << std::endl;
+                return 0u;
+            }
+            if (start < g_matchCommitted)
+            {
+                const uint32_t from = static_cast<uint32_t>((start / kCommitStep) * kCommitStep);
+                const uint32_t to = from < g_bootTop ? g_bootTop : from;
+                if (!g_memory->commitRam(to, g_matchCommitted - to))
+                {
+                    std::cerr << "[store] " << user << ": the PC refused " << kilobytes(g_matchCommitted - to) << " more memory"
+                              << std::endl;
+                    return 0u;
+                }
+                g_matchCommitted = to;
+            }
+            g_matchUsed[user] += g_matchBottom - start;
+            g_matchBottom = static_cast<uint32_t>(start);
+            return g_matchBottom;
+        }
         const uint64_t start = ((static_cast<uint64_t>(g_bootTop) + alignment - 1u - phase) & ~static_cast<uint64_t>(alignment - 1u)) + phase;
         const uint64_t end = start + size;
-        if (end > kEnd)
+        if (end > g_matchBottom)
         {
-            std::cerr << "[store] " << user << ": no room for " << kilobytes(size) << " (" << kilobytes(kEnd - g_bootTop)
+            std::cerr << "[store] " << user << ": no room for " << kilobytes(size) << " (" << kilobytes(g_matchBottom - g_bootTop)
                       << " left of " << ((kEnd - kStart) >> 20) << " MB)" << std::endl;
             return 0u;
         }
@@ -91,6 +122,43 @@ namespace vendetta_store
 
     uint8_t *host(uint32_t guestAddress) { return g_memory->getRDRAM() + (guestAddress & PS2_RAM_MASK); }
 
+    void beginMatch()
+    {
+        if (!g_memory)
+            return;
+        static const bool poison = std::getenv("VENDETTA_ANIM_POISON") && *std::getenv("VENDETTA_ANIM_POISON") != '0';
+        if (poison && g_matchBottom < kEnd)
+        {
+            std::memset(host(g_matchBottom), 0xFF, kEnd - g_matchBottom);
+            std::cerr << "[store] VENDETTA_ANIM_POISON: the last match's " << kilobytes(kEnd - g_matchBottom)
+                      << " filled with 0xFF" << std::endl;
+        }
+        g_matchBottom = kEnd;
+        g_matchUsed.clear();
+    }
+
+    namespace
+    {
+        std::map<std::string, uint64_t> g_markUsed; // g_matchUsed when the mark was taken
+    }
+
+    uint32_t matchMark()
+    {
+        g_markUsed = g_matchUsed;
+        return g_matchBottom;
+    }
+
+    void rewindMatch(uint32_t mark)
+    {
+        if (!g_memory || mark < g_matchBottom || mark > kEnd)
+            return;
+        static const bool poison = std::getenv("VENDETTA_ANIM_POISON") && *std::getenv("VENDETTA_ANIM_POISON") != '0';
+        if (poison && mark > g_matchBottom)
+            std::memset(host(g_matchBottom), 0xFF, mark - g_matchBottom);
+        g_matchBottom = mark;
+        g_matchUsed = g_markUsed;
+    }
+
     void report()
     {
         if (g_used.empty())
@@ -103,6 +171,24 @@ namespace vendetta_store
             std::cerr << (first ? "" : ", ") << user << " " << kilobytes(bytes);
             first = false;
         }
-        std::cerr << "); " << kilobytes(kEnd - g_bootTop) << " free" << std::endl;
+        std::cerr << "); " << kilobytes(g_matchBottom - g_bootTop) << " free" << std::endl;
+    }
+
+    void reportMatch()
+    {
+        std::cerr << "[store] match area 0x" << std::hex << g_matchBottom << "-0x" << kEnd << std::dec << ": "
+                  << kilobytes(kEnd - g_matchBottom) << " placed";
+        if (!g_matchUsed.empty())
+        {
+            std::cerr << " (";
+            bool first = true;
+            for (const auto &[user, bytes] : g_matchUsed)
+            {
+                std::cerr << (first ? "" : ", ") << user << " " << kilobytes(bytes);
+                first = false;
+            }
+            std::cerr << ")";
+        }
+        std::cerr << "; " << kilobytes(g_matchBottom - g_bootTop) << " free" << std::endl;
     }
 }

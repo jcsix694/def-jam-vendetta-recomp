@@ -82,6 +82,10 @@ namespace vendetta_mods
     // The enabled mods in load order (read once; later calls return the same list).
     const std::vector<Mod> &loadedMods();
 
+    // VENDETTA_MODLOG=1: a line for every animation, move, slot and sound list a match's mods put in (they go in at every
+    // match, so without it only problems and one summary a match are printed).
+    bool detailLog();
+
     // A file a mod.json names ("animations/x.bin", relative to the mod's folder), as a path; empty if it leaves the
     // mod's folder or doesn't exist (with a message).
     std::filesystem::path modFile(const Mod &mod, const std::string &relative, const char *what);

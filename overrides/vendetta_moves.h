@@ -6,26 +6,40 @@
 // .bin with its settings .json beside it (speed, timings, windows, sounds; an intro / victory also its camera and eye
 // track). Linked parts sit in sub-folders: a grapple's second stage, a strike's next hit or parry pair.
 //
-// The animation loader (vendetta_animations.cpp) drives it, once both clip banks are in memory:
-//   prepare()       reads and checks every mod's new moves
+// Moves are loaded per match (vendetta_animations.cpp drives it): only the moves the match's wrestlers' slots name.
+//   prepare()       once, at the first match load: every listed move.json read for its name; the move records, the
+//                   names and the camera / eye track tables copied to the store at their full size
+//   isMove()        a name a moveset slot gives is a new move's (its name on screen or its folder's)
+//   reset()         each match: those tables back to the game's own (the spare entries pointing at stand-ins)
+//   load()          each match: the named moves read whole from their folders, as many as the match's room holds
 //   clipsToAdd()    their animations, in the order the game needs them (a pair's receiver right after its attacker, a
 //                   hold's eight in a row ...), added as new clips with the mods' new animations
 //   clipNumbered()  each one's clip id, as it is added
 //   apply()         the moves go in: move records after the game's 999 (and their links), their names, the playback
 //                   records of their clips, the intros' and victories' cameras, the eye tracks
 //   recordOf()      a new move's record number by its name, for the "wrestlers" files' moveset slots
+//   filesRead()     the files this match's moves came from (a rematch reads them again only if one changed)
 #pragma once
 
 #include "vendetta_clipsounds.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace vendetta_moves
 {
     void prepare(uint8_t *rdram);
+
+    bool isMove(const std::string &name);
+
+    void reset();
+
+    // `names`: what the match's slots name; `clipRoom`: how many new clip ids are left for the moves' animations.
+    void load(const std::set<std::string> &names, uint32_t clipRoom);
 
     struct ClipToAdd
     {
@@ -41,4 +55,6 @@ namespace vendetta_moves
 
     // A new move's record number by its name on screen or its folder's name (any case); -1 if there is none.
     int recordOf(const std::string &name);
+
+    const std::vector<std::filesystem::path> &filesRead();
 }

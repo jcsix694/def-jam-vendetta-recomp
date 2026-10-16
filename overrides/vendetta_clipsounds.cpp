@@ -296,6 +296,12 @@ namespace vendetta_clipsounds
         sounds.from = from;
     }
 
+    void reset()
+    {
+        g_sounds.clear();
+        g_entries.clear();
+    }
+
     void place()
     {
         for (auto &[name, sounds] : g_sounds)
@@ -305,7 +311,7 @@ namespace vendetta_clipsounds
                 size += 8u + 4u * static_cast<uint32_t>(event.values.size());
             if (!sounds.events.empty())
             {
-                sounds.entry = vendetta_store::allocate(vendetta_store::Area::Boot, size, "animation sounds", 16u, 0u);
+                sounds.entry = vendetta_store::allocate(vendetta_store::Area::Match, size, "animation sounds", 16u, 0u);
                 if (sounds.entry == 0u)
                     continue;
                 uint8_t *to = guest(sounds.entry);
@@ -326,6 +332,8 @@ namespace vendetta_clipsounds
                 }
             }
             g_entries[keyOf(name)] = sounds.entry;
+            if (!vendetta_mods::detailLog())
+                continue;
             std::cerr << "[mods] " << sounds.from << ": " << name << " plays " << sounds.events.size() << " sound events"
                       << (sounds.events.empty() ? " (silent)" : ":");
             for (const Event &event : sounds.events)

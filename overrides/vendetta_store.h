@@ -7,12 +7,11 @@
 // sounds - can sit where the game's code reads them like any other RAM. Only data the game's own code reads belongs
 // here; data our own C++ reads stays in ordinary PC memory.
 //
-// Areas: today everything is placed once, in the boot area, and stays. The layout keeps room for a per-match area:
-// sealed after the boot area, emptied and refilled at each match start with only what that match uses, so the number
-// of mods installed is no longer limited by guest memory. A user names the area it allocates in; adding the match area
-// changes the store, not its users.
+// Areas: the boot area (from the bottom up) holds what is placed once and kept; the match area (from the top down) is
+// emptied at each match load and refilled with only what that match uses, so the number of mods installed is no longer
+// limited by guest memory. The two grow towards each other.
 //
-// Each run prints what the store holds ([store] ...), by user.
+// Each run prints what the store holds ([store] ...), by user; each match what its area holds.
 #pragma once
 
 #include <cstdint>
@@ -23,7 +22,8 @@ namespace vendetta_store
 {
     enum class Area
     {
-        Boot, // placed once, kept for the whole run
+        Boot,  // placed once, kept for the whole run
+        Match, // emptied at each match load (beginMatch)
     };
 
     // Called once at start (game_overrides): the runtime's memory.
@@ -46,6 +46,17 @@ namespace vendetta_store
     // Host pointer for a guest address the store handed out.
     uint8_t *host(uint32_t guestAddress);
 
-    // Prints what the store holds, by user (once the mods are in).
+    // A new match: the match area emptied (VENDETTA_ANIM_POISON=1: its old bytes filled with 0xFF first, so anything that
+    // still read the last match's data would show).
+    void beginMatch();
+
+    // A point in the match area: rewindMatch(mark) gives back everything placed since (VENDETTA_ANIM_POISON=1: filled with
+    // 0xFF first), for a user that places its part last and builds it again within the same match load (one mark at a
+    // time).
+    uint32_t matchMark();
+    void rewindMatch(uint32_t mark);
+
+    // Prints what the store holds, by user (the boot area once the mods are in; reportMatch the match area).
     void report();
+    void reportMatch();
 }

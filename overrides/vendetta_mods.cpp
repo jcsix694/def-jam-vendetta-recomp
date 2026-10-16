@@ -508,6 +508,12 @@ namespace vendetta_mods
         return mods;
     }
 
+    bool detailLog()
+    {
+        static const bool on = std::getenv("VENDETTA_MODLOG") && *std::getenv("VENDETTA_MODLOG") != '0';
+        return on;
+    }
+
     std::filesystem::path modFile(const Mod &mod, const std::string &relative, const char *what)
     {
         const std::filesystem::path path = (mod.folder / std::filesystem::path(relative)).lexically_normal();

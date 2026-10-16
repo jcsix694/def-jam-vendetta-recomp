@@ -38,6 +38,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -285,6 +286,7 @@ namespace vendetta_moves
         public:
             explicit Reader(std::string mod) : m_mod(std::move(mod)) {}
             std::vector<std::string> problems;
+            std::vector<std::filesystem::path> files; // every file it opened (or tried to), for the rematch's check
 
             std::unique_ptr<Move> read(const std::filesystem::path &folder, bool isStage)
             {
@@ -601,6 +603,7 @@ namespace vendetta_moves
 
             bool load(const std::filesystem::path &file, Json &out)
             {
+                files.push_back(file);
                 std::ifstream in(file, std::ios::binary);
                 if (!in)
                 {
@@ -754,6 +757,7 @@ namespace vendetta_moves
                 a.role = role.name;
                 a.file = (folder / fileName).lexically_normal();
                 const std::string here = m_where;
+                files.push_back(a.file);
                 {
                     std::ifstream in(a.file, std::ios::binary);
                     if (!in)
@@ -899,7 +903,8 @@ namespace vendetta_moves
                 if (carries(15))
                     if (const Json *e = s.find("eyes"))
                     {
-                        std::ifstream in(folder / (e->isString() ? e->text : std::string()), std::ios::binary);
+                        files.push_back(folder / (e->isString() ? e->text : std::string()));
+                        std::ifstream in(files.back(), std::ios::binary);
                         if (!e->isString() || !in)
                             fail("\"eyes\": the eye track file can't be read");
                         else
@@ -1080,9 +1085,25 @@ namespace vendetta_moves
         }
 
         // ------------------------------------------------------------------------------------------ the mods' moves
-        std::vector<std::pair<std::string, std::unique_ptr<Move>>> g_moves; // (mod, move)
+        // At start-up each listed move's move.json is read only for its name (a moveset file names moves by it); the
+        // whole folder is read at the match that uses the move.
+        struct Known
+        {
+            std::string mod;
+            std::filesystem::path folder;
+            std::string name; // move.json's "name", else the folder's
+        };
+        std::vector<Known> g_known; // in load order
+        std::unordered_map<std::string, std::vector<size_t>> g_knownByName; // upper-case name and folder name -> g_known, in order
 
-        void readModMoves()
+        std::string upper(std::string s)
+        {
+            for (char &c : s)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            return s;
+        }
+
+        void indexModMoves()
         {
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
@@ -1106,23 +1127,45 @@ namespace vendetta_moves
                     const std::filesystem::path moveJson = vendetta_mods::modFile(mod, item.text + "/move.json", "move");
                     if (moveJson.empty())
                         continue;
-                    Reader reader(mod.name);
-                    std::unique_ptr<Move> mv = reader.read(moveJson.parent_path(), false);
-                    if (!reader.problems.empty() || !mv)
+                    std::ifstream in(moveJson, std::ios::binary);
+                    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                    Json j;
+                    std::string error;
+                    if (!in || !vendetta_mods::parseJson(text, j, error) || !j.isObject())
                     {
-                        for (const std::string &p : reader.problems)
-                            std::cerr << "[moves] " << p << std::endl;
-                        std::cerr << "[moves] " << mod.name << ": \"" << item.text << "\" skipped (" << reader.problems.size()
-                                  << " problem" << (reader.problems.size() == 1 ? "" : "s") << ")" << std::endl;
+                        std::cerr << "[moves] " << mod.name << ": " << moveJson.string() << ": not a JSON object"
+                                  << (error.empty() ? "" : ": " + error) << " - \"" << item.text << "\" skipped" << std::endl;
                         continue;
                     }
-                    std::cerr << "[moves] " << mod.name << ": " << mv->name << " (" << mv->type
-                              << (mv->kind.empty() ? "" : ", " + mv->kind) << ") read: " << countParts(*mv) << " part(s), "
-                              << mv->animations.size() << " animation(s); not added to the game yet" << std::endl;
-                    g_moves.push_back({mod.name, std::move(mv)});
+                    const Json *name = j.find("name");
+                    g_known.push_back({mod.name, moveJson.parent_path(),
+                                       name && name->isString() && !name->text.empty() ? name->text
+                                                                                       : moveJson.parent_path().filename().string()});
                 }
             }
+            for (size_t i = 0; i < g_known.size(); ++i)
+            {
+                std::vector<size_t> &byName = g_knownByName[upper(g_known[i].name)];
+                byName.push_back(i);
+                std::vector<size_t> &byFolder = g_knownByName[upper(g_known[i].folder.filename().string())];
+                if (byFolder.empty() || byFolder.back() != i)
+                    byFolder.push_back(i);
+            }
+            if (!g_known.empty())
+                std::cerr << "[moves] " << g_known.size() << " new move(s) in the mods; each is read at the match that uses it"
+                          << std::endl;
         }
+
+        // the moves with this name on screen or folder name (any case), in the load order; the first that reads without a
+        // problem is the one used
+        const std::vector<size_t> *knownNamed(const std::string &name)
+        {
+            const auto found = g_knownByName.find(upper(name));
+            return found == g_knownByName.end() ? nullptr : &found->second;
+        }
+
+        std::vector<std::pair<std::string, std::unique_ptr<Move>>> g_moves; // this match's (mod, move)
+        std::vector<std::filesystem::path> g_files;                         // the files this match's moves were read from
     }
 
     namespace
@@ -1137,6 +1180,8 @@ namespace vendetta_moves
         constexpr uint32_t kMaxRecord = 4095u;   // moveset slots and links hold 12 bits
         constexpr uint32_t kMaxCamera = 1023u;   // playback field 14 holds 10 bits
         constexpr uint32_t kMaxEyes = 511u;      // playback field 15 holds 9 bits (the track + 1)
+        constexpr uint32_t kNameBytes = 0xFFFFu; // the names' offsets are u16
+        constexpr size_t kNameChars = 31u;       // the move-name popup's text box (32 bytes at + 0x14, no check)
         const std::array<uint32_t, 31> kMoveBits = {8, 6, 6, 7, 4, 3, 3, 5, 5, 5, 5, 4, 3, 3, 3, 3,
                                                     3, 3, 4, 5, 4, 5, 4, 5, 32, 8, 10, 7, 12, 12, 12};
         const std::array<uint32_t, 30> kPlayBits = {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 3, 7, 11, 4, 10, 9, 8, 8,
@@ -1144,6 +1189,12 @@ namespace vendetta_moves
 
         uint8_t *guest(uint32_t address) { return g_rdram + (address & PS2_RAM_MASK); }
         void write32(uint32_t address, uint32_t value) { std::memcpy(guest(address), &value, 4); }
+
+        bool poisonOn()
+        {
+            static const bool on = std::getenv("VENDETTA_ANIM_POISON") && *std::getenv("VENDETTA_ANIM_POISON") != '0';
+            return on;
+        }
 
         // most significant bit first, as FUN_0011c608 / FUN_0011c968 unpack them
         template <size_t N>
@@ -1214,53 +1265,189 @@ namespace vendetta_moves
                 numberRecords(*mv.next, next);
         }
 
-        // PAK 0 / PAK 1 (a table of self-relative offsets, entries anywhere): every entry moved to the store and the table
-        // rewritten in place with room for `extra` more, the new entries' data placed too. Returns the first new entry's
-        // number, or -1. `size` measures an entry.
-        int growPak(uint32_t pak, const std::vector<std::vector<uint8_t>> &extra, uint32_t limit, const char *user,
-                    uint32_t (*size)(uint32_t entry, uint32_t next))
+        // what a move takes of the match's room: clips, records, camera paths, eye tracks
+        struct Need
         {
+            uint32_t clips = 0, records = 0, cameras = 0, eyes = 0;
+        };
+        void needOf(const Move &mv, Need &need)
+        {
+            ++need.records;
+            for (const Animation &a : mv.animations)
+            {
+                ++need.clips;
+                need.cameras += static_cast<uint32_t>(a.cameras.size() == 4u ? 4u : (a.cameras.empty() ? 0u : 1u));
+                need.eyes += a.eyes.empty() ? 0u : 1u;
+            }
+            if (mv.stage)
+                needOf(*mv.stage, need);
+            if (mv.next)
+                needOf(*mv.next, need);
+        }
+
+        // ---- the tables, made full size once (the first match load) and put back to the game's own at each match
+        bool g_tablesReady = false;
+        uint32_t g_stride = 0, g_gameRecords = 0, g_recordArray = 0;
+        std::vector<std::string> g_gameNames;
+        uint32_t g_nameOffsets = 0, g_nameStrings = 0;
+        uint32_t g_poisonBlock = 0; // VENDETTA_ANIM_POISON: 64 bytes of 0xFF the unused entries point at
+
+        // A PAK table (PAK 0 / PAK 1: self-relative offsets, entries anywhere) at its full size: every entry's data moved
+        // to the store and the table rewritten in place with `limit` + 1 slots (or as many as the PAK's own bytes hold),
+        // the spare ones pointing at the first entry (a harmless stand-in). Mods' entries go after the game's per match.
+        struct Pak
+        {
+            uint32_t base = 0;
+            uint32_t game = 0;     // the game's own entries
+            uint32_t capacity = 0; // slots in the rewritten table
+            uint32_t standIn = 0;  // where a spare slot points
+            std::vector<uint32_t> gameData; // where the game's entries' data now sit
+        };
+        Pak g_cameras, g_eyes;
+
+        bool fixPak(Pak &p, uint32_t pak, uint32_t limit, const char *user, uint32_t (*size)(uint32_t entry, uint32_t next))
+        {
+            p.base = pak;
             if (std::memcmp(guest(pak), "PAK ", 4) != 0)
-                return -1;
+                return false;
             const uint32_t count = read32(pak + 8u);
-            if (count + extra.size() > limit + 1u)
-                return -1;
+            const uint32_t end = pak + 8u + read32(pak + 4u); // the size field counts from after the 8-byte "PAK " + size header
             std::vector<uint32_t> at(count);
             for (uint32_t n = 0; n < count; ++n)
                 at[n] = pak + 0xCu + 4u * n + read32(pak + 0xCu + 4u * n);
             std::vector<uint32_t> sorted = at;
             std::sort(sorted.begin(), sorted.end());
-            const uint32_t end = pak + 8u + read32(pak + 4u); // the size field counts from after the 8-byte "PAK " + size header
-            std::vector<uint32_t> moved(count);
+            p.gameData.assign(count, 0u);
             for (uint32_t n = 0; n < count; ++n)
             {
                 const auto next = std::upper_bound(sorted.begin(), sorted.end(), at[n]);
                 const uint32_t bytes = size(at[n], next != sorted.end() ? *next : end);
-                moved[n] = vendetta_store::allocate(vendetta_store::Area::Boot, bytes, user, 16u, 0u);
-                if (moved[n] == 0u)
-                    return -1;
-                std::memcpy(guest(moved[n]), guest(at[n]), bytes);
+                p.gameData[n] = vendetta_store::allocate(vendetta_store::Area::Boot, bytes, user, 16u, 0u);
+                if (p.gameData[n] == 0u)
+                    return false;
+                std::memcpy(guest(p.gameData[n]), guest(at[n]), bytes);
             }
+            p.game = count;
+            p.capacity = std::min<uint32_t>(limit + 1u, (end - (pak + 0xCu)) / 4u);
+            p.standIn = count ? p.gameData[0] : 0u;
+            if (poisonOn())
+            {
+                // the game's old data under the rewritten table, never read again
+                const uint32_t tableEnd = pak + 0xCu + 4u * p.capacity;
+                if (end > tableEnd)
+                    std::memset(guest(tableEnd), 0xFF, end - tableEnd);
+            }
+            return true;
+        }
+
+        void pointPak(const Pak &p, uint32_t n, uint32_t address)
+        {
+            const uint32_t slot = p.base + 0xCu + 4u * n;
+            write32(slot, address - slot); // unsigned wrap-around = signed
+        }
+
+        void resetPak(const Pak &p)
+        {
+            if (p.capacity == 0u)
+                return;
+            for (uint32_t n = 0; n < p.capacity; ++n)
+                pointPak(p, n, n < p.game ? p.gameData[n] : (poisonOn() ? g_poisonBlock : p.standIn));
+            write32(p.base + 8u, p.game);
+        }
+
+        // this match's entries after the game's; returns the first one's number, or -1 (no room: nothing changed)
+        int addPak(const Pak &p, const std::vector<std::vector<uint8_t>> &extra, const char *user)
+        {
+            const uint32_t count = read32(p.base + 8u);
+            if (p.capacity == 0u || count + extra.size() > p.capacity)
+                return -1;
             std::vector<uint32_t> added(extra.size());
             for (size_t i = 0; i < extra.size(); ++i)
             {
-                added[i] = vendetta_store::allocate(vendetta_store::Area::Boot, static_cast<uint32_t>(extra[i].size()), user, 16u, 0u);
+                added[i] = vendetta_store::allocate(vendetta_store::Area::Match, static_cast<uint32_t>(extra[i].size()), user, 16u, 0u);
                 if (added[i] == 0u)
                     return -1;
                 std::memcpy(guest(added[i]), extra[i].data(), extra[i].size());
             }
-            const uint32_t total = count + static_cast<uint32_t>(extra.size());
-            for (uint32_t n = 0; n < total; ++n)
-            {
-                const uint32_t slot = pak + 0xCu + 4u * n;
-                write32(slot, (n < count ? moved[n] : added[n - count]) - slot); // unsigned wrap-around = signed
-            }
-            write32(pak + 8u, total);
+            for (size_t i = 0; i < extra.size(); ++i)
+                pointPak(p, count + static_cast<uint32_t>(i), added[i]);
+            write32(p.base + 8u, count + static_cast<uint32_t>(extra.size()));
             return static_cast<int>(count);
         }
 
         uint32_t cameraSize(uint32_t entry, uint32_t) { return 8u + 0x24u * read32(entry + 4u); }
         uint32_t toNext(uint32_t entry, uint32_t next) { return next - entry; }
+
+        // the NAME block (FUN_0011c5d0: strings + offsets[n] for n < count) rewritten in the store's copy
+        bool writeNames(const std::vector<std::string> &names)
+        {
+            std::vector<uint8_t> text;
+            std::vector<uint16_t> at(names.size());
+            for (size_t n = 0; n < names.size(); ++n)
+            {
+                if (text.size() + names[n].size() + 1u > kNameBytes)
+                    return false;
+                at[n] = static_cast<uint16_t>(text.size());
+                text.insert(text.end(), names[n].begin(), names[n].end());
+                text.push_back(0);
+            }
+            std::memcpy(guest(g_nameOffsets), at.data(), 2u * at.size());
+            std::memcpy(guest(g_nameStrings), text.data(), text.size());
+            write32(kWaza + kNames + 4u, static_cast<uint32_t>(names.size()));
+            return true;
+        }
+
+        // Once: the move records, the names and both PAKs copied to the store at their full size (4,096 records, 64 KB
+        // of names, 1,024 camera paths, 511 eye tracks), so a match only ever changes their contents.
+        void prepareTables()
+        {
+            g_stride = read32(kWaza + 4u);
+            g_gameRecords = read32(kWaza + 8u);
+            const uint32_t oldRecords = read32(kWaza + kRecordArray);
+            if (poisonOn())
+            {
+                g_poisonBlock = vendetta_store::allocate(vendetta_store::Area::Boot, 64u, "stand-ins (poison test)", 16u, 0u);
+                if (g_poisonBlock)
+                    std::memset(guest(g_poisonBlock), 0xFF, 64u);
+            }
+            g_recordArray = vendetta_store::allocate(vendetta_store::Area::Boot, (kMaxRecord + 1u) * g_stride, "move records", 16u, 0u);
+            const uint32_t nameCount = read32(kWaza + kNames + 4u);
+            const uint32_t offsets = read32(kWaza + kNames + 8u);
+            const uint32_t strings = read32(kWaza + kNames + 0xCu);
+            g_nameOffsets = vendetta_store::allocate(vendetta_store::Area::Boot, 2u * (kMaxRecord + 1u), "move names", 16u, 0u);
+            g_nameStrings = vendetta_store::allocate(vendetta_store::Area::Boot, kNameBytes + 1u, "move names", 16u, 0u);
+            if (!g_recordArray || !g_nameOffsets || !g_nameStrings || (poisonOn() && !g_poisonBlock))
+                return;
+            std::memcpy(guest(g_recordArray), guest(oldRecords), g_gameRecords * g_stride);
+            uint32_t namesEnd = strings;
+            for (uint32_t n = 0; n < nameCount; ++n)
+            {
+                uint16_t off = 0;
+                std::memcpy(&off, guest(offsets + 2u * n), 2);
+                g_gameNames.push_back(guestString(strings + off));
+                namesEnd = std::max<uint32_t>(namesEnd, strings + off + static_cast<uint32_t>(g_gameNames.back().size()) + 1u);
+            }
+            if (!fixPak(g_cameras, kPak0, kMaxCamera, "camera paths", cameraSize))
+                std::cerr << "[moves] the camera paths could not be moved: intros and victories from mods use no camera" << std::endl;
+            if (!fixPak(g_eyes, kPak1, kMaxEyes - 1u, "eye tracks", toNext))
+                std::cerr << "[moves] the eye tracks could not be moved: animations from mods move no eyes" << std::endl;
+            write32(kWaza + kRecordArray, g_recordArray);
+            write32(kWaza + kNames + 8u, g_nameOffsets);
+            write32(kWaza + kNames + 0xCu, g_nameStrings);
+            if (poisonOn())
+            {
+                // what the game will never read again: its old records and names
+                std::memset(guest(oldRecords), 0xFF, g_gameRecords * g_stride);
+                std::memset(guest(offsets), 0xFF, 2u * nameCount);
+                std::memset(guest(strings), 0xFF, namesEnd - strings);
+            }
+            g_tablesReady = true;
+        }
+
+        uint32_t limitOf(const Pak &p) { return p.capacity > p.game ? p.capacity - p.game : 0u; }
+
+        // an intro's four paths sit at f14 + {spot 0: 1, spot 1: 3, spot 2: 0, spot 3: 2} (the camera path player, FUN_00104278)
+        constexpr uint32_t kCornerOffset[4] = {1, 3, 0, 2};
 
         std::vector<uint8_t> cameraBytes(const std::vector<CameraKey> &keys)
         {
@@ -1280,9 +1467,6 @@ namespace vendetta_moves
             return out;
         }
 
-        // an intro's four paths sit at f14 + {spot 0: 1, spot 1: 3, spot 2: 0, spot 3: 2} (the camera path player, FUN_00104278)
-        constexpr uint32_t kCornerOffset[4] = {1, 3, 0, 2};
-
         void applyMoves()
         {
             // which top-level moves made it in whole
@@ -1293,7 +1477,7 @@ namespace vendetta_moves
                 if (clipsOk(*mv, first))
                     ok.push_back({mod, mv});
                 else
-                    std::cerr << "[moves] " << mod << ": " << mv->name << " skipped: not all of its animations could be added"
+                    std::cerr << "[moves] " << mod << ": " << mv->name << " left out: not all of its animations could be added"
                               << std::endl;
             }
             if (ok.empty())
@@ -1344,39 +1528,30 @@ namespace vendetta_moves
             int firstCamera = 0, firstEyes = 0;
             if (!cameras.empty())
             {
-                firstCamera = growPak(kPak0, cameras, kMaxCamera, "camera paths", cameraSize);
+                firstCamera = addPak(g_cameras, cameras, "camera paths");
                 if (firstCamera < 0)
-                    std::cerr << "[moves] the camera paths could not be added (more than 1,024, or no room): intros and "
-                                 "victories from mods use no camera" << std::endl;
+                    std::cerr << "[moves] the camera paths could not be added: intros and victories from mods use no camera"
+                              << std::endl;
             }
             if (!eyes.empty())
             {
-                firstEyes = growPak(kPak1, eyes, kMaxEyes - 1u, "eye tracks", toNext);
+                firstEyes = addPak(g_eyes, eyes, "eye tracks");
                 if (firstEyes < 0)
                     std::cerr << "[moves] the eye tracks could not be added: animations from mods move no eyes" << std::endl;
             }
 
-            // ---- move records
-            const uint32_t stride = read32(kWaza + 4u);
-            const uint32_t oldArray = read32(kWaza + kRecordArray);
+            // ---- move records, in the store's full-size array after the game's
             const uint32_t oldCount = read32(kWaza + 8u);
             uint32_t next = oldCount;
             for (auto &[mod, mv] : ok)
                 numberRecords(*mv, next);
             if (next - 1u > kMaxRecord)
             {
-                std::cerr << "[moves] " << next << " moves in all, but a moveset slot holds 12 bits (4,096): new moves skipped"
+                std::cerr << "[moves] " << next << " moves in all, but a moveset slot holds 12 bits (4,096): new moves left out"
                           << std::endl;
                 g_record.clear();
                 return;
             }
-            const uint32_t array = vendetta_store::allocate(vendetta_store::Area::Boot, next * stride, "move records", 16u, 0u);
-            if (array == 0u)
-            {
-                g_record.clear();
-                return;
-            }
-            std::memcpy(guest(array), guest(oldArray), oldCount * stride);
             const uint32_t timing = read32(kWaza + kTimingArray);
             const uint32_t timingStride = read32(kWaza + kTimingStride);
             static const bool log = std::getenv("VENDETTA_MOVELOG") && *std::getenv("VENDETTA_MOVELOG") != '0';
@@ -1386,7 +1561,7 @@ namespace vendetta_moves
                 m[28] = firstClip(*part);
                 m[29] = part->stage ? g_record.at(part->stage.get()) : 0u;
                 m[30] = part->next ? g_record.at(part->next.get()) : 0u;
-                packBits(m, kMoveBits, guest(array + record * stride), stride);
+                packBits(m, kMoveBits, guest(g_recordArray + record * g_stride), g_stride);
                 for (size_t k = 0; k < part->animations.size(); ++k)
                 {
                     const Animation &a = part->animations[k];
@@ -1414,83 +1589,34 @@ namespace vendetta_moves
                     std::cerr << std::endl;
                 }
             }
-            write32(kWaza + kRecordArray, array);
             write32(kWaza + 8u, next);
 
-            // ---- names: the NAME block rebuilt in the store with the new ones (FUN_0011c5d0: strings + offsets[n])
-            const uint32_t nameCount = read32(kWaza + kNames + 4u);
-            const uint32_t offsets = read32(kWaza + kNames + 8u);
-            const uint32_t strings = read32(kWaza + kNames + 0xCu);
-            std::vector<std::string> names(next);
-            for (uint32_t n = 0; n < nameCount && n < next; ++n)
-            {
-                uint16_t off = 0;
-                std::memcpy(&off, guest(offsets + 2u * n), 2);
-                names[n] = guestString(strings + off);
-            }
+            // ---- names: the game's 999 and the new ones (a name over 31 characters is cut: the popup's box holds 32
+            // bytes and the game copies into it without a check)
+            std::vector<std::string> names = g_gameNames;
+            names.resize(next);
             for (const auto &[part, record] : g_record)
-                names[record] = part->name.empty() ? part->folder.filename().string() : part->name;
-            std::vector<uint8_t> text;
-            std::vector<uint16_t> at(next);
-            for (uint32_t n = 0; n < next; ++n)
             {
-                at[n] = static_cast<uint16_t>(text.size());
-                text.insert(text.end(), names[n].begin(), names[n].end());
-                text.push_back(0);
+                std::string name = part->name.empty() ? part->folder.filename().string() : part->name;
+                if (name.size() > kNameChars)
+                {
+                    std::cerr << "[moves] " << name << ": the name is longer than the " << kNameChars
+                              << " characters the game's box holds - cut to \"" << name.substr(0, kNameChars) << "\"" << std::endl;
+                    name.resize(kNameChars);
+                }
+                names[record] = name;
             }
-            if (text.size() > 0xFFFFu)
+            if (!writeNames(names))
+            {
                 std::cerr << "[moves] the move names are over 64 KB in all: the new names don't show" << std::endl;
-            else
-            {
-                const uint32_t newOffsets = vendetta_store::allocate(vendetta_store::Area::Boot, 2u * next, "move names", 16u, 0u);
-                const uint32_t newStrings =
-                    vendetta_store::allocate(vendetta_store::Area::Boot, static_cast<uint32_t>(text.size()), "move names", 16u, 0u);
-                if (newOffsets && newStrings)
-                {
-                    std::memcpy(guest(newOffsets), at.data(), 2u * next);
-                    std::memcpy(guest(newStrings), text.data(), text.size());
-                    write32(kWaza + kNames + 8u, newOffsets);
-                    write32(kWaza + kNames + 0xCu, newStrings);
-                    write32(kWaza + kNames + 4u, next);
-                }
-            }
-
-            // VENDETTA_ANIM_POISON=1 (the animation loader's test switch): 0xFF over what the moves made unused - the old
-            // move records, the old names, the camera paths' and eye tracks' old data under their rewritten tables
-            if (const char *poison = std::getenv("VENDETTA_ANIM_POISON"); poison && *poison && *poison != '0')
-            {
-                uint32_t bytes = 0;
-                auto fill = [&bytes](uint32_t from, uint32_t to)
-                {
-                    if (to > from)
-                    {
-                        std::memset(guest(from), 0xFF, to - from);
-                        bytes += to - from;
-                    }
-                };
-                fill(oldArray, oldArray + oldCount * stride);
-                if (read32(kWaza + kNames + 8u) != offsets)
-                {
-                    uint32_t end = strings;
-                    for (uint32_t n = 0; n < nameCount; ++n)
-                    {
-                        uint16_t off = 0;
-                        std::memcpy(&off, guest(offsets + 2u * n), 2);
-                        end = std::max<uint32_t>(end, strings + off + static_cast<uint32_t>(guestString(strings + off).size()) + 1u);
-                    }
-                    fill(offsets, offsets + 2u * nameCount);
-                    fill(strings, end);
-                }
-                for (const auto &[pak, grown] : {std::make_pair(kPak0, !cameras.empty() && firstCamera >= 0),
-                                                 std::make_pair(kPak1, !eyes.empty() && firstEyes >= 0)})
-                    if (grown)
-                        fill(pak + 0xCu + 4u * read32(pak + 8u), pak + read32(pak + 4u));
-                std::cerr << "[moves] VENDETTA_ANIM_POISON: " << bytes << " bytes the new moves made unused filled with 0xFF"
-                          << std::endl;
+                names.resize(g_gameNames.size());
+                writeNames(names);
             }
 
             for (auto &[mod, mv] : ok)
             {
+                if (!vendetta_mods::detailLog())
+                    break;
                 std::cerr << "[moves] " << mod << ": " << mv->name << " (" << mv->type << (mv->kind.empty() ? "" : ", " + mv->kind)
                           << ") added as move " << g_record.at(mv) << ", clips " << firstClip(*mv) << "-"
                           << firstClip(*mv) + mv->animations.size() - 1u;
@@ -1522,13 +1648,112 @@ namespace vendetta_moves
         buildTypes();
         buildEndings();
         moveCheck();
-        readModMoves();
+        indexModMoves();
+        prepareTables();
+    }
+
+    bool isMove(const std::string &name) { return knownNamed(name) != nullptr; }
+
+    void reset()
+    {
+        g_moves.clear();
+        g_flat.clear();
+        g_top.clear();
+        g_record.clear();
+        g_files.clear();
+        if (!g_tablesReady)
+            return;
+        // the spare records: a copy of record 0 (a harmless stand-in), or 0xFF in the poison test
+        for (uint32_t r = g_gameRecords; r <= kMaxRecord; ++r)
+        {
+            uint8_t *to = guest(g_recordArray + r * g_stride);
+            if (poisonOn())
+                std::memset(to, 0xFF, g_stride);
+            else
+                std::memcpy(to, guest(g_recordArray), g_stride);
+        }
+        write32(kWaza + 8u, g_gameRecords);
+        writeNames(g_gameNames);
+        resetPak(g_cameras);
+        resetPak(g_eyes);
+    }
+
+    void load(const std::set<std::string> &names, uint32_t clipRoom)
+    {
+        if (!g_tablesReady)
+            return;
+        // each named move's candidates, the names in the load order of their first candidate
+        std::vector<const std::vector<size_t> *> lists;
+        for (const std::string &name : names)
+            if (const std::vector<size_t> *list = knownNamed(name))
+                if (std::find(lists.begin(), lists.end(), list) == lists.end())
+                    lists.push_back(list);
+        std::sort(lists.begin(), lists.end(), [](const auto *a, const auto *b) { return a->front() < b->front(); });
+        Need room;
+        room.clips = clipRoom;
+        room.records = kMaxRecord + 1u - g_gameRecords;
+        room.cameras = limitOf(g_cameras);
+        room.eyes = limitOf(g_eyes);
+        std::set<size_t> tried, chosen;
+        std::vector<std::pair<size_t, std::unique_ptr<Move>>> picked;
+        for (const std::vector<size_t> *list : lists)
+        {
+            if (std::any_of(list->begin(), list->end(), [&](size_t i) { return chosen.count(i) != 0; }))
+                continue; // the same move under another name
+            bool used = false;
+            for (size_t i : *list)
+            {
+                if (!tried.insert(i).second)
+                    continue;
+                const Known &k = g_known[i];
+                Reader reader(k.mod);
+                std::unique_ptr<Move> mv = reader.read(k.folder, false);
+                g_files.insert(g_files.end(), reader.files.begin(), reader.files.end());
+                if (!reader.problems.empty() || !mv)
+                {
+                    for (const std::string &p : reader.problems)
+                        std::cerr << "[moves] " << p << std::endl;
+                    std::cerr << "[moves] " << k.mod << ": " << k.name << " left out of this match (" << reader.problems.size()
+                              << " problem" << (reader.problems.size() == 1 ? "" : "s") << ")" << std::endl;
+                    continue;
+                }
+                Need need;
+                needOf(*mv, need);
+                const char *full = need.clips > room.clips       ? "animations"
+                                   : need.records > room.records ? "moves"
+                                   : need.cameras > room.cameras ? "camera paths"
+                                   : need.eyes > room.eyes       ? "eye tracks"
+                                                                 : nullptr;
+                if (full)
+                {
+                    std::cerr << "[moves] " << k.mod << ": " << k.name << " left out of this match: the match's room for new "
+                              << full << " is used up (the numbers stop at 4,095)" << std::endl;
+                    break;
+                }
+                room.clips -= need.clips;
+                room.records -= need.records;
+                room.cameras -= need.cameras;
+                room.eyes -= need.eyes;
+                chosen.insert(i);
+                picked.push_back({i, std::move(mv)});
+                used = true;
+                break;
+            }
+            if (!used)
+                std::cerr << "[moves] " << g_known[list->front()].name
+                          << ": no copy of it could be used in this match: its slots keep the game's moves" << std::endl;
+        }
+        std::sort(picked.begin(), picked.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+        for (auto &[i, mv] : picked)
+            g_moves.push_back({g_known[i].mod, std::move(mv)});
         for (auto &[mod, mv] : g_moves)
         {
             g_top.push_back({mod, mv.get()});
             flatten(*mv, mod);
         }
     }
+
+    const std::vector<std::filesystem::path> &filesRead() { return g_files; }
 
     std::vector<ClipToAdd> clipsToAdd()
     {
@@ -1547,18 +1772,12 @@ namespace vendetta_moves
 
     void apply()
     {
-        if (g_rdram && !g_top.empty())
+        if (g_rdram && g_tablesReady && !g_top.empty())
             applyMoves();
     }
 
     int recordOf(const std::string &name)
     {
-        auto upper = [](std::string s)
-        {
-            for (char &c : s)
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            return s;
-        };
         for (const auto &[mod, mv] : g_top)
             if (g_record.count(mv) &&
                 (upper(mv->name) == upper(name) || upper(mv->folder.filename().string()) == upper(name)))
