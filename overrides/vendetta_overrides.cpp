@@ -33,6 +33,7 @@ void installVendettaCamera(PS2Runtime &runtime);     // vendetta_camera.cpp: the
 void installVendettaUnlocks(PS2Runtime &runtime);    // vendetta_unlocks.cpp: unlock everything, the save unchanged (VENDETTA_UNLOCKALL)
 void installVendettaMenu(PS2Runtime &runtime);       // vendetta_menu.cpp: the main menu's Quit item (with config/patches.toml)
 void installVendettaMatchSpeed(PS2Runtime &runtime); // vendetta_matchspeed.cpp: the fight's speed (VENDETTA_MATCH_SPEED)
+void installVendettaTestMatch(PS2Runtime &runtime);  // vendetta_testmatch.cpp: a test match from a file (--test-match)
 
 namespace
 {
@@ -572,6 +573,7 @@ namespace
         installVendettaUnlocks(runtime);
         installVendettaMenu(runtime);
         installVendettaMatchSpeed(runtime);
+        installVendettaTestMatch(runtime);
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         // a project keeps its own memory cards: projects\<name>\saves\mc0 (and mc1 beside it); the original game keeps
         // the ones beside the program's game folder
