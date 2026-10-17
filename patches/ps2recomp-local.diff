@@ -2798,18 +2798,40 @@ index 589d768..0189154 100644
      set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1") 
      set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
 diff --git a/ps2xRuntime/cmake/ReleaseMode.cmake b/ps2xRuntime/cmake/ReleaseMode.cmake
-index 92ef0d5..163ceb0 100644
+index 92ef0d5..53f0528 100644
 --- a/ps2xRuntime/cmake/ReleaseMode.cmake
 +++ b/ps2xRuntime/cmake/ReleaseMode.cmake
-@@ -15,7 +15,7 @@ function(EnableFastReleaseMode TargetName)
+@@ -2,9 +2,18 @@ include(CheckIPOSupported)
+ 
+ check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR)
+ 
++# The instruction set the release builds may use. A program built for AVX2 stops at once with an illegal instruction
++# (0xC000001D) on a processor without it, so a build for another PC sets this from that PC's processor:
++# empty = x64's own baseline (SSE2; the runtime's intrinsics still need SSE4.1).
++set(PS2X_MSVC_ARCH "AVX2" CACHE STRING "MSVC /arch for the release builds: AVX2, AVX, or empty for the x64 default")
++
+ function(EnableFastReleaseMode TargetName)
+     message("> Enabling optimization for: ${TargetName}")
+     if(MSVC)
++        set(arch_flag "")
++        if(PS2X_MSVC_ARCH)
++            set(arch_flag "/arch:${PS2X_MSVC_ARCH}")
++        endif()
+         target_compile_options(${TargetName} PRIVATE
+             $<$<CONFIG:Release>:
+                 /O2 # speed
+@@ -15,9 +24,9 @@ function(EnableFastReleaseMode TargetName)
                  /Gw # global data in COMDAT
                  /GF # string pooling
                  /Zc:inline # remove unreferenced inline
 -                /fp:fast # fast math (graphics friendly)
 +                /fp:precise # exact float maths: the game's float code and the VU model must not be reordered or fused
                  /DNDEBUG
-                 /arch:AVX2 # Advanced Vector Extensions 2
+-                /arch:AVX2 # Advanced Vector Extensions 2
++                ${arch_flag} # PS2X_MSVC_ARCH (AVX2 by default)
                  /GS- # Disable Buffer Security Check (faster)
+                 /Qspectre- # Disable Spectre mitigations (faster)
+             >
 diff --git a/ps2xRuntime/include/game_overrides.h b/ps2xRuntime/include/game_overrides.h
 index 3afaa31..a905ac0 100644
 --- a/ps2xRuntime/include/game_overrides.h

@@ -76,6 +76,14 @@ KNOWN_ERRORS = [
 ]
 
 
+def exit_meaning(code):
+    """What a program's exit code means, in plain words, when it is a crash a player can act on."""
+    if code & 0xFFFFFFFF == 0xC000001D:  # STATUS_ILLEGAL_INSTRUCTION
+        return ('. It used an instruction your processor does not have. Please report it with the name of your '
+                'processor (Settings > System > About)')
+    return ''
+
+
 def error_details(lines, keep=6, width=240):
     """The last few error lines of a tool's output (or its last lines, when none look like errors)."""
     picked = [line for line in lines if ERROR_LINE.search(line)] or list(lines)
@@ -101,7 +109,8 @@ def run(cmd, env=None, cwd=None, parse=None, log_name=None):
             parse(line)
     if proc.wait() != 0:
         raise SetupError(f'{os.path.basename(cmd[0])} failed (exit code {proc.returncode})'
-                         + (f'; see {log_name}' if log_name else ''), error_details(last))
+                         + (f'; see {log_name}' if log_name else '') + exit_meaning(proc.returncode),
+                         error_details(last))
 
 
 # --- 1. the build tools ---------------------------------------------------------------------------------------------
@@ -208,6 +217,18 @@ def deps_args():
     return args
 
 
+def processor_arch():
+    """The instruction set to build for, from this PC's processor: AVX2 where it has it, else x64's own baseline. A
+    program built for AVX2 stops at once on a processor without it (exit code 0xC000001D, an illegal instruction)."""
+    PF_AVX2_INSTRUCTIONS_AVAILABLE = 40
+    try:
+        avx2 = bool(ctypes.windll.kernel32.IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE))
+    except (AttributeError, OSError):
+        avx2 = False
+    say(f"this PC's processor: {'AVX2' if avx2 else 'no AVX2'}")
+    return 'AVX2' if avx2 else ''
+
+
 def build_jobs():
     """Parallel compiles: the cores, but about one per 3 GB of memory and one per 2 GB of commit free right now (the
     game's big files need ~2 GB each, and a browser or a game left open leaves less than the PC has). Commit (memory +
@@ -275,11 +296,12 @@ def fix_future_dates(folder):
         say(f'{fixed} files were dated in the future: dated now')
 
 
-def step_recompiler(env, data):
+def step_recompiler(env, data, arch):
     step(3, STEPS[2])
     build = os.path.join(data, 'build', 'recomp')
     run(['cmake', '-S', PS2RECOMP, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DPS2X_BUILD_RUNTIME=OFF',
-         '-DPS2X_BUILD_TEST=OFF', '-DPS2X_BUILD_STUDIO=OFF', '-DPS2X_BUILD_ANALYZER=OFF'] + deps_args(), env=env)
+         '-DPS2X_BUILD_TEST=OFF', '-DPS2X_BUILD_STUDIO=OFF', '-DPS2X_BUILD_ANALYZER=OFF',
+         f'-DPS2X_MSVC_ARCH={arch}'] + deps_args(), env=env)
     progress(0.1)
     build_with_retry(build, env, 0.1, 1.0)
     exe = os.path.join(build, 'ps2xRecomp', 'ps2_recomp.exe')
@@ -314,7 +336,7 @@ def step_recompile(recompiler, data):
         code = subprocess.run([recompiler, os.path.join(SRC, 'config', 'vendetta.toml')], cwd=SRC, env=env,
                               stdout=out, stderr=subprocess.STDOUT).returncode
     if code != 0:
-        raise SetupError(f'the recompiler failed (exit code {code}); see {log}')
+        raise SetupError(f'the recompiler failed (exit code {code}); see {log}' + exit_meaning(code))
     progress(0.15)
     run([sys.executable, os.path.join(SRC, 'tools', 'vu1_recomp.py')], env=env, cwd=SRC)
     progress(0.18)
@@ -323,12 +345,14 @@ def step_recompile(recompiler, data):
     progress(1.0)
 
 
-def step_game(env, data):
+def step_game(env, data, arch):
     step(5, STEPS[4])
     build = os.path.join(data, 'build', 'game')
-    # the same build as build-fast.bat (out\fast)
+    # the same build as build-fast.bat (out\fast), for this PC's processor
+    cxx_flags = '/O2 /Ob1 /DNDEBUG' + (f' /arch:{arch}' if arch else '')
     run(['cmake', '-S', PS2RECOMP, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=RelWithDebInfo',
-         '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/O2 /Ob1 /DNDEBUG /arch:AVX2', '-DCMAKE_C_FLAGS_RELWITHDEBINFO=/O2 /DNDEBUG',
+         f'-DCMAKE_CXX_FLAGS_RELWITHDEBINFO={cxx_flags}', '-DCMAKE_C_FLAGS_RELWITHDEBINFO=/O2 /DNDEBUG',
+         f'-DPS2X_MSVC_ARCH={arch}',
          '-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/INCREMENTAL:NO /DEBUG /OPT:REF /OPT:ICF', '-DPS2X_BUILD_RECOMP=OFF',
          '-DPS2X_BUILD_TEST=OFF', '-DPS2X_BUILD_STUDIO=OFF', '-DPS2X_BUILD_ANALYZER=OFF', '-DPS2X_ENABLE_AGRESSIVE_LOGS=OFF',
          '-DPS2X_SHOW_WINDOWS_CONSOLE=OFF',  # a windowed program: no terminal behind the game (its output: logs\)
@@ -412,9 +436,10 @@ def main():
         mark_changed_files(data, args.after_copy)
         env = step_tools()
         fix_future_dates(SRC)
-        recompiler = step_recompiler(env, data)
+        arch = processor_arch()
+        recompiler = step_recompiler(env, data, arch)
         step_recompile(recompiler, data)
-        out_dir = step_game(env, data)
+        out_dir = step_game(env, data, arch)
         step_finish(out_dir, data)
     except SetupError as error:
         # the step it stopped in, the tool's own error lines, and what they mean when it is a known one
