@@ -62,7 +62,7 @@ namespace vendetta_wrestlers
         constexpr uint32_t kLogo = 0x17C2C0u;      // FUN_0017c2c0(index): the name logo, 12 = none
         constexpr uint32_t kLoadMatch = 0x165838u, kMatchInit = 0x119D70u;
         // FUN_00184d78(context, group, n): every wrestler picture (group 3 a name logo n, 4 grid icon n / 2 with its
-        // shade when n is odd, 6 a render n) is uploaded to one GS slot before each draw (RE 8.62 B)
+        // shade when n is odd, 6 a render n) is uploaded to one GS slot before each draw
         constexpr uint32_t kFindPicture = 0x184D78u;
         constexpr uint32_t kLogoSlot = 0x3E50u, kIconSlot = 0x3E80u, kRenderSlot = 0x3EC0u;
         // a new attire's pictures: numbers from here (its render and icon in its character record, its logo from the
@@ -192,8 +192,8 @@ namespace vendetta_wrestlers
 
         bool isNumber(const vendetta_mods::Json *v) { return v && v->type == vendetta_mods::Json::Type::Number; }
 
-        // fight.json: every value of a wrestler's fight record (RE §8.62 D), each by name, none left out. A missing or
-        // wrong value is named in `problems` (the wrestler is then left out).
+        // fight.json: every value of a wrestler's fight record (WPAR, unpacked by FUN_0011ccb8), each by name, none left
+        // out. A missing or wrong value is named in `problems` (the wrestler is then left out).
         bool packFight(const vendetta_mods::Json &j, std::array<uint8_t, kWparSize> &out, std::vector<std::string> &problems)
         {
             Bits bits;
@@ -351,7 +351,7 @@ namespace vendetta_wrestlers
                 else
                     out[slot] = static_cast<uint16_t>(high); // a mod's move: put in at each match
             }
-            // the slots the game's code reads without asking (RE 8.42, 8.59): empty = move 4095 or a division by zero
+            // the slots the game's code reads without asking FUN_00102ac8: empty = move 4095 or a division by zero
             for (uint32_t slot : {29u, 30u, 31u, 32u, 46u, 47u, 48u, 49u, 50u, 51u, 52u, 53u, 54u, 55u, 56u, 57u, 58u, 59u, 64u})
                 if (out[slot] == 0xFFFFu)
                     problems.push_back("slot " + std::to_string(slot) + " can't be \"none\": the game always uses it");
