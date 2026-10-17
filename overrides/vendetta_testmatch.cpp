@@ -395,6 +395,7 @@ namespace vendetta_testmatch
         if (rematches != g_lastRematch)
         {
             g_lastRematch = rematches;
+            g_moveClip = -1; // a mod move's clip id is given out per match: learned again
             writeStatus();
             std::cerr << "[testmatch] the match again (" << rematches << ")" << std::endl;
         }
