@@ -6,11 +6,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <condition_variable>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <set>
 #include <sstream>
+#include <thread>
+#include <unordered_map>
 
 namespace vendetta_mods
 {
@@ -506,6 +510,105 @@ namespace vendetta_mods
     {
         static const std::vector<Mod> mods = findMods();
         return mods;
+    }
+
+    namespace
+    {
+        struct Kept
+        {
+            std::vector<uint8_t> bytes;
+            uintmax_t size = 0;
+            std::filesystem::file_time_type time{};
+        };
+        std::mutex g_aheadLock;
+        std::condition_variable g_aheadDone;
+        bool g_aheadRunning = false;
+        std::unordered_map<std::string, Kept> g_kept; // by the path, normalised
+
+        std::string keyOf(const std::filesystem::path &path) { return path.lexically_normal().string(); }
+
+        bool sizeAndTime(const std::filesystem::path &path, uintmax_t &size, std::filesystem::file_time_type &time)
+        {
+            std::error_code ec;
+            size = std::filesystem::file_size(path, ec);
+            if (ec)
+                return false;
+            time = std::filesystem::last_write_time(path, ec);
+            return !ec;
+        }
+
+        bool readFrom(const std::filesystem::path &path, std::vector<uint8_t> &bytes)
+        {
+            std::ifstream in(path, std::ios::binary);
+            if (!in)
+                return false;
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            return true;
+        }
+
+        void waitAhead(std::unique_lock<std::mutex> &lock) { g_aheadDone.wait(lock, [] { return !g_aheadRunning; }); }
+    }
+
+    void runAhead(std::function<void()> job)
+    {
+        {
+            std::unique_lock<std::mutex> lock(g_aheadLock);
+            waitAhead(lock);
+            g_kept.clear();
+            g_aheadRunning = true;
+        }
+        std::thread([job = std::move(job)]()
+                    {
+                        try
+                        {
+                            job();
+                        }
+                        catch (...)
+                        {
+                            // a guess only: whatever it didn't read, the match reads itself
+                        }
+                        {
+                            std::lock_guard<std::mutex> lock(g_aheadLock);
+                            g_aheadRunning = false;
+                        }
+                        g_aheadDone.notify_all(); })
+            .detach();
+    }
+
+    bool readAhead(const std::filesystem::path &path, std::vector<uint8_t> &bytes)
+    {
+        Kept kept;
+        if (!sizeAndTime(path, kept.size, kept.time) || !readFrom(path, bytes))
+            return false;
+        kept.bytes = bytes;
+        std::lock_guard<std::mutex> lock(g_aheadLock);
+        g_kept[keyOf(path)] = std::move(kept);
+        return true;
+    }
+
+    bool readWhole(const std::filesystem::path &path, std::vector<uint8_t> &bytes)
+    {
+        {
+            std::unique_lock<std::mutex> lock(g_aheadLock);
+            waitAhead(lock);
+            const auto found = g_kept.find(keyOf(path));
+            uintmax_t size = 0;
+            std::filesystem::file_time_type time{};
+            if (found != g_kept.end() && sizeAndTime(path, size, time) && size == found->second.size &&
+                time == found->second.time)
+            {
+                bytes = found->second.bytes;
+                return true;
+            }
+        }
+        return readFrom(path, bytes);
+    }
+
+    void dropAhead()
+    {
+        std::unique_lock<std::mutex> lock(g_aheadLock);
+        waitAhead(lock);
+        g_kept.clear();
     }
 
     bool detailLog()

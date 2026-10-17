@@ -25,7 +25,9 @@
 // orders them: one mod folder per line, moved to the end in that order).
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -85,6 +87,15 @@ namespace vendetta_mods
     // VENDETTA_MODLOG=1: a line for every animation, move, slot and sound list a match's mods put in (they go in at every
     // match, so without it only problems and one summary a match are printed).
     bool detailLog();
+
+    // Reading ahead: a match's mod files are read on a background thread while its loading screen shows, so the match's
+    // start finds them in memory. runAhead(job) runs `job` there (after any earlier job); inside it readAhead(path, bytes)
+    // reads a file and keeps it. readWhole(path, bytes) - every read of a match's mod file - waits for the job, then takes
+    // the kept bytes if the file is unchanged since (its size and time), else reads the file. dropAhead() forgets them.
+    void runAhead(std::function<void()> job);
+    bool readAhead(const std::filesystem::path &path, std::vector<uint8_t> &bytes);
+    bool readWhole(const std::filesystem::path &path, std::vector<uint8_t> &bytes);
+    void dropAhead();
 
     // A file a mod.json names ("animations/x.bin", relative to the mod's folder), as a path; empty if it leaves the
     // mod's folder or doesn't exist (with a message).

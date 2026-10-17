@@ -271,11 +271,7 @@ namespace vendetta_animations
     bool readFile(const std::filesystem::path &path, std::vector<uint8_t> &bytes)
     {
         track(path);
-        std::ifstream file(path, std::ios::binary);
-        if (!file)
-            return false;
-        bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-        return true;
+        return vendetta_mods::readWhole(path, bytes);
     }
 
     // The checks a clip file must pass (the full layout needs the BODY skeleton: that stays the converter's job).
@@ -1019,11 +1015,9 @@ namespace vendetta_animations
         return name.empty() ? "?" : name;
     }
 
-    // The match's mods in: everything back to the game's own, then what the match's wrestlers use.
-    void loadMatch(const std::array<int32_t, 4> &records, uint32_t rematch)
+    // The character table rows a match's records stand for: a hero (records 0-11) all three of its records.
+    std::set<uint32_t> attiresFor(const std::vector<int32_t> &records)
     {
-        const auto start = std::chrono::steady_clock::now();
-        resetToGame();
         std::set<uint32_t> attires;
         for (int32_t record : records)
         {
@@ -1036,7 +1030,84 @@ namespace vendetta_animations
             else if (r < kAttires)
                 attires.insert(r);
         }
-        const SlotChanges changes = readSlotChanges(attires);
+        return attires;
+    }
+
+    // During the loading screen (the match loader's list, records per model buffer at + 4 ... + 0x10): the files the
+    // match's mods will need, read on a background thread (vendetta_mods.h), so the match init finds them in memory:
+    // its wrestlers' moveset files, every file in the folders of the moves they name, the new animations they name, and
+    // every replacement. A guess only: the init reads whatever it needs itself, taking what was read ahead when it is
+    // unchanged (a REMATCH or a second match in the same load has no loading screen: it reads as before).
+    void readAhead(uint32_t list)
+    {
+        std::vector<int32_t> records;
+        for (uint32_t p = 0; p < 4u; ++p)
+            records.push_back(static_cast<int32_t>(read32(list + 4u + 4u * p)));
+        std::set<std::string> names; // the match's wrestlers' full and short names, upper case
+        for (uint32_t attire : attiresFor(records))
+        {
+            names.insert(upper(guestString(read32(kCharacters + 0x20u * attire))));
+            names.insert(upper(guestString(read32(kCharacters + 0x20u * attire + 4u))));
+        }
+        vendetta_mods::runAhead([names]()
+        {
+            std::vector<uint8_t> bytes;
+            const auto inMod = [](const vendetta_mods::Mod &mod, const std::string &relative)
+            { return (mod.folder / std::filesystem::path(relative)).lexically_normal(); };
+            const auto withSettings = [&bytes](const std::filesystem::path &file)
+            {
+                if (vendetta_mods::readAhead(file, bytes))
+                    vendetta_mods::readAhead(std::filesystem::path(file).replace_extension(".json"), bytes);
+            };
+            std::set<std::string> named; // what the slots name, upper case
+            std::set<std::filesystem::path> folders;
+            for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
+            {
+                const vendetta_mods::Json *wrestlers = mod.manifest.find("wrestlers");
+                if (wrestlers && wrestlers->isObject())
+                    for (const auto &[wrestler, file] : wrestlers->members)
+                    {
+                        vendetta_mods::Json moveset;
+                        std::string error;
+                        if (!names.count(upper(wrestler)) || !file.isString() ||
+                            !vendetta_mods::readAhead(inMod(mod, file.text), bytes) ||
+                            !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error))
+                            continue;
+                        for (const auto &[slot, value] : moveset.members)
+                            if (value.isString() && named.insert(upper(value.text)).second)
+                                for (const std::filesystem::path &folder : vendetta_moves::foldersNamed(value.text))
+                                    folders.insert(folder);
+                    }
+                const vendetta_mods::Json *replace = mod.manifest.find("replace");
+                const vendetta_mods::Json *replaced = replace ? replace->find("animations") : nullptr;
+                if (replaced && replaced->isObject())
+                    for (const auto &[gameName, file] : replaced->members)
+                        if (file.isString())
+                            withSettings(inMod(mod, file.text));
+            }
+            for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
+            {
+                const vendetta_mods::Json *section = mod.manifest.find("new");
+                const vendetta_mods::Json *added = section ? section->find("animations") : nullptr;
+                if (added && added->isArray())
+                    for (const vendetta_mods::Json &file : added->items)
+                        if (file.isString() && named.count(upper(std::filesystem::path(file.text).stem().string())))
+                            withSettings(inMod(mod, file.text));
+            }
+            std::error_code ec;
+            for (const std::filesystem::path &folder : folders)
+                for (const auto &entry : std::filesystem::recursive_directory_iterator(folder, ec))
+                    if (entry.is_regular_file(ec))
+                        vendetta_mods::readAhead(entry.path(), bytes);
+        });
+    }
+
+    // The match's mods in: everything back to the game's own, then what the match's wrestlers use.
+    void loadMatch(const std::array<int32_t, 4> &records, uint32_t rematch)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        resetToGame();
+        const SlotChanges changes = readSlotChanges(attiresFor(std::vector<int32_t>(records.begin(), records.end())));
         std::set<std::string> moveNames, animationNames;
         for (const auto &[where, change] : changes)
         {
@@ -1083,7 +1154,8 @@ namespace vendetta_animations
     uint32_t g_mark = 0;           // the match area before this load's first build
     std::array<int32_t, 4> g_builtFor{};
 
-    // The match loader (FUN_00165838; it can wait, so the work comes first): a new match, its area emptied.
+    // The match loader (FUN_00165838; it can wait, so the work comes first): a new match, its area emptied, its mods'
+    // files read ahead while the loading screen shows.
     void loadMatchHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         g_rdram = rdram;
@@ -1092,6 +1164,7 @@ namespace vendetta_animations
             vendetta_store::beginMatch();
             g_newLoad = true;
             g_marked = false;
+            readAhead(getRegU32(ctx, 4));
         }
         g_originalLoadMatch(rdram, ctx, runtime);
     }
@@ -1121,13 +1194,17 @@ namespace vendetta_animations
                     g_marked = true;
                 }
                 loadMatch(records, rematch);
+                vendetta_mods::dropAhead();
                 g_builtFor = records;
                 g_newLoad = false;
                 g_built = true;
             }
             else
+            {
+                vendetta_mods::dropAhead();
                 std::cerr << "[match] rematch " << rematch << ": the same wrestlers and files: the mods stay as they are"
                           << std::endl;
+            }
         }
         g_originalMatchInit(rdram, ctx, runtime);
     }

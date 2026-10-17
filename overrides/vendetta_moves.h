@@ -36,6 +36,9 @@ namespace vendetta_moves
 
     bool isMove(const std::string &name);
 
+    // The folders of the new moves a name gives (read-only after prepare(), so the read-ahead thread may use it).
+    std::vector<std::filesystem::path> foldersNamed(const std::string &name);
+
     void reset();
 
     // `names`: what the match's slots name; `clipRoom`: how many new clip ids are left for the moves' animations.

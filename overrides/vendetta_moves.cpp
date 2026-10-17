@@ -604,13 +604,13 @@ namespace vendetta_moves
             bool load(const std::filesystem::path &file, Json &out)
             {
                 files.push_back(file);
-                std::ifstream in(file, std::ios::binary);
-                if (!in)
+                std::vector<uint8_t> bytes;
+                if (!vendetta_mods::readWhole(file, bytes))
                 {
                     problems.push_back(where(file) + ": can't be read (missing?)");
                     return false;
                 }
-                const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                const std::string text(bytes.begin(), bytes.end());
                 std::string error;
                 if (!vendetta_mods::parseJson(text, out, error) || !out.isObject())
                 {
@@ -758,13 +758,8 @@ namespace vendetta_moves
                 a.file = (folder / fileName).lexically_normal();
                 const std::string here = m_where;
                 files.push_back(a.file);
-                {
-                    std::ifstream in(a.file, std::ios::binary);
-                    if (!in)
-                        fail("\"animations\": \"" + fileName + "\" can't be read (missing?)");
-                    else
-                        a.bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-                }
+                if (!vendetta_mods::readWhole(a.file, a.bytes))
+                    fail("\"animations\": \"" + fileName + "\" can't be read (missing?)");
                 uint32_t last = 0;
                 if (a.bytes.size() >= 3u)
                     last = static_cast<uint32_t>(a.bytes[0]) | (static_cast<uint32_t>(a.bytes[1]) << 8u);
@@ -904,14 +899,10 @@ namespace vendetta_moves
                     if (const Json *e = s.find("eyes"))
                     {
                         files.push_back(folder / (e->isString() ? e->text : std::string()));
-                        std::ifstream in(files.back(), std::ios::binary);
-                        if (!e->isString() || !in)
+                        if (!e->isString() || !vendetta_mods::readWhole(files.back(), a.eyes))
                             fail("\"eyes\": the eye track file can't be read");
                         else
-                        {
-                            a.eyes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
                             p[17] |= 48u; // the game's own animations have these two bits exactly when they have an eye track
-                        }
                     }
                 m_where = here;
                 return a;
@@ -1653,6 +1644,15 @@ namespace vendetta_moves
     }
 
     bool isMove(const std::string &name) { return knownNamed(name) != nullptr; }
+
+    std::vector<std::filesystem::path> foldersNamed(const std::string &name)
+    {
+        std::vector<std::filesystem::path> folders;
+        if (const std::vector<size_t> *list = knownNamed(name))
+            for (size_t i : *list)
+                folders.push_back(g_known[i].folder);
+        return folders;
+    }
 
     void reset()
     {
