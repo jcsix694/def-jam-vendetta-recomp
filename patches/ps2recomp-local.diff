@@ -4638,7 +4638,7 @@ index 0000000..ffec6a2
 +    void minimiseOnlyWhenThePlayerSwitchesAway(GLFWwindow *window);
 +}
 diff --git a/ps2xRuntime/include/runtime/ps2_memory.h b/ps2xRuntime/include/runtime/ps2_memory.h
-index ea86a9c..95396d6 100644
+index ea86a9c..9fc3882 100644
 --- a/ps2xRuntime/include/runtime/ps2_memory.h
 +++ b/ps2xRuntime/include/runtime/ps2_memory.h
 @@ -23,8 +23,15 @@
@@ -4690,12 +4690,14 @@ index ea86a9c..95396d6 100644
  class PS2Memory
  {
  public:
-@@ -270,7 +283,17 @@ public:
+@@ -270,7 +283,19 @@ public:
      PS2Memory &operator=(PS2Memory &&) = delete;
  
      // Initialize memory
 -    bool initialize(size_t ramSize = PS2_RAM_SIZE);
 +    bool initialize();
++    // For the report of a stray access above 32 MB: who asks for the guest code's pc and ra at that moment (the runtime).
++    static void setStrayAccessContext(void (*where)(void *owner, uint32_t &pc, uint32_t &ra), void *owner);
 +
 +    // Makes guest RAM [guestOffset, guestOffset + size) usable (above PS2_RAM_SIZE it is only reserved until then).
 +    // Returns false if the range is outside PS2_RAM_BACKING_SIZE or the host refused.
@@ -4709,7 +4711,7 @@ index ea86a9c..95396d6 100644
  
      // Memory access methods
      uint8_t *getRDRAM() { return m_rdram; }
-@@ -345,6 +368,15 @@ public:
+@@ -345,6 +370,15 @@ public:
      void processVIF1Data(const uint8_t *data, uint32_t sizeBytes);
      void processPendingTransfers();
      std::vector<uint32_t> consumeCompletedDmacCauses();
@@ -4725,7 +4727,7 @@ index ea86a9c..95396d6 100644
  
      int pollDmaRegisters();
  
-@@ -399,6 +431,11 @@ public:
+@@ -399,6 +433,11 @@ public:
  
      GifPacketCallback m_gifPacketCallback;
      GifArbiter *m_gifArbiter = nullptr;
@@ -4737,7 +4739,7 @@ index ea86a9c..95396d6 100644
      Vu1MscalCallback m_vu1MscalCallback;
      Vu1MscntCallback m_vu1MscntCallback;
  
-@@ -449,6 +486,23 @@ public:
+@@ -449,6 +488,23 @@ public:
      };
  
      std::array<EeTimer, 4> m_eeTimers{};
@@ -17684,7 +17686,7 @@ index 6bd1835..98b4db0 100644
      {
          return !runtime || runtime->canBindIopRpc(sid);
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 37b6a4d..c80deea 100644
+index 37b6a4d..bbeb8bc 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
 @@ -1,4 +1,8 @@
@@ -17696,7 +17698,7 @@ index 37b6a4d..c80deea 100644
  #include "runtime/ps2_address.h"
  #include "runtime/gs/gs_frontend.h"
  #include "ps2_log.h"
-@@ -9,6 +13,81 @@
+@@ -9,6 +13,86 @@
  #include <algorithm>
  #include <string>
  #include <vector>
@@ -17749,6 +17751,8 @@ index 37b6a4d..c80deea 100644
 +    }
 +
 +    std::atomic<uint8_t *> g_guestRamBase{nullptr};
++    std::atomic<void (*)(void *, uint32_t &, uint32_t &)> g_strayWhere{nullptr};
++    std::atomic<void *> g_strayOwner{nullptr};
 +
 +#if defined(_WIN32)
 +    // A guest access above 32 MB that nothing committed: say which guest address, then let the crash happen as before.
@@ -17764,11 +17768,14 @@ index 37b6a4d..c80deea 100644
 +        static std::atomic<bool> reported{false};
 +        if (!reported.exchange(true))
 +        {
++            uint32_t pc = 0, ra = 0;
++            if (auto *where = g_strayWhere.load(std::memory_order_acquire))
++                where(g_strayOwner.load(std::memory_order_acquire), pc, ra);
 +            std::fprintf(stderr,
 +                         "[ram] guest %s at 0x%08X: above the PS2's 32 MB and not committed (PS2Memory::commitRam) "
-+                         "- something relied on RAM wrapping at 32 MB\n",
++                         "- something relied on RAM wrapping at 32 MB (guest pc 0x%X, ra 0x%X)\n",
 +                         rec->ExceptionInformation[0] == 1 ? "write" : "read",
-+                         static_cast<unsigned>(host - base));
++                         static_cast<unsigned>(host - base), pc, ra);
 +            std::fflush(stderr);
 +        }
 +        return EXCEPTION_CONTINUE_SEARCH;
@@ -17778,7 +17785,7 @@ index 37b6a4d..c80deea 100644
  
  namespace
  {
-@@ -105,6 +184,10 @@ namespace
+@@ -105,6 +189,10 @@ namespace
      // so the whole read-modify-write is a single atomic step -- this register is
      // also touched by the vsync worker (FIELD bit) and the GIF (SIGNAL/FINISH) on
      // other threads, so a load-then-store here would race with them.
@@ -17789,7 +17796,7 @@ index 37b6a4d..c80deea 100644
      inline void writeCsrHalf(std::atomic<uint64_t> &csr, uint32_t off, uint32_t value)
      {
          constexpr uint32_t kW1cMask = 0x3u;
-@@ -118,6 +201,7 @@ namespace
+@@ -118,6 +206,7 @@ namespace
                  uint32_t mergedLow = (oldLow & kW1cMask) | (value & ~kW1cMask);
                  desired = (expected & 0xFFFFFFFF00000000ull) | static_cast<uint64_t>(mergedLow);
                  desired &= ~static_cast<uint64_t>(value & kW1cMask);
@@ -17797,7 +17804,7 @@ index 37b6a4d..c80deea 100644
              }
              else
              {
-@@ -127,6 +211,33 @@ namespace
+@@ -127,6 +216,33 @@ namespace
          } while (!csr.compare_exchange_weak(expected, desired));
      }
  
@@ -17831,7 +17838,7 @@ index 37b6a4d..c80deea 100644
      // Same as writeCsrHalf but for a full 64-bit CSR write (bits 0..1 are still
      // write-one-to-clear against the current value).
      inline void writeCsrFull(std::atomic<uint64_t> &csr, uint64_t value)
-@@ -138,6 +249,7 @@ namespace
+@@ -138,6 +254,7 @@ namespace
          {
              desired = (expected & kW1cMask) | (value & ~kW1cMask);
              desired &= ~(value & kW1cMask);
@@ -17839,7 +17846,7 @@ index 37b6a4d..c80deea 100644
          } while (!csr.compare_exchange_weak(expected, desired));
      }
  
-@@ -248,7 +360,8 @@ PS2Memory::~PS2Memory()
+@@ -248,7 +365,8 @@ PS2Memory::~PS2Memory()
  {
      if (m_rdram)
      {
@@ -17849,11 +17856,17 @@ index 37b6a4d..c80deea 100644
          m_rdram = nullptr;
      }
  
-@@ -293,11 +406,13 @@ PS2Memory::~PS2Memory()
+@@ -293,11 +411,19 @@ PS2Memory::~PS2Memory()
      }
  }
  
 -bool PS2Memory::initialize(size_t ramSize)
++void PS2Memory::setStrayAccessContext(void (*where)(void *owner, uint32_t &pc, uint32_t &ra), void *owner)
++{
++    g_strayOwner.store(owner, std::memory_order_release);
++    g_strayWhere.store(where, std::memory_order_release);
++}
++
 +bool PS2Memory::initialize()
  {
      auto cleanup = [this]()
@@ -17865,7 +17878,7 @@ index 37b6a4d..c80deea 100644
          delete[] m_scratchpad;
          delete[] iop_ram;
          delete[] m_gsVRAM;
-@@ -336,8 +451,16 @@ bool PS2Memory::initialize(size_t ramSize)
+@@ -336,8 +462,16 @@ bool PS2Memory::initialize(size_t ramSize)
      try
      {
          // Allocate main RAM
@@ -17884,7 +17897,7 @@ index 37b6a4d..c80deea 100644
  
          // Allocate scratchpad
          m_scratchpad = new uint8_t[PS2_SCRATCHPAD_SIZE];
-@@ -402,85 +525,162 @@ bool PS2Memory::initialize(size_t ramSize)
+@@ -402,85 +536,162 @@ bool PS2Memory::initialize(size_t ramSize)
  void PS2Memory::resetEeTimers() noexcept
  {
      m_eeTimers = {};
@@ -18104,7 +18117,7 @@ index 37b6a4d..c80deea 100644
  {
      uint64_t nearest = std::numeric_limits<uint64_t>::max();
      for (const EeTimer &timer : m_eeTimers)
-@@ -560,9 +760,20 @@ const uint8_t *PS2Memory::mapVuMemory(uint32_t physAddr, uint32_t size, uint32_t
+@@ -560,9 +771,20 @@ const uint8_t *PS2Memory::mapVuMemory(uint32_t physAddr, uint32_t size, uint32_t
      }
      if (const uint8_t *ptr = mapRange(PS2_VU1_CODE_BASE, PS2_VU1_CODE_SIZE, m_vu1Code))
      {
@@ -18126,7 +18139,7 @@ index 37b6a4d..c80deea 100644
  }
  
  uint32_t PS2Memory::translateAddress(uint32_t virtualAddress)
-@@ -678,7 +889,7 @@ uint8_t PS2Memory::read8(uint32_t address)
+@@ -678,7 +900,7 @@ uint8_t PS2Memory::read8(uint32_t address)
      {
          return m_scratchpad[physAddr];
      }
@@ -18135,7 +18148,7 @@ index 37b6a4d..c80deea 100644
      {
          return m_rdram[physAddr];
      }
-@@ -714,9 +925,9 @@ uint16_t PS2Memory::read16(uint32_t address)
+@@ -714,9 +936,9 @@ uint16_t PS2Memory::read16(uint32_t address)
      {
          return loadScalar<uint16_t>(m_scratchpad, physAddr, PS2_SCRATCHPAD_SIZE, "read16 scratchpad", address);
      }
@@ -18147,7 +18160,7 @@ index 37b6a4d..c80deea 100644
      }
      uint32_t vuOffset = 0;
      uint32_t vuLimit = 0;
-@@ -744,6 +955,7 @@ uint32_t PS2Memory::read32(uint32_t address)
+@@ -744,6 +966,7 @@ uint32_t PS2Memory::read32(uint32_t address)
  
      if (isGsPrivReg(address))
      {
@@ -18155,7 +18168,7 @@ index 37b6a4d..c80deea 100644
          uint32_t off = address & 7;
          const uint32_t regOff = (address - PS2_GS_PRIV_REG_BASE) & ~0x7u;
          if (regOff == kGsCsrRegOffset)
-@@ -765,9 +977,9 @@ uint32_t PS2Memory::read32(uint32_t address)
+@@ -765,9 +988,9 @@ uint32_t PS2Memory::read32(uint32_t address)
      {
          return loadScalar<uint32_t>(m_scratchpad, physAddr, PS2_SCRATCHPAD_SIZE, "read32 scratchpad", address);
      }
@@ -18167,7 +18180,7 @@ index 37b6a4d..c80deea 100644
      }
      uint32_t vuOffset = 0;
      uint32_t vuLimit = 0;
-@@ -792,6 +1004,7 @@ uint64_t PS2Memory::read64(uint32_t address)
+@@ -792,6 +1015,7 @@ uint64_t PS2Memory::read64(uint32_t address)
  
      if (isGsPrivReg(address))
      {
@@ -18175,7 +18188,7 @@ index 37b6a4d..c80deea 100644
          const uint32_t regOff = (address - PS2_GS_PRIV_REG_BASE) & ~0x7u;
          if (regOff == kGsCsrRegOffset)
          {
-@@ -808,9 +1021,9 @@ uint64_t PS2Memory::read64(uint32_t address)
+@@ -808,9 +1032,9 @@ uint64_t PS2Memory::read64(uint32_t address)
      {
          return loadScalar<uint64_t>(m_scratchpad, physAddr, PS2_SCRATCHPAD_SIZE, "read64 scratchpad", address);
      }
@@ -18187,7 +18200,7 @@ index 37b6a4d..c80deea 100644
      }
      uint32_t vuOffset = 0;
      uint32_t vuLimit = 0;
-@@ -845,9 +1058,9 @@ __m128i PS2Memory::read128(uint32_t address)
+@@ -845,9 +1069,9 @@ __m128i PS2Memory::read128(uint32_t address)
          inRange(physAddr, sizeof(__m128i), PS2_SCRATCHPAD_SIZE, "read128 scratchpad", address);
          return _mm_loadu_si128(reinterpret_cast<__m128i *>(&m_scratchpad[physAddr]));
      }
@@ -18199,7 +18212,7 @@ index 37b6a4d..c80deea 100644
          return _mm_loadu_si128(reinterpret_cast<__m128i *>(&m_rdram[physAddr]));
      }
      uint32_t vuOffset = 0;
-@@ -872,7 +1085,7 @@ void PS2Memory::write8(uint32_t address, uint8_t value)
+@@ -872,7 +1096,7 @@ void PS2Memory::write8(uint32_t address, uint8_t value)
      {
          m_scratchpad[physAddr] = value;
      }
@@ -18208,7 +18221,7 @@ index 37b6a4d..c80deea 100644
      {
          m_rdram[physAddr] = value;
      }
-@@ -887,6 +1100,7 @@ void PS2Memory::write8(uint32_t address, uint8_t value)
+@@ -887,6 +1111,7 @@ void PS2Memory::write8(uint32_t address, uint8_t value)
              if (vuMem == m_vu0Code)
                  markVU0CodeModified();
              else if (vuMem == m_vu1Code)
@@ -18216,7 +18229,7 @@ index 37b6a4d..c80deea 100644
                  markVU1CodeModified();
              return;
          }
-@@ -916,9 +1130,9 @@ void PS2Memory::write16(uint32_t address, uint16_t value)
+@@ -916,9 +1141,9 @@ void PS2Memory::write16(uint32_t address, uint16_t value)
      {
          storeScalar<uint16_t>(m_scratchpad, physAddr, PS2_SCRATCHPAD_SIZE, value, "write16 scratchpad", address);
      }
@@ -18228,7 +18241,7 @@ index 37b6a4d..c80deea 100644
      }
      else
      {
-@@ -930,6 +1144,7 @@ void PS2Memory::write16(uint32_t address, uint16_t value)
+@@ -930,6 +1155,7 @@ void PS2Memory::write16(uint32_t address, uint16_t value)
              if (vuMem == m_vu0Code)
                  markVU0CodeModified();
              else if (vuMem == m_vu1Code)
@@ -18236,7 +18249,7 @@ index 37b6a4d..c80deea 100644
                  markVU1CodeModified();
              return;
          }
-@@ -953,6 +1168,7 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
+@@ -953,6 +1179,7 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
  
      if (isGsPrivReg(address))
      {
@@ -18244,7 +18257,7 @@ index 37b6a4d..c80deea 100644
          uint32_t off = address & 7;
          const uint32_t regOff = (address - PS2_GS_PRIV_REG_BASE) & ~0x7u;
          if (regOff == kGsCsrRegOffset)
-@@ -960,6 +1176,8 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
+@@ -960,6 +1187,8 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
              // CSR: bits 0..1 of the low dword are write-one-to-clear status bits.
              // Done as a single atomic RMW -- see writeCsrHalf's comment.
              writeCsrHalf(gs_regs.csr, off, value);
@@ -18253,7 +18266,7 @@ index 37b6a4d..c80deea 100644
          }
          else if (uint64_t *reg = gsRegPtr(gs_regs, address))
          {
-@@ -977,12 +1195,12 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
+@@ -977,12 +1206,12 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
      {
          storeScalar<uint32_t>(m_scratchpad, physAddr, PS2_SCRATCHPAD_SIZE, value, "write32 scratchpad", address);
      }
@@ -18268,7 +18281,7 @@ index 37b6a4d..c80deea 100644
      }
      else
      {
-@@ -994,6 +1212,7 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
+@@ -994,6 +1223,7 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
              if (vuMem == m_vu0Code)
                  markVU0CodeModified();
              else if (vuMem == m_vu1Code)
@@ -18276,7 +18289,7 @@ index 37b6a4d..c80deea 100644
                  markVU1CodeModified();
              return;
          }
-@@ -1013,12 +1232,15 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
+@@ -1013,12 +1243,15 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
  
      if (isGsPrivReg(address))
      {
@@ -18292,7 +18305,7 @@ index 37b6a4d..c80deea 100644
          }
          else if (uint64_t *reg = gsRegPtr(gs_regs, address))
          {
-@@ -1034,10 +1256,10 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
+@@ -1034,10 +1267,10 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
      {
          storeScalar<uint64_t>(m_scratchpad, physAddr, PS2_SCRATCHPAD_SIZE, value, "write64 scratchpad", address);
      }
@@ -18305,7 +18318,7 @@ index 37b6a4d..c80deea 100644
      }
      else
      {
-@@ -1049,6 +1271,7 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
+@@ -1049,6 +1282,7 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
              if (vuMem == m_vu0Code)
                  markVU0CodeModified();
              else if (vuMem == m_vu1Code)
@@ -18313,7 +18326,7 @@ index 37b6a4d..c80deea 100644
                  markVU1CodeModified();
              return;
          }
-@@ -1081,7 +1304,10 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1081,7 +1315,10 @@ void PS2Memory::write128(uint32_t address, __m128i value)
      {
          alignas(16) uint8_t fifoData[16];
          _mm_storeu_si128(reinterpret_cast<__m128i *>(fifoData), value);
@@ -18325,7 +18338,7 @@ index 37b6a4d..c80deea 100644
          return;
      }
  
-@@ -1090,10 +1316,10 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1090,10 +1327,10 @@ void PS2Memory::write128(uint32_t address, __m128i value)
          inRange(physAddr, sizeof(__m128i), PS2_SCRATCHPAD_SIZE, "write128 scratchpad", address);
          _mm_storeu_si128(reinterpret_cast<__m128i *>(&m_scratchpad[physAddr]), value);
      }
@@ -18338,7 +18351,7 @@ index 37b6a4d..c80deea 100644
          _mm_storeu_si128(reinterpret_cast<__m128i *>(&m_rdram[physAddr]), value);
      }
      else
-@@ -1107,6 +1333,7 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1107,6 +1344,7 @@ void PS2Memory::write128(uint32_t address, __m128i value)
              if (vuMem == m_vu0Code)
                  markVU0CodeModified();
              else if (vuMem == m_vu1Code)
@@ -18346,7 +18359,7 @@ index 37b6a4d..c80deea 100644
                  markVU1CodeModified();
              return;
          }
-@@ -1122,44 +1349,60 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1122,44 +1360,60 @@ void PS2Memory::write128(uint32_t address, __m128i value)
      }
  }
  
@@ -18433,7 +18446,7 @@ index 37b6a4d..c80deea 100644
          // NB: unreachable from write8/16/32/64 today since those all funnel IO
          // register writes through addresses in PS2_IO_BASE's range, which is
          // disjoint from PS2_GS_PRIV_REG_BASE; kept correct for direct callers.
-@@ -1169,6 +1412,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1169,6 +1423,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
          if (regOff == kGsCsrRegOffset)
          {
              writeCsrHalf(gs_regs.csr, off, value);
@@ -18442,7 +18455,7 @@ index 37b6a4d..c80deea 100644
          }
          else if (uint64_t *reg = gsRegPtr(gs_regs, address))
          {
-@@ -1221,66 +1466,10 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1221,66 +1477,10 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
      if (address >= 0x10003C00u && address < 0x10003E00u)
      {
          m_vifWriteCount.fetch_add(1, std::memory_order_relaxed);
@@ -18513,7 +18526,7 @@ index 37b6a4d..c80deea 100644
          return true;
      }
  
-@@ -1364,7 +1553,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1364,7 +1564,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                          else
                          {
                              base2 = m_rdram;
@@ -18522,7 +18535,7 @@ index 37b6a4d..c80deea 100644
                          }
  
                          while (bytes > 0)
-@@ -1389,7 +1578,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1389,7 +1589,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                          tagPhys = translateAddress(localTagAddr);
  
                          const uint8_t *localBase = tagScratch ? m_scratchpad : m_rdram;
@@ -18531,7 +18544,7 @@ index 37b6a4d..c80deea 100644
                          if (tagPhys + 16u > localMax)
                              return;
  
-@@ -1403,6 +1592,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1403,6 +1603,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                      const bool transferTagData = isVifChannel && (chcr & 0x40u) != 0u;
  
                      int tagsProcessed = 0;
@@ -18540,7 +18553,7 @@ index 37b6a4d..c80deea 100644
                      uint32_t lastTagUpper = (chcr >> 16) & 0xFFFFu;
  
                      while (tagsProcessed < kMaxChainTags)
-@@ -1428,7 +1619,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1428,7 +1630,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                          else
                          {
                              tagBase = m_rdram;
@@ -18549,7 +18562,7 @@ index 37b6a4d..c80deea 100644
                          }
                          if (physTag + 16 > tagMax)
                              break;
-@@ -1441,6 +1632,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1441,6 +1643,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                          uint32_t addr = static_cast<uint32_t>((tag >> 32) & 0x7FFFFFFF);
                          lastTagUpper = static_cast<uint32_t>((tag >> 16) & 0xFFFFu);
                          ++tagsProcessed;
@@ -18557,7 +18570,7 @@ index 37b6a4d..c80deea 100644
  
                          uint32_t dataAddr = 0;
                          bool hasPayload = (tagQwc > 0);
-@@ -1521,6 +1713,19 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1521,6 +1724,19 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                              break;
                      }
  
@@ -18577,7 +18590,7 @@ index 37b6a4d..c80deea 100644
                      m_ioRegisters[channelBase + 0x30] = tagAddr;
                      m_ioRegisters[channelBase + 0x40] = asr0;
                      m_ioRegisters[channelBase + 0x50] = asr1;
-@@ -1584,6 +1789,68 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1584,6 +1800,68 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
      return false;
  }
  
@@ -18646,7 +18659,7 @@ index 37b6a4d..c80deea 100644
  bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
  {
      static constexpr uint32_t kSprFromChannel = 0x1000D000u;
-@@ -1610,7 +1877,7 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
+@@ -1610,7 +1888,7 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
          return false;
      }
  
@@ -18655,7 +18668,7 @@ index 37b6a4d..c80deea 100644
          return false;
  
      const bool fromScratchpad = channelBase == kSprFromChannel;
-@@ -1660,6 +1927,60 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
+@@ -1660,6 +1938,60 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
      queueCompletedDmacCause(cause);
  }
  
@@ -18716,7 +18729,7 @@ index 37b6a4d..c80deea 100644
  void PS2Memory::processPendingTransfers()
  {
      const bool hadGif = !m_pendingGifTransfers.empty();
-@@ -1677,6 +1998,7 @@ void PS2Memory::processPendingTransfers()
+@@ -1677,6 +2009,7 @@ void PS2Memory::processPendingTransfers()
          constexpr uint32_t kGifFqcMask = 0x1F000000u;
          uint32_t &gifStat = m_ioRegisters[kGifStat];
          gifStat = (gifStat & ~kGifFqcMask) | (observedGifQwc << 24u);
@@ -18724,7 +18737,7 @@ index 37b6a4d..c80deea 100644
      }
  
      for (size_t idx = 0; idx < m_pendingGifTransfers.size(); ++idx)
-@@ -1686,7 +2008,7 @@ void PS2Memory::processPendingTransfers()
+@@ -1686,7 +2019,7 @@ void PS2Memory::processPendingTransfers()
          {
              m_seenGifCopy = true;
              m_gifCopyCount.fetch_add(1, std::memory_order_relaxed);
@@ -18733,7 +18746,7 @@ index 37b6a4d..c80deea 100644
          }
          else if (p.qwc > 0)
          {
-@@ -1715,7 +2037,7 @@ void PS2Memory::processPendingTransfers()
+@@ -1715,7 +2048,7 @@ void PS2Memory::processPendingTransfers()
                          break;
                      m_seenGifCopy = true;
                      m_gifCopyCount.fetch_add(1, std::memory_order_relaxed);
@@ -18742,7 +18755,7 @@ index 37b6a4d..c80deea 100644
                      bytesLeft -= chunk;
                      srcPhys += chunk;
                  }
-@@ -1725,16 +2047,16 @@ void PS2Memory::processPendingTransfers()
+@@ -1725,16 +2058,16 @@ void PS2Memory::processPendingTransfers()
                  uint32_t bytesLeft = sizeBytes;
                  while (bytesLeft >= 16)
                  {
@@ -18763,7 +18776,7 @@ index 37b6a4d..c80deea 100644
                      bytesLeft -= chunk;
                      srcPhys += chunk;
                  }
-@@ -1785,11 +2107,11 @@ void PS2Memory::processPendingTransfers()
+@@ -1785,11 +2118,11 @@ void PS2Memory::processPendingTransfers()
                  uint32_t bytesLeft = sizeBytes;
                  while (bytesLeft > 0)
                  {
@@ -18778,7 +18791,7 @@ index 37b6a4d..c80deea 100644
                      if (chunk == 0)
                          break;
                      processVIF0Data(srcPhys, chunk);
-@@ -1806,7 +2128,7 @@ void PS2Memory::processPendingTransfers()
+@@ -1806,7 +2139,7 @@ void PS2Memory::processPendingTransfers()
      {
          if (!p.chainData.empty())
          {
@@ -18787,7 +18800,7 @@ index 37b6a4d..c80deea 100644
          }
          else if (p.qwc > 0)
          {
-@@ -1833,7 +2155,7 @@ void PS2Memory::processPendingTransfers()
+@@ -1833,7 +2166,7 @@ void PS2Memory::processPendingTransfers()
                          chunk = PS2_SCRATCHPAD_SIZE - srcPhys;
                      if (chunk == 0)
                          break;
@@ -18796,7 +18809,7 @@ index 37b6a4d..c80deea 100644
                      bytesLeft -= chunk;
                      srcPhys += chunk;
                  }
-@@ -1843,14 +2165,14 @@ void PS2Memory::processPendingTransfers()
+@@ -1843,14 +2176,14 @@ void PS2Memory::processPendingTransfers()
                  uint32_t bytesLeft = sizeBytes;
                  while (bytesLeft > 0)
                  {
@@ -18815,7 +18828,7 @@ index 37b6a4d..c80deea 100644
                      bytesLeft -= chunk;
                      srcPhys += chunk;
                  }
-@@ -1859,7 +2181,13 @@ void PS2Memory::processPendingTransfers()
+@@ -1859,7 +2192,13 @@ void PS2Memory::processPendingTransfers()
      }
      m_pendingVif1Transfers.clear();
  
@@ -18830,7 +18843,7 @@ index 37b6a4d..c80deea 100644
          m_gifArbiter->drain();
  
      static constexpr uint32_t GIF_CHANNEL = 0x1000A000;
-@@ -1976,11 +2304,11 @@ void PS2Memory::processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount)
+@@ -1976,11 +2315,11 @@ void PS2Memory::processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount)
      uint32_t bytesLeft = sizeBytes;
      while (bytesLeft >= 16)
      {
@@ -18845,7 +18858,7 @@ index 37b6a4d..c80deea 100644
          if (chunk == 0)
              break;
  
-@@ -2027,7 +2355,7 @@ bool PS2Memory::tryProcessNativeGifImageUploadChain(GS &gs, uint32_t tadr, uint3
+@@ -2027,7 +2366,7 @@ bool PS2Memory::tryProcessNativeGifImageUploadChain(GS &gs, uint32_t tadr, uint3
              const bool scratch = isScratchpad(guestAddr);
              const uint32_t phys = translateAddress(guestAddr);
              const uint8_t *base = scratch ? m_scratchpad : m_rdram;
@@ -18854,7 +18867,7 @@ index 37b6a4d..c80deea 100644
              if (!base || phys > limit || bytes > limit - phys)
                  return false;
              out = base + phys;
-@@ -2219,7 +2547,7 @@ bool PS2Memory::tryProcessNativeGifPackedChain(GS &gs, uint32_t tadr, uint32_t c
+@@ -2219,7 +2558,7 @@ bool PS2Memory::tryProcessNativeGifPackedChain(GS &gs, uint32_t tadr, uint32_t c
              const bool scratch = isScratchpad(guestAddr);
              const uint32_t phys = translateAddress(guestAddr);
              const uint8_t *base = scratch ? m_scratchpad : m_rdram;
@@ -18863,7 +18876,7 @@ index 37b6a4d..c80deea 100644
              if (!base || phys > limit || bytes > limit - phys)
                  return false;
              out = base + phys;
-@@ -2280,6 +2608,8 @@ int PS2Memory::pollDmaRegisters()
+@@ -2280,6 +2619,8 @@ int PS2Memory::pollDmaRegisters()
  
  uint32_t PS2Memory::readIORegister(uint32_t address)
  {
@@ -18872,7 +18885,7 @@ index 37b6a4d..c80deea 100644
      size_t timerIndex = 0u;
      uint32_t timerOffset = 0u;
      if (decodeEeTimerRegister(address, timerIndex, timerOffset))
-@@ -2288,7 +2618,11 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
+@@ -2288,7 +2629,11 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
          switch (timerOffset)
          {
          case kEeTimerCountOffset:
@@ -18885,7 +18898,7 @@ index 37b6a4d..c80deea 100644
          case kEeTimerModeOffset:
              return timer.mode & (kEeTimerModeConfigMask | kEeTimerModeStatusMask);
          case kEeTimerCompareOffset:
-@@ -2346,7 +2680,8 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
+@@ -2346,7 +2691,8 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
          const uint32_t ctrl = m_ioRegisters.count(0x10003000u) ? m_ioRegisters[0x10003000u] : 0u;
  
          // M3R and IMT mirror GIF_MODE, PSE mirrors GIF_CTRL, and M3P is the
@@ -18895,7 +18908,7 @@ index 37b6a4d..c80deea 100644
          stat = (stat & ~0xFu) |
                 (mode & 0x1u) |
                 (m_path3Masked ? 0x2u : 0u) |
-@@ -2447,6 +2782,54 @@ bool PS2Memory::isCodeAddress(uint32_t address) const
+@@ -2447,6 +2793,54 @@ bool PS2Memory::isCodeAddress(uint32_t address) const
      return false;
  }
  
@@ -19355,7 +19368,7 @@ index 0000000..c24f5c8
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d2..6dd4441 100644
+index 45cb9d2..440b4b8 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -1,3 +1,7 @@
@@ -19428,9 +19441,7 @@ index 45cb9d2..6dd4441 100644
  
 -static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight)
 +namespace
- {
--    static uint64_t s_lastPresentationTick = std::numeric_limits<uint64_t>::max();
--    static bool s_hasLatchedInitialFrame = false;
++{
 +    int s_frameTextureFilter = TEXTURE_FILTER_BILINEAR;
 +    // shown through Vulkan: the newest picture shared with the window's Vulkan device (valid until the next take)
 +    const GSGpuFrame *s_sharedFrame = nullptr;
@@ -19723,7 +19734,9 @@ index 45cb9d2..6dd4441 100644
 +
 +// true = a new picture was uploaded
 +static bool UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight)
-+{
+ {
+-    static uint64_t s_lastPresentationTick = std::numeric_limits<uint64_t>::max();
+-    static bool s_hasLatchedInitialFrame = false;
 +    // the scaling filter can change at any time (the debug panel); FSR is done on the graphics card, the window then
 +    // only places its picture (drawn at exactly the window's size)
 +    const int wantedFilter =
@@ -19786,14 +19799,14 @@ index 45cb9d2..6dd4441 100644
 -                                                   &usedPreferredDisplaySource))
 +                                                   &usedPreferredDisplaySource);
 +    if (!fresh && s_hasUploadedFrame)
-+    {
+     {
+-        Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, MAGENTA);
 +        outWidth = (s_lastWidth != 0u) ? s_lastWidth : FB_WIDTH;
 +        outHeight = (s_lastHeight != 0u) ? s_lastHeight : DEFAULT_DISPLAY_HEIGHT;
 +        return false;
 +    }
 +    if (!fresh || s_scratch.empty() || width == 0u || height == 0u)
-     {
--        Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, MAGENTA);
++    {
 +        // nothing to show (no picture yet, or both display circuits off — after a GS reset until the game sets its
 +        // display up again): black, as on the console
 +        Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, BLACK);
@@ -19919,7 +19932,22 @@ index 45cb9d2..6dd4441 100644
      resetIop();
      m_vu0.reset();
      m_vu1.reset();
-@@ -731,12 +1068,70 @@ bool PS2Runtime::initialize(const char *title)
+@@ -717,6 +1054,14 @@ bool PS2Runtime::initialize(const char *title)
+ {
+     try
+     {
++        PS2Memory::setStrayAccessContext(
++            [](void *owner, uint32_t &pc, uint32_t &ra)
++            {
++                const R5900Context *ctx = static_cast<PS2Runtime *>(owner)->currentEeContext();
++                pc = ctx ? ctx->pc : 0u;
++                ra = ctx ? getRegU32(ctx, 31) : 0u;
++            },
++            this);
+         if (!m_memory.initialize())
+         {
+             std::cerr << "Failed to initialize PS2 memory" << std::endl;
+@@ -731,12 +1076,70 @@ bool PS2Runtime::initialize(const char *title)
  #if defined(PLATFORM_VITA)
          InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title); // raylib vita does not support audio
  #else
@@ -19993,7 +20021,7 @@ index 45cb9d2..6dd4441 100644
          if (m_debugUiInitCallback)
          {
              m_debugUiInitCallback(*this, m_debugUiUserData);
-@@ -971,9 +1366,8 @@ bool PS2Runtime::loadELF(const std::string &elfPath)
+@@ -971,9 +1374,8 @@ bool PS2Runtime::loadELF(const std::string &elfPath)
      }
      {
          std::lock_guard<std::mutex> lock(m_asyncCallbackStackMutex);
@@ -20005,7 +20033,7 @@ index 45cb9d2..6dd4441 100644
      }
  
      LoadedModule module;
-@@ -1013,6 +1407,17 @@ bool PS2Runtime::loadELF(const std::string &elfPath)
+@@ -1013,6 +1415,17 @@ bool PS2Runtime::loadELF(const std::string &elfPath)
      return true;
  }
  
@@ -20023,7 +20051,7 @@ index 45cb9d2..6dd4441 100644
  const PS2Runtime::IoPaths &PS2Runtime::getIoPaths()
  {
      return runtimeIoPaths();
-@@ -1316,6 +1721,16 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+@@ -1316,6 +1729,16 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
              << " policy=" << static_cast<uint32_t>(policy)
              << " trace=" << formatDispatchHistory()
              << std::dec;
@@ -20040,7 +20068,7 @@ index 45cb9d2..6dd4441 100644
  
          static std::mutex s_missingFunctionLogMutex;
          {
-@@ -1396,14 +1811,32 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+@@ -1396,14 +1819,32 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
  
      RecompiledFunction targetFn = lookupFunction(targetPc);
      const uint32_t entryPc = ctx->pc;
@@ -20075,7 +20103,7 @@ index 45cb9d2..6dd4441 100644
      {
          ctx->pc = fallthroughPc;
      }
-@@ -1945,12 +2378,96 @@ uint32_t PS2Runtime::guestRealloc(uint32_t guestAddr, uint32_t newSize, uint32_t
+@@ -1945,12 +2386,96 @@ uint32_t PS2Runtime::guestRealloc(uint32_t guestAddr, uint32_t newSize, uint32_t
      return newAddr;
  }
  
@@ -20172,7 +20200,7 @@ index 45cb9d2..6dd4441 100644
  
      std::lock_guard<std::mutex> lock(m_guestHeapMutex);
      ensureGuestHeapInitializedLocked();
-@@ -2039,10 +2556,36 @@ uint16_t PS2Runtime::Load16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2039,10 +2564,36 @@ uint16_t PS2Runtime::Load16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
      }
  }
  
@@ -20209,7 +20237,7 @@ index 45cb9d2..6dd4441 100644
          return m_memory.read32(vaddr);
      }
      catch (const std::exception &)
-@@ -2056,6 +2599,8 @@ uint64_t PS2Runtime::Load64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2056,6 +2607,8 @@ uint64_t PS2Runtime::Load64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  {
      try
      {
@@ -20218,7 +20246,7 @@ index 45cb9d2..6dd4441 100644
          return m_memory.read64(vaddr);
      }
      catch (const std::exception &)
-@@ -2187,6 +2732,14 @@ void PS2Runtime::requestStop()
+@@ -2187,6 +2740,14 @@ void PS2Runtime::requestStop()
      {
          m_eeScheduler->requestStop();
      }
@@ -20233,7 +20261,7 @@ index 45cb9d2..6dd4441 100644
  }
  
  bool PS2Runtime::isStopRequested() const
-@@ -2339,8 +2892,12 @@ void PS2Runtime::HandleIntegerOverflow(R5900Context *ctx)
+@@ -2339,8 +2900,12 @@ void PS2Runtime::HandleIntegerOverflow(R5900Context *ctx)
      raiseCop0Exception(ctx, EXCEPTION_INTEGER_OVERFLOW);
  }
  
@@ -20246,7 +20274,7 @@ index 45cb9d2..6dd4441 100644
      m_stopRequested.store(false, std::memory_order_relaxed);
      ps2_stubs::resetSifState();
      resetIop();
-@@ -2361,12 +2918,34 @@ void PS2Runtime::run()
+@@ -2361,12 +2926,34 @@ void PS2Runtime::run()
      Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, BLANK);
      Texture2D frameTex = LoadTextureFromImage(blank);
      UnloadImage(blank);
@@ -20281,7 +20309,7 @@ index 45cb9d2..6dd4441 100644
          try
          {
              m_eeScheduler->reset(m_memory.getRDRAM(), m_cpuContext);
-@@ -2422,23 +3001,74 @@ void PS2Runtime::run()
+@@ -2422,23 +3009,74 @@ void PS2Runtime::run()
          });
          uint32_t presentWidth = FB_WIDTH;
          uint32_t presentHeight = DEFAULT_DISPLAY_HEIGHT;
@@ -20364,7 +20392,7 @@ index 45cb9d2..6dd4441 100644
          DrawTexturePro(frameTex, srcRect, dstRect, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
          if (m_debugUiInitialized && m_debugUiDrawCallback)
          {
-@@ -2446,6 +3076,33 @@ void PS2Runtime::run()
+@@ -2446,6 +3084,33 @@ void PS2Runtime::run()
          }
          EndDrawing();
  
@@ -20398,7 +20426,7 @@ index 45cb9d2..6dd4441 100644
          if (WindowShouldClose())
          {
              RUNTIME_LOG("[run] window close requested, breaking out of loop");
-@@ -2459,12 +3116,22 @@ void PS2Runtime::run()
+@@ -2459,12 +3124,22 @@ void PS2Runtime::run()
      {
          gameThread.join();
      }

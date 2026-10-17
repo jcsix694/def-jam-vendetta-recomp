@@ -71,6 +71,17 @@ namespace vendetta_wrestlers
         constexpr uint32_t kStandInRender = 59u, kStandInIcon = 59u, kStandInLogo = 0u;
         constexpr uint32_t kLogoByRecordCall = 0x146458u; // Survival's right panel asks FUN_0017c2c0 by record
 
+        // The winner banner FUN_0016b818 draws each line with FUN_0016ba50: a text object (+0 / +4 the x / y scale,
+        // +8 the width of a character the font lacks, +0xC the spacing after each character) measured by
+        // FUN_001586c0(object, text) and drawn by FUN_001587a0(object, text, x, y) at x = its centre - width / 2,
+        // y = its middle - 25 x the y scale. A line wider than kBannerWidth at the steady size is drawn smaller.
+        constexpr uint32_t kTextMeasure = 0x1586C0u, kTextDraw = 0x1587A0u;
+        constexpr uint32_t kBannerMeasured[] = {0x16BB8Cu, 0x16BCB0u, 0x16BDBCu}; // the returns from its measures
+        constexpr uint32_t kBannerDrawn[] = {0x16BBCCu, 0x16BCE8u, 0x16BDFCu};    // ... and from its draws
+        constexpr uint32_t kGlyphs = 0x23B3B8u; // the banner font: 16 bytes a glyph, +0 its left edge, +8 its right
+        constexpr float kBannerWidth = 600.0f;  // of the screen's 640
+        constexpr float kBannerHalfHeight = 25.0f;
+
         struct AttirePictures
         {
             uint32_t render = 0, icon = 0, shade = 0, logo = 0; // vendetta_pictures ids (0 = none)
@@ -98,6 +109,8 @@ namespace vendetta_wrestlers
         bool g_moveDataReady = false;
         Fn g_originalLogo = nullptr, g_originalLoadMatch = nullptr, g_originalMatchInit = nullptr;
         Fn g_originalFindPicture = nullptr;
+        Fn g_originalTextMeasure = nullptr, g_originalTextDraw = nullptr;
+        float g_bannerShrink = 1.0f, g_bannerScaleY = 1.0f; // the line being drawn: its shrink and its y scale before it
 
         uint32_t read32(uint32_t address)
         {
@@ -814,6 +827,77 @@ namespace vendetta_wrestlers
             completeMoveData(getRegU32(ctx, 31));
             g_originalMatchInit(rdram, ctx, runtime);
         }
+
+        float readFloat(uint32_t address)
+        {
+            float value = 0.0f;
+            std::memcpy(&value, g_rdram + (address & PS2_RAM_MASK), 4);
+            return value;
+        }
+        void writeFloat(uint32_t address, float value) { std::memcpy(g_rdram + (address & PS2_RAM_MASK), &value, 4); }
+
+        // FUN_001588c0: the font's glyph for a character (A-Z, then ' . ! & -), -1 for any other
+        int glyph(char c)
+        {
+            if (c >= 'A' && c <= 'Z')
+                return c - 'A';
+            switch (c)
+            {
+            case '\'': return 26;
+            case '.': return 27;
+            case '!': return 28;
+            case '&': return 29;
+            case '-': return 30;
+            default: return -1;
+            }
+        }
+
+        // FUN_001586c0's width of a text at x scale 1
+        float naturalWidth(uint32_t object, uint32_t text)
+        {
+            float width = 0.0f;
+            for (uint32_t i = 0; i < 512u; ++i)
+            {
+                const char c = static_cast<char>(g_rdram[(text + i) & PS2_RAM_MASK]);
+                if (!c)
+                    break;
+                const int g = glyph(c);
+                width += g < 0 ? readFloat(object + 8u) : readFloat(kGlyphs + 16u * g + 8u) - readFloat(kGlyphs + 16u * g);
+                width += readFloat(object + 0xCu);
+            }
+            return width;
+        }
+
+        bool isOneOf(uint32_t ra, const uint32_t (&list)[3]) { return ra == list[0] || ra == list[1] || ra == list[2]; }
+
+        // A winner banner line too wide for the screen: the object shrunk before it is measured, so the banner centres
+        // the smaller width itself (every phase alike, the zoom in and out included)
+        void textMeasure(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            g_bannerShrink = 1.0f;
+            if (isOneOf(getRegU32(ctx, 31), kBannerMeasured))
+            {
+                const uint32_t object = getRegU32(ctx, 4);
+                const float width = naturalWidth(object, getRegU32(ctx, 5));
+                if (width > kBannerWidth)
+                {
+                    g_bannerShrink = kBannerWidth / width;
+                    g_bannerScaleY = readFloat(object + 4u);
+                    for (uint32_t field : {0x0u, 0x4u, 0xCu})
+                        writeFloat(object + field, readFloat(object + field) * g_bannerShrink);
+                }
+            }
+            g_originalTextMeasure(rdram, ctx, runtime);
+        }
+
+        // ... and drawn lower by what it lost, so its middle stays where the banner put it
+        void textDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_bannerShrink < 1.0f && isOneOf(getRegU32(ctx, 31), kBannerDrawn))
+                ctx->f[13] += kBannerHalfHeight * g_bannerScaleY * (1.0f - g_bannerShrink);
+            g_bannerShrink = 1.0f;
+            g_originalTextDraw(rdram, ctx, runtime);
+        }
     }
 
     uint32_t endRecord() { return g_endRecord; }
@@ -827,7 +911,10 @@ namespace vendetta_wrestlers
         g_originalLoadMatch = runtime.lookupFunction(kLoadMatch);
         g_originalMatchInit = runtime.lookupFunction(kMatchInit);
         g_originalFindPicture = runtime.lookupFunction(kFindPicture);
-        if (!g_originalLogo || !g_originalLoadMatch || !g_originalMatchInit || !g_originalFindPicture)
+        g_originalTextMeasure = runtime.lookupFunction(kTextMeasure);
+        g_originalTextDraw = runtime.lookupFunction(kTextDraw);
+        if (!g_originalLogo || !g_originalLoadMatch || !g_originalMatchInit || !g_originalFindPicture ||
+            !g_originalTextMeasure || !g_originalTextDraw)
         {
             std::cerr << "[wrestlers] the game's routines were not found" << std::endl;
             return;
@@ -850,6 +937,8 @@ namespace vendetta_wrestlers
         }
         runtime.replaceFunction(kLoadMatch, loadMatch);
         runtime.replaceFunction(kMatchInit, matchInit);
+        runtime.replaceFunction(kTextMeasure, textMeasure);
+        runtime.replaceFunction(kTextDraw, textDraw);
     }
 }
 
