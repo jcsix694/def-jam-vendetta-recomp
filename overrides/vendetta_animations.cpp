@@ -54,6 +54,7 @@
 #include "vendetta_mods.h"
 #include "vendetta_moves.h"
 #include "vendetta_store.h"
+#include "vendetta_wrestlers.h"
 
 #include <algorithm>
 #include <array>
@@ -78,7 +79,8 @@ namespace vendetta_animations
     constexpr uint32_t kBank1 = 0x1625580u;    // PAK 3: 2,003 clips, ids i
     constexpr uint32_t kNames0 = 0x259AB8u;    // bank 0's clip names
     constexpr uint32_t kNames1 = 0x25A790u;    // bank 1's clip names
-    constexpr uint32_t kWaza = 0x2331C8u;      // the parsed move data (+0x08 = 999 move records)
+    constexpr uint32_t kWaza = vendetta_store::kMoveData; // the parsed move data (+0x08 = 999 move records), moved into the
+                                                          // store with room for new wrestlers (vendetta_wrestlers.cpp)
     constexpr uint32_t kFzuiStride = 0x1Cu;    // ... + 0x1C: bytes per clip timing record (38)
     constexpr uint32_t kFzuiBank1 = 0x24u;     // ... + 0x24: bank 1's timing records (one per clip id)
     constexpr uint32_t kFzuiSize = 38u;
@@ -87,7 +89,8 @@ namespace vendetta_animations
     constexpr uint32_t kMaxRecord = 4095u;     // a moveset slot holds its move record in 12 bits
     constexpr uint32_t kRecords = 0x14u;       // ... + 0x14: the move records (stride + 0x04, count + 0x08)
     constexpr uint32_t kMovesets = 0x7Cu;      // ... + 0x7C + 16 x attire: that attire's moveset (128 u16 slots)
-    constexpr uint32_t kCharacters = 0x27E100u; // the character table: one 0x20 row per wrestler attire (+0 / +4 names)
+    constexpr uint32_t kCharacters = vendetta_store::kCharacterTable; // the character table: one 0x20 row per wrestler
+                                                                     // attire (+0 / +4 names); new wrestlers from 63
     constexpr uint32_t kAttires = 59u;         // rows with a moveset (59-62 are the empty "Character A-D")
     constexpr uint32_t kHeroes = 12u;          // records 0-11: the story heroes, three records each (FUN_0013e958)
     constexpr uint32_t kSlots = 128u;
@@ -150,13 +153,13 @@ namespace vendetta_animations
         return on;
     }
 
-    // A guest C string (a clip name), or "" when the pointer doesn't lead to one.
+    // A guest C string (a clip name, a wrestler's name), or "" when the pointer doesn't lead to one.
     std::string guestString(uint32_t address)
     {
-        if (address < 0x100000u || address >= 0x2000000u)
+        if (address < 0x100000u || !vendetta_store::readable(address, 64u))
             return {};
         std::string text;
-        for (uint32_t i = 0; i < 32u; ++i)
+        for (uint32_t i = 0; i < 64u; ++i)
         {
             const char c = static_cast<char>(g_rdram[(address + i) & PS2_RAM_MASK]);
             if (c == 0)
@@ -435,7 +438,14 @@ namespace vendetta_animations
         return address;
     }
 
-    std::vector<std::array<uint8_t, 2u * kSlots>> g_gameMovesets; // every attire's slots as the game has them
+    // The attires with a moveset: the game's 0-58 and the new wrestlers' from 63 (vendetta_wrestlers.cpp).
+    bool hasMoveset(uint32_t attire)
+    {
+        return attire < kAttires || (attire >= vendetta_wrestlers::kFirstNewRecord && attire < vendetta_wrestlers::endRecord());
+    }
+
+    std::vector<std::array<uint8_t, 2u * kSlots>> g_gameMovesets; // every attire's slots as the game has them (a new
+                                                                   // attire's: as its moveset.json gives them at start-up)
     uint32_t g_standIn = 0;                                        // where a spare clip id points
     std::array<uint8_t, kFzuiSize> g_standInTiming{};              // and its timing record
     uint32_t g_poisonClip = 0;                                     // VENDETTA_ANIM_POISON: 64 bytes of 0xFF
@@ -565,9 +575,10 @@ namespace vendetta_animations
             if (g_poisonClip)
                 std::memset(guest(g_poisonClip), 0xFF, 64u);
         }
-        g_gameMovesets.resize(kAttires);
-        for (uint32_t attire = 0; attire < kAttires; ++attire)
-            std::memcpy(g_gameMovesets[attire].data(), guest(movesetAddress(attire)), 2u * kSlots);
+        g_gameMovesets.resize(vendetta_wrestlers::endRecord());
+        for (uint32_t attire = 0; attire < vendetta_wrestlers::endRecord(); ++attire)
+            if (hasMoveset(attire))
+                std::memcpy(g_gameMovesets[attire].data(), guest(movesetAddress(attire)), 2u * kSlots);
         vendetta_moves::prepare(g_rdram); // the move records, names, camera paths and eye tracks at full size
         poisonUnused();
         g_state = State::Ready;
@@ -600,8 +611,9 @@ namespace vendetta_animations
                 std::memcpy(fzui + id * kFzuiSize, g_standInTiming.data(), kFzuiSize);
         }
         write32(kBank1 + 8u, kExpectedCount1);
-        for (uint32_t attire = 0; attire < kAttires; ++attire)
-            std::memcpy(guest(movesetAddress(attire)), g_gameMovesets[attire].data(), 2u * kSlots);
+        for (uint32_t attire = 0; attire < vendetta_wrestlers::endRecord(); ++attire)
+            if (hasMoveset(attire))
+                std::memcpy(guest(movesetAddress(attire)), g_gameMovesets[attire].data(), 2u * kSlots);
         vendetta_moves::reset();
         vendetta_clipsounds::reset();
         g_modClips.clear();
@@ -613,8 +625,10 @@ namespace vendetta_animations
     {
         std::vector<uint32_t> rows;
         const std::string want = upper(name);
-        for (uint32_t row = 0; row < kAttires; ++row)
+        for (uint32_t row = 0; row < vendetta_wrestlers::endRecord(); ++row)
         {
+            if (!hasMoveset(row))
+                continue;
             const uint32_t entry = kCharacters + 0x20u * row;
             if (upper(guestString(read32(entry))) == want || upper(guestString(read32(entry + 4u))) == want)
                 rows.push_back(row);
@@ -622,13 +636,26 @@ namespace vendetta_animations
         return rows;
     }
 
-    // A slot a mod's "wrestlers" file sets: { "84": "Jericho Entrance" } - a new move or a new animation by its name.
+    // A slot a mod's "wrestlers" file sets: { "84": "Jericho Entrance" } - a new move or a new animation by its name,
+    // "game move <number> <name>", "none", or { "move": ..., "flags": 0-15 } (the slot's bits 12-15; else kept).
     struct SlotChange
     {
         std::string value;
         std::string modName;
         std::string wrestler;
+        int flags = -1;
     };
+
+    // The number in "game move 56 CEMENT HANDS" (the name after it is for people), or -1.
+    int gameMoveNumber(const std::string &value)
+    {
+        const std::string want = "GAME MOVE ";
+        if (value.size() <= want.size() || upper(value.substr(0, want.size())) != want)
+            return -1;
+        char *end = nullptr;
+        const long n = std::strtol(value.c_str() + want.size(), &end, 10);
+        return end != value.c_str() + want.size() && n >= 0 && n < 999 ? static_cast<int>(n) : -1;
+    }
     using SlotChanges = std::map<std::pair<uint32_t, uint32_t>, SlotChange>; // (attire, slot) -> what goes there
 
     // "wrestlers": { "<wrestler>": "<file>" } of every mod, for the match's attires only (only the listed slots change).
@@ -636,6 +663,54 @@ namespace vendetta_animations
     {
         SlotChanges changes;
         std::map<std::tuple<std::string, std::string, std::string>, uint32_t> clashes; // (mod, wrestler, earlier mod) -> slots
+        // One slot file for one wrestler: its slots for the attires in this match.
+        const auto readSlotFile = [&](const std::string &modName, const std::string &wrestler, const std::filesystem::path &file,
+                                      const std::vector<uint32_t> &all)
+        {
+            std::vector<uint32_t> attires;
+            for (uint32_t attire : all)
+                if (matchAttires.count(attire))
+                    attires.push_back(attire);
+            if (attires.empty())
+                return; // not in this match
+            std::vector<uint8_t> bytes;
+            vendetta_mods::Json moveset;
+            std::string error;
+            if (file.empty() || !readFile(file, bytes) ||
+                !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error) || !moveset.isObject())
+            {
+                std::cerr << "[mods] " << modName << ": " << wrestler << "'s file can't be read"
+                          << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
+                return;
+            }
+            for (const auto &[slotText, value] : moveset.members)
+            {
+                char *end = nullptr;
+                const long slot = std::strtol(slotText.c_str(), &end, 10);
+                if (slotText.empty() || *end != '\0' || slot < 0 || slot >= static_cast<long>(kSlots))
+                {
+                    std::cerr << "[mods] " << modName << ": " << wrestler << ": \"" << slotText
+                              << "\" isn't a moveset slot (0-127) - skipped" << std::endl;
+                    continue;
+                }
+                const vendetta_mods::Json *move = value.isObject() ? value.find("move") : &value;
+                const vendetta_mods::Json *flags = value.isObject() ? value.find("flags") : nullptr;
+                if (!move || !move->isString() ||
+                    (flags && (flags->type != vendetta_mods::Json::Type::Number || flags->number < 0 || flags->number > 15)))
+                {
+                    std::cerr << "[mods] " << modName << ": " << wrestler << " slot " << slot
+                              << ": the move should be a name in quotes (or { \"move\": ..., \"flags\": 0-15 }) - skipped" << std::endl;
+                    continue;
+                }
+                for (uint32_t attire : attires)
+                {
+                    SlotChange &change = changes[{attire, static_cast<uint32_t>(slot)}];
+                    if (!change.modName.empty() && change.modName != modName && attire == attires.front())
+                        ++clashes[{modName, wrestler, change.modName}];
+                    change = {move->text, modName, wrestler, flags ? static_cast<int>(flags->number) : -1};
+                }
+            }
+        };
         for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
         {
             const vendetta_mods::Json *wrestlers = mod.manifest.find("wrestlers");
@@ -655,50 +730,14 @@ namespace vendetta_animations
                               << std::endl;
                     continue;
                 }
-                std::vector<uint32_t> attires;
-                for (uint32_t attire : all)
-                    if (matchAttires.count(attire))
-                        attires.push_back(attire);
-                if (attires.empty())
-                    continue; // not in this match
                 const std::filesystem::path file =
                     fileValue.isString() ? vendetta_mods::modFile(mod, fileValue.text, "wrestler") : std::filesystem::path();
-                std::vector<uint8_t> bytes;
-                vendetta_mods::Json moveset;
-                std::string error;
-                if (file.empty() || !readFile(file, bytes) ||
-                    !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error) || !moveset.isObject())
-                {
-                    std::cerr << "[mods] " << mod.name << ": " << wrestler << "'s file can't be read"
-                              << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
-                    continue;
-                }
-                for (const auto &[slotText, value] : moveset.members)
-                {
-                    char *end = nullptr;
-                    const long slot = std::strtol(slotText.c_str(), &end, 10);
-                    if (slotText.empty() || *end != '\0' || slot < 0 || slot >= static_cast<long>(kSlots))
-                    {
-                        std::cerr << "[mods] " << mod.name << ": " << wrestler << ": \"" << slotText
-                                  << "\" isn't a moveset slot (0-127) - skipped" << std::endl;
-                        continue;
-                    }
-                    if (!value.isString())
-                    {
-                        std::cerr << "[mods] " << mod.name << ": " << wrestler << " slot " << slot
-                                  << ": the move should be a name in quotes - skipped" << std::endl;
-                        continue;
-                    }
-                    for (uint32_t attire : attires)
-                    {
-                        SlotChange &change = changes[{attire, static_cast<uint32_t>(slot)}];
-                        if (!change.modName.empty() && change.modName != mod.name && attire == attires.front())
-                            ++clashes[{mod.name, wrestler, change.modName}];
-                        change = {value.text, mod.name, wrestler};
-                    }
-                }
+                readSlotFile(mod.name, wrestler, file, all);
             }
         }
+        // a new wrestler's own slot file ("moveset" in its wrestler.json), after its mod's
+        for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
+            readSlotFile(own.modName, own.wrestler, own.file, own.records);
         for (const auto &[who, slots] : clashes)
             std::cerr << "[mods] " << std::get<0>(who) << ": " << std::get<1>(who) << ": " << slots << " slot(s) also set by "
                       << std::get<2>(who) << " - " << std::get<0>(who) << "'s are used (later in the load order)" << std::endl;
@@ -950,10 +989,21 @@ namespace vendetta_animations
             const uint16_t value = read16(slotAddress);
             const std::string label = "[mods] " + change.modName + ": " + change.wrestler + " (attire row " +
                                       std::to_string(where.first) + ") slot " + std::to_string(where.second);
+            const uint32_t high = change.flags >= 0 ? static_cast<uint32_t>(change.flags) << 12
+                                                    : (value == 0xFFFFu ? 0u : (value & 0xF000u));
+            if (upper(change.value) == "NONE" || gameMoveNumber(change.value) >= 0)
+            {
+                // a game move, or an empty slot: written as it is
+                const uint16_t newValue = upper(change.value) == "NONE"
+                                              ? uint16_t(0xFFFFu)
+                                              : static_cast<uint16_t>(high | static_cast<uint32_t>(gameMoveNumber(change.value)));
+                std::memcpy(guest(slotAddress), &newValue, 2);
+                ++counts.slots;
+                continue;
+            }
             if (const int moveRecord = vendetta_moves::recordOf(change.value); moveRecord >= 0)
             {
-                const uint16_t newValue =
-                    static_cast<uint16_t>((value == 0xFFFFu ? 0u : (value & 0xF000u)) | static_cast<uint32_t>(moveRecord));
+                const uint16_t newValue = static_cast<uint16_t>(high | static_cast<uint32_t>(moveRecord));
                 std::memcpy(guest(slotAddress), &newValue, 2);
                 if (vendetta_mods::detailLog())
                     std::cerr << label << ": the new move " << change.value << " (move " << moveRecord << ")" << std::endl;
@@ -1009,7 +1059,7 @@ namespace vendetta_animations
 
     std::string characterName(int32_t record)
     {
-        if (record < 0 || record > 62)
+        if (record < 0 || static_cast<uint32_t>(record) >= vendetta_wrestlers::endRecord())
             return "?";
         const std::string name = guestString(read32(kCharacters + 0x20u * static_cast<uint32_t>(record)));
         return name.empty() ? "?" : name;
@@ -1027,7 +1077,7 @@ namespace vendetta_animations
             if (r < kHeroes)
                 for (uint32_t build = 0; build < 3u; ++build)
                     attires.insert(3u * (r / 3u) + build); // a hero fights with any of its three records' movesets
-            else if (r < kAttires)
+            else if (hasMoveset(r))
                 attires.insert(r);
         }
         return attires;
@@ -1085,6 +1135,22 @@ namespace vendetta_animations
                     for (const auto &[gameName, file] : replaced->members)
                         if (file.isString())
                             withSettings(inMod(mod, file.text));
+            }
+            for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
+            {
+                // a new wrestler's moveset.json: the mod moves it names
+                vendetta_mods::Json moveset;
+                std::string error;
+                if (!names.count(upper(own.wrestler)) || !vendetta_mods::readAhead(own.file, bytes) ||
+                    !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error))
+                    continue;
+                for (const auto &[slot, value] : moveset.members)
+                {
+                    const vendetta_mods::Json *move = value.isObject() ? value.find("move") : &value;
+                    if (move && move->isString() && named.insert(upper(move->text)).second)
+                        for (const std::filesystem::path &folder : vendetta_moves::foldersNamed(move->text))
+                            folders.insert(folder);
+                }
             }
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {

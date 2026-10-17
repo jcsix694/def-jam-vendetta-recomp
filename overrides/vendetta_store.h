@@ -34,17 +34,31 @@ namespace vendetta_store
     // the report. Returns the guest address (>= 0x02000000), or 0 with a message when the store is full.
     uint32_t allocate(Area area, uint32_t size, const char *user, uint32_t alignment = 16, uint32_t phase = 0);
 
-    // The fixed area: the store's first 64 KB (0x02000000-0x0200FFFF), for data the game's code finds at an address
+    // The fixed area: the store's first 9 MB (0x02000000-0x028FFFFF), for data the game's code finds at an address
     // patched into it before translation (config: [patches]), so the address can't move. Each user keeps to its own
     // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp); 0x1000-0xD2CF the clip
-    // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp). Returns the guest address of
-    // `offset`, its memory committed, or 0.
+    // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp); the roster tables below
+    // (vendetta_wrestlers.cpp). Returns the guest address of `offset`, its memory committed, or 0.
     constexpr uint32_t kFixedArea = 0x02000000u;
-    constexpr uint32_t kFixedSize = 0x10000u;
+    constexpr uint32_t kFixedSize = 0x00900000u;
     uint32_t fixed(uint32_t offset, uint32_t size, const char *user);
+
+    // The roster tables, moved here so new wrestlers can follow the game's own (vendetta_wrestlers.cpp fills them at
+    // start-up). Each copy keeps its original's low 16 bits, so only the game's luis are patched (every addiu / load
+    // offset stays); each has room for far more entries than any roster needs.
+    constexpr uint32_t kCharacterTable = 0x0201E100u; // was 0x27E100: one 0x20 record per attire (4 MB: 131,072)
+    constexpr uint32_t kSelectGrid = 0x02429EF0u;     // was 0x239EF0: Choose Fighter's slots {base record, attires} (1 MB)
+    constexpr uint32_t kMoveData = 0x025331C8u;       // was 0x2331C8: the WAZA struct, +0x70 + 16 x record = a record's
+                                                      // {?, WPAR, ?, WWAZ} (2 MB); the boot reads it straight here
+    constexpr uint32_t kSizeClasses = 0x02744910u;    // was 0x234910: one float per record (512 KB)
+    constexpr uint32_t kVoiceMap = 0x027C99B8u;       // was 0x2599B8: a record's voice row (512 KB)
 
     // Host pointer for a guest address the store handed out.
     uint8_t *host(uint32_t guestAddress);
+
+    // Whether `size` bytes at a guest address can be read: the game's 32 MB or memory the store has committed (a
+    // pointer read from a table, checked before following it).
+    bool readable(uint32_t guestAddress, uint32_t size = 1u);
 
     // A new match: the match area emptied (VENDETTA_ANIM_POISON=1: its old bytes filled with 0xFF first, so anything that
     // still read the last match's data would show).

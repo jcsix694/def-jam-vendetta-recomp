@@ -1,8 +1,27 @@
 diff --git a/gs/gs_interface.cpp b/gs/gs_interface.cpp
-index ea00016..db519b3 100644
+index ea00016..ecf7fb2 100644
 --- a/gs/gs_interface.cpp
 +++ b/gs/gs_interface.cpp
-@@ -2697,8 +2697,19 @@ void GSInterface::drawing_kick_append()
+@@ -1543,6 +1543,18 @@ uint32_t GSInterface::drawing_kick_update_texture(FBFeedbackMode feedback_mode,
+ 
+ 	// Memoize this computation.
+ 	state_tracker.tex.rect = desc.rect = GSRenderer::compute_effective_texture_rect(desc);
++
++	// A host image bound to this address (a local addition) is sampled instead of VRAM.
++	if (!host_image_bound.empty())
++	{
++		auto bound = host_image_bound.find(uint32_t(desc.tex0.desc.TBP0));
++		if (bound != host_image_bound.end())
++		{
++			auto host = host_images.find(bound->second);
++			if (host != host_images.end() && host->second)
++				return use_host_image(desc, host->second);
++		}
++	}
+ 	state_tracker.tex.levels[0].base = desc.tex0.desc.TBP0;
+ 	state_tracker.tex.levels[0].stride = desc.tex0.desc.TBW;
+ 
+@@ -2697,8 +2709,19 @@ void GSInterface::drawing_kick_append()
  	{
  		prim_attr.state |= 1u << STATE_BIT_PARALLELOGRAM;
  		prim_attr.state |= 1u << STATE_BIT_SPRITE;
@@ -24,7 +43,115 @@ index ea00016..db519b3 100644
  		prim_attr.state &= ~(1u << STATE_BIT_MULTISAMPLE);
  	}
  	else if (is_line)
-@@ -4445,6 +4456,7 @@ void GSInterface::set_debug_mode(const DebugMode &mode)
+@@ -3186,6 +3209,9 @@ void GSInterface::init_transfer()
+ 
+ 	auto XDIR = transfer_state.copy.trxdir.desc.XDIR;
+ 
++	if (XDIR != LOCAL_TO_HOST)
++		host_image_transfer(uint32_t(transfer_state.copy.bitbltbuf.desc.DBP));
++
+ 	if (XDIR == LOCAL_TO_LOCAL)
+ 	{
+ 		auto dst_rect = compute_page_rect(transfer_state.copy.bitbltbuf.desc.DBP,
+@@ -4147,6 +4173,89 @@ void GSInterface::packed_FOG(const void *words)
+ 	TRACE("FOG", registers.fog);
+ }
+ 
++void GSInterface::set_host_image(uint32_t id, uint32_t width, uint32_t height, std::vector<uint32_t> rgba)
++{
++	if (!id || !width || !height || rgba.size() != size_t(width) * height)
++		return;
++	std::lock_guard<std::mutex> holder(host_image_lock);
++	host_image_pending.push_back({ id, width, height, std::move(rgba) });
++}
++
++void GSInterface::drop_host_image(uint32_t id)
++{
++	std::lock_guard<std::mutex> holder(host_image_lock);
++	host_image_pending.push_back({ id, 0, 0, {} });
++}
++
++void GSInterface::drain_host_images()
++{
++	std::vector<PendingHostImage> pending;
++	{
++		std::lock_guard<std::mutex> holder(host_image_lock);
++		pending.swap(host_image_pending);
++	}
++	for (auto &image : pending)
++	{
++		if (image.rgba.empty())
++			host_images.erase(image.id);
++		else
++			host_images[image.id] = renderer.create_host_image(image.width, image.height, image.rgba.data());
++	}
++}
++
++void GSInterface::a_d_HOSTIMAGE(uint64_t payload)
++{
++	drain_host_images();
++	host_image_armed_tbp = uint32_t(payload & 0x3fffu);
++	host_image_armed_id = uint32_t(payload >> 32);
++}
++
++void GSInterface::host_image_transfer(uint32_t dbp)
++{
++	if (dbp == host_image_armed_tbp)
++	{
++		if (host_image_armed_id)
++			host_image_bound[dbp] = host_image_armed_id;
++		else
++			host_image_bound.erase(dbp);
++		host_image_armed_tbp = UINT32_MAX;
++	}
++	else if (!host_image_bound.empty())
++		host_image_bound.erase(dbp);
++}
++
++uint32_t GSInterface::use_host_image(const TextureDescriptor &desc, const Vulkan::ImageHandle &image)
++{
++	// Normalised by the GS texture's own rect, not the image's size: the image lines up in every coordinate and
++	// wrap mode, whatever its size.
++	TextureInfo info = {};
++	info.view = &image->get_view();
++	info.info.sizes = vec4(float(1u << uint32_t(desc.tex0.desc.TW)), float(1u << uint32_t(desc.tex0.desc.TH)),
++	                       1.0f / float(desc.rect.width), 1.0f / float(desc.rect.height));
++	info.info.region.x = desc.clamp.desc.WMS == CLAMPBits::REGION_CLAMP ? float(uint32_t(desc.clamp.desc.MINU)) : 0.0f;
++	info.info.region.z = desc.clamp.desc.WMS == CLAMPBits::REGION_CLAMP ? float(uint32_t(desc.clamp.desc.MAXU))
++	                                                                     : float(desc.rect.width) - 1.0f;
++	info.info.region.y = desc.clamp.desc.WMT == CLAMPBits::REGION_CLAMP ? float(uint32_t(desc.clamp.desc.MINV)) : 0.0f;
++	info.info.region.w = desc.clamp.desc.WMT == CLAMPBits::REGION_CLAMP ? float(uint32_t(desc.clamp.desc.MAXV))
++	                                                                     : float(desc.rect.height) - 1.0f;
++	info.info.bias.x = -float(desc.rect.x) * info.info.sizes.z;
++	info.info.bias.y = -float(desc.rect.y) * info.info.sizes.w;
++	info.info.arrayed = 0;
++	info.info.flags = 0;
++
++	uint32_t texture_index = render_pass.tex_infos.size();
++	render_pass.tex_infos.push_back(info);
++	render_pass.tex0_infos.push_back(desc.tex0.desc);
++	render_pass.held_images.push_back(image);
++
++	// The next draw with this same descriptor may be a game texture again: never match it.
++	state_tracker.last_texture_descriptor = {};
++	state_tracker.last_texture_index = texture_index;
++	state_tracker.last_texture_index_valid_at_texflush = state_tracker.texflush_counter;
++	state_tracker.texflush_counter_pending = false;
++	return texture_index;
++}
++
+ void GSInterface::setup_handlers()
+ {
+ 	for (auto &h : ad_handlers)
+@@ -4161,6 +4270,7 @@ void GSInterface::setup_handlers()
+ #define DECL_REG(reg, addr) ad_handlers[addr] = &GSInterface::a_d_##reg;
+ #include "gs_register_addr.hpp"
+ #undef DECL_REG
++	ad_handlers[0x70] = &GSInterface::a_d_HOSTIMAGE; // a local addition: host images (gs_interface.hpp)
+ 
+ 	reglist_handlers[int(GIFAddr::PRIM)] = &GSInterface::a_d_PRIM;
+ 	reglist_handlers[int(GIFAddr::RGBAQ)] = &GSInterface::a_d_RGBAQ;
+@@ -4445,6 +4555,7 @@ void GSInterface::set_debug_mode(const DebugMode &mode)
  void GSInterface::set_hacks(const Hacks &hacks_)
  {
  	hacks = hacks_;
@@ -32,7 +159,7 @@ index ea00016..db519b3 100644
  
  	if (!hacks.backbuffer_promotion)
  	{
-@@ -4679,7 +4691,9 @@ ScanoutResult GSInterface::vsync(const VSyncInfo &info_)
+@@ -4679,7 +4790,9 @@ ScanoutResult GSInterface::vsync(const VSyncInfo &info_)
  	                                    priv_registers.smode2.INT &&
  	                                    priv_registers.smode1.CMOD != SMODE1Bits::CMOD_PROGRESSIVE;
  
@@ -44,10 +171,19 @@ index ea00016..db519b3 100644
  
  	auto result = renderer.vsync(priv_registers, info,
 diff --git a/gs/gs_interface.hpp b/gs/gs_interface.hpp
-index 9f05da8..70adbe0 100644
+index 9f05da8..3d0e7a9 100644
 --- a/gs/gs_interface.hpp
 +++ b/gs/gs_interface.hpp
-@@ -184,6 +184,10 @@ struct VSyncInfo
+@@ -14,6 +14,8 @@
+ #include <stddef.h>
+ #include <vector>
+ #include <type_traits>
++#include <mutex>
++#include <unordered_map>
+ 
+ namespace ParallelGS
+ {
+@@ -184,6 +186,10 @@ struct VSyncInfo
  	// This will look funny if the game is constantly changing vertical scanout resolution.
  	bool raw_circuit_scanout;
  
@@ -58,7 +194,7 @@ index 9f05da8..70adbe0 100644
  	// When using SSAA, attempt to scan out a higher resolution image based on the super samples.
  	// This only works well if the game is rendering 3D geometry directly to the frame buffer which is used to scanout.
  	// Some games blit the real framebuffer to scanout location using textures, which will lose the SSAA information necessary to scanout,
-@@ -234,6 +238,11 @@ struct Hacks
+@@ -234,6 +240,11 @@ struct Hacks
  	// Can squeeze out more performance on lower powered devices in some cases
  	// where games abuse the GS's fill rate for e.g. ridiculously expensive fogging effects.
  	bool allow_blend_demote = false;
@@ -70,8 +206,42 @@ index 9f05da8..70adbe0 100644
  };
  
  class SignalInterface
+@@ -303,7 +314,33 @@ public:
+ 
+ 	void read_transfer_fifo(void *data, uint32_t num_128b_words);
+ 
++	// Host images (a local addition): a picture of any size made by the program (from a PNG), drawn instead of a GS
++	// texture. Writing the private register 0x70 with { TBP0 in bits 0-13, image id in bits 32-63 } arms it: the next
++	// host-to-local transfer into that address binds the image there (id 0: unbinds it), and any later transfer into
++	// the address unbinds it. A draw sampling a bound address samples the image, normalised by the GS texture's own
++	// size, so it lines up in every coordinate and wrap mode. set_host_image() / drop_host_image() may be called from
++	// any thread (queued; the images are made on this one when the register is next written). rgba: width x height
++	// RGBA8 with the GS's alpha (0x80 = opaque).
++	void set_host_image(uint32_t id, uint32_t width, uint32_t height, std::vector<uint32_t> rgba);
++	void drop_host_image(uint32_t id);
++
+ private:
++	struct PendingHostImage
++	{
++		uint32_t id = 0, width = 0, height = 0;
++		std::vector<uint32_t> rgba; // empty: drop
++	};
++	std::mutex host_image_lock;
++	std::vector<PendingHostImage> host_image_pending;
++	std::unordered_map<uint32_t, Vulkan::ImageHandle> host_images;
++	std::unordered_map<uint32_t, uint32_t> host_image_bound; // TBP0 -> image id
++	uint32_t host_image_armed_tbp = UINT32_MAX;
++	uint32_t host_image_armed_id = 0;
++	void drain_host_images();
++	void host_image_transfer(uint32_t dbp);
++	uint32_t use_host_image(const TextureDescriptor &desc, const Vulkan::ImageHandle &image);
++	void a_d_HOSTIMAGE(uint64_t payload);
++
+ 	friend class PageTracker;
+ 	void flush(PageTrackerFlushFlags flags, FlushReason reason);
+ 	void sync_host_vram_page(uint32_t page_index, uint32_t block_mask);
 diff --git a/gs/gs_renderer.cpp b/gs/gs_renderer.cpp
-index dbe032d..b6ebdac 100644
+index dbe032d..97fc244 100644
 --- a/gs/gs_renderer.cpp
 +++ b/gs/gs_renderer.cpp
 @@ -4,6 +4,8 @@
@@ -131,7 +301,25 @@ index dbe032d..b6ebdac 100644
  	flush_submit(0);
  	// Descriptor indexing is a hard requirement, but timeline semaphore could be elided if really needed.
  	// Wave-ops is critical.
-@@ -1936,14 +1962,26 @@ bool GSRenderer::render_pass_instance_is_deduced_blur(const RenderPass &rp, uint
+@@ -1353,6 +1379,17 @@ Vulkan::ImageHandle GSRenderer::copy_cached_texture(const Vulkan::Image &img, co
+ 	return copy_img;
+ }
+ 
++Vulkan::ImageHandle GSRenderer::create_host_image(uint32_t width, uint32_t height, const void *rgba)
++{
++	if (!device || !width || !height)
++		return {};
++	auto info = Vulkan::ImageCreateInfo::immutable_2d_image(width, height, VK_FORMAT_R8G8B8A8_UNORM, true);
++	Vulkan::ImageInitialData initial = {};
++	initial.data = rgba;
++	stats.allocated_image_memory += width * height * sizeof(uint32_t);
++	return device->create_image(info, &initial);
++}
++
+ Vulkan::ImageHandle GSRenderer::create_cached_texture(const TextureDescriptor &desc)
+ {
+ 	if (!device)
+@@ -1936,14 +1973,26 @@ bool GSRenderer::render_pass_instance_is_deduced_blur(const RenderPass &rp, uint
  	return false;
  }
  
@@ -160,7 +348,7 @@ index dbe032d..b6ebdac 100644
  }
  
  void GSRenderer::dispatch_triangle_setup(Vulkan::CommandBuffer &cmd, const RenderPass &rp)
-@@ -2001,14 +2039,15 @@ void GSRenderer::dispatch_triangle_setup(Vulkan::CommandBuffer &cmd, const Rende
+@@ -2001,14 +2050,15 @@ void GSRenderer::dispatch_triangle_setup(Vulkan::CommandBuffer &cmd, const Rende
  				insert_label(cmd, "Instance %u, deduced blur kernel", i);
  		}
  
@@ -178,7 +366,7 @@ index dbe032d..b6ebdac 100644
  	cmd.set_specialization_constant(0, sampling_rate_x_log2);
  	cmd.set_specialization_constant(1, sampling_rate_y_log2);
  	cmd.set_specialization_constant(2, bound_texture_has_array);
-@@ -2172,7 +2211,7 @@ void GSRenderer::dispatch_binning(Vulkan::CommandBuffer &cmd, const RenderPass &
+@@ -2172,7 +2222,7 @@ void GSRenderer::dispatch_binning(Vulkan::CommandBuffer &cmd, const RenderPass &
  		base_primitive, instance, base_primitive + num_primitives,
  		1u << (inst.sampling_rate_x_log2 + inst.sampling_rate_y_log2),
  		// Technically we can decay to 2x SSAA here and splat, but that too complicated to support.
@@ -187,7 +375,7 @@ index dbe032d..b6ebdac 100644
  		allow_blend_demote ? BlendDemoteBudget : 0,
  	};
  
-@@ -2655,7 +2694,7 @@ void GSRenderer::dispatch_shading(Vulkan::CommandBuffer &cmd, const RenderPass &
+@@ -2655,7 +2705,7 @@ void GSRenderer::dispatch_shading(Vulkan::CommandBuffer &cmd, const RenderPass &
  	cmd.set_program(shaders.ubershader[int(rp.feedback_color)][int(rp.feedback_depth)]);
  	auto snap_raster_mask = ivec2(-(1 << inst.sampling_rate_y_log2));
  	// Snap single-sampled raster to half-texel instead.
@@ -196,7 +384,7 @@ index dbe032d..b6ebdac 100644
  		snap_raster_mask.y >>= 1;
  
  	// If we're doing channel shuffle, but insist on super-sampling, we must make sure
-@@ -4128,7 +4167,7 @@ void GSRenderer::transfer_overlap_barrier()
+@@ -4128,7 +4178,7 @@ void GSRenderer::transfer_overlap_barrier()
  
  void GSRenderer::sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::Image &img, const DISPFBBits &dispfb,
                                       const SamplingRect &rect, uint32_t super_samples,
@@ -205,7 +393,7 @@ index dbe032d..b6ebdac 100644
  {
  	cmd.image_barrier(img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
  	                  0, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-@@ -4151,15 +4190,16 @@ void GSRenderer::sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::I
+@@ -4151,15 +4201,16 @@ void GSRenderer::sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::I
  	auto valid_extent = rect.valid_extent;
  	if (super_samples > 1)
  	{
@@ -225,7 +413,7 @@ index dbe032d..b6ebdac 100644
  
  	struct Registers
  	{
-@@ -4319,6 +4359,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4319,6 +4370,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  	if (high_resolution_scanout)
  		super_samples = 1 << (sampling_rate_x_log2 + sampling_rate_y_log2);
  
@@ -239,7 +427,7 @@ index dbe032d..b6ebdac 100644
  	if (promoted1 && promoted1->get_create_info().layers < super_samples)
  		promoted1 = nullptr;
  	if (promoted2 && promoted2->get_create_info().layers < super_samples)
-@@ -4425,6 +4472,7 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4425,6 +4483,7 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  		high_resolution_scanout = false;
  		field_aware_rendering = false;
  		super_samples = 1;
@@ -247,7 +435,7 @@ index dbe032d..b6ebdac 100644
  	}
  	else if (priv.smode1.CMOD == SMODE1Bits::CMOD_PROGRESSIVE && priv.smode1.LC == SMODE1Bits::LC_VGA)
  	{
-@@ -4643,13 +4691,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4643,13 +4702,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  		if (image_info.width && image_info.height)
  		{
@@ -264,7 +452,7 @@ index dbe032d..b6ebdac 100644
  			device->set_name(*circuit1, "Circuit1");
  		}
  
-@@ -4701,13 +4746,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4701,13 +4757,10 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  		if (image_info.width && image_info.height)
  		{
@@ -281,7 +469,7 @@ index dbe032d..b6ebdac 100644
  			device->set_name(*circuit2, "Circuit2");
  		}
  
-@@ -4763,11 +4805,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4763,11 +4816,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  		uint32_t horiz_resolution1 = circuit2 ? circuit2->get_width() : 0;
  
  		// Need to do all the CRTC offset math in single sampled domain to avoid lots of confusing cases later.
@@ -295,7 +483,7 @@ index dbe032d..b6ebdac 100644
  
  		uint32_t magh1 = priv.display1.MAGH + 1;
  		uint32_t magh2 = priv.display2.MAGH + 1;
-@@ -4811,11 +4850,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4811,11 +4861,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  		auto effective_mode_width = mode_width;
  		auto effective_mode_height = mode_height;
  
@@ -309,7 +497,7 @@ index dbe032d..b6ebdac 100644
  
  		bool is_raw_circuit1 =
  				circuit1 && !circuit2 && MMOD == PMODEBits::MMOD_ALPHA_ALP && ALP == 0xff &&
-@@ -4837,8 +4873,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4837,8 +4884,8 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  			                  VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
  			                  info.dst_stage, info.dst_access);
  
@@ -320,7 +508,7 @@ index dbe032d..b6ebdac 100644
  			result.double_strike = double_strike;
  
  			flush_submit(0);
-@@ -4848,13 +4884,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4848,13 +4895,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  	result.internal_width = mode_width;
  	result.internal_height = mode_height;
@@ -338,7 +526,7 @@ index dbe032d..b6ebdac 100644
  	}
  
  	auto merged = device->create_image(image_info);
-@@ -4920,13 +4956,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4920,13 +4967,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  			if (high_resolution_scanout)
  			{
@@ -357,7 +545,7 @@ index dbe032d..b6ebdac 100644
  			}
  
  			cmd.set_viewport(vp);
-@@ -4953,13 +4989,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
+@@ -4953,13 +5000,13 @@ ScanoutResult GSRenderer::vsync(const PrivRegisterState &priv, const VSyncInfo &
  
  			if (high_resolution_scanout)
  			{
@@ -377,10 +565,19 @@ index dbe032d..b6ebdac 100644
  
  			cmd.set_viewport(vp);
 diff --git a/gs/gs_renderer.hpp b/gs/gs_renderer.hpp
-index d9acc50..938642e 100644
+index d9acc50..7b6474f 100644
 --- a/gs/gs_renderer.hpp
 +++ b/gs/gs_renderer.hpp
-@@ -320,7 +320,9 @@ public:
+@@ -263,6 +263,8 @@ public:
+ 	void rewind_clut_instance(uint32_t index);
+ 
+ 	Vulkan::ImageHandle create_cached_texture(const TextureDescriptor &desc);
++	// A host image (a local addition, GSInterface::set_host_image): RGBA8 with its smaller copies for distance.
++	Vulkan::ImageHandle create_host_image(uint32_t width, uint32_t height, const void *rgba);
+ 	// Should always be called after create_cached_texture().
+ 	// We'll be able to do some last minute modifications to the upload descriptor
+ 	// depending on the page tracker state, e.g. to enable shadow copy strategy.
+@@ -320,7 +322,9 @@ public:
  
  	SuperSampling get_max_supported_super_sampling() const;
  
@@ -391,7 +588,7 @@ index d9acc50..938642e 100644
  
  private:
  	PageTracker &tracker;
-@@ -344,6 +346,8 @@ private:
+@@ -344,6 +348,8 @@ private:
  
  	bool last_clut_update_is_read = false;
  	bool field_aware_super_sampling = false;
@@ -400,7 +597,7 @@ index d9acc50..938642e 100644
  
  	std::vector<VkImageMemoryBarrier2> pre_image_barriers;
  	std::vector<VkImageMemoryBarrier2> post_image_barriers;
-@@ -498,7 +502,7 @@ private:
+@@ -498,7 +504,7 @@ private:
  
  	void sample_crtc_circuit(Vulkan::CommandBuffer &cmd, const Vulkan::Image &img,
  	                         const DISPFBBits &dispfb, const SamplingRect &rect, uint32_t super_samples,

@@ -40,4 +40,95 @@ instructions = [
   { address = "0x001b06c8", value = "0x2ac21000" }, # slti $v0, $s6, 0x1000 (was 0x7D3)
   { address = "0x001b06d0", value = "0x3c030200" }, # lui $v1, 0x0200 (a delay slot; was 0x26)
   { address = "0x001b06d8", value = "0x24631000" }, # addiu $v1, $v1, 0x1000 (was -0x5870)
+  # New wrestlers (overrides/vendetta_wrestlers.cpp): the roster tables read from copies in the store's fixed area
+  # (vendetta_store.h), with room after the game's entries. Each copy keeps the original's low 16 bits, so only the
+  # luis that build the address change. Choose Fighter's own helpers FUN_00151460-FUN_00151770 are replaced in C++.
+  # the character table: 0x27E100 -> 0x0201E100 (lui 0x28 -> 0x202)
+  { address = "0x00141b04", value = "0x3c120202" }, # lui $s2, 0x28 -> 0x202 (FUN_00141a18)
+  { address = "0x001462e8", value = "0x3c140202" }, # lui $s4, 0x28 -> 0x202 (FUN_001462d0)
+  { address = "0x00146e10", value = "0x3c090202" }, # lui $t1, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x00146e7c", value = "0x3c060202" }, # lui $a2, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x00147014", value = "0x3c020202" }, # lui $v0, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x0014705c", value = "0x3c060202" }, # lui $a2, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x001471fc", value = "0x3c020202" }, # lui $v0, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x00147244", value = "0x3c060202" }, # lui $a2, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x00147388", value = "0x3c060202" }, # lui $a2, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x001474dc", value = "0x3c030202" }, # lui $v1, 0x28 -> 0x202 (FUN_00146518)
+  { address = "0x00150f24", value = "0x3c030202" }, # lui $v1, 0x28 -> 0x202 (FUN_0014fbd8)
+  { address = "0x00156d04", value = "0x3c0a0202" }, # lui $t2, 0x28 -> 0x202 (FUN_00156cf8)
+  { address = "0x0015a208", value = "0x3c030202" }, # lui $v1, 0x28 -> 0x202 (FUN_00159d20)
+  { address = "0x0015d354", value = "0x3c020202" }, # lui $v0, 0x28 -> 0x202 (FUN_0015d200)
+  { address = "0x00164690", value = "0x3c130202" }, # lui $s3, 0x28 -> 0x202 (FUN_00164618)
+  { address = "0x00164f00", value = "0x3c020202" }, # lui $v0, 0x28 -> 0x202 (FUN_00164b20)
+  { address = "0x00165544", value = "0x3c100202" }, # lui $s0, 0x28 -> 0x202 (FUN_00165480)
+  { address = "0x001655bc", value = "0x3c100202" }, # lui $s0, 0x28 -> 0x202 (FUN_00165480)
+  { address = "0x001656b8", value = "0x3c100202" }, # lui $s0, 0x28 -> 0x202 (FUN_00165480)
+  { address = "0x001658a4", value = "0x3c030202" }, # lui $v1, 0x28 -> 0x202 (FUN_00165838)
+  { address = "0x0016b850", value = "0x3c090202" }, # lui $t1, 0x28 -> 0x202 (FUN_0016b818)
+  { address = "0x0016e33c", value = "0x3c040202" }, # lui $a0, 0x28 -> 0x202 (FUN_0016de58)
+  { address = "0x0016e7c0", value = "0x3c040202" }, # lui $a0, 0x28 -> 0x202 (FUN_0016de58)
+  # the select grid: 0x239EF0 -> 0x02429EF0 (lui 0x24 -> 0x243)
+  { address = "0x0014fdc8", value = "0x3c160243" }, # lui $s6, 0x24 -> 0x243 (FUN_0014fbd8)
+  { address = "0x00150704", value = "0x3c020243" }, # lui $v0, 0x24 -> 0x243 (FUN_0014fbd8)
+  { address = "0x0015097c", value = "0x3c040243" }, # lui $a0, 0x24 -> 0x243 (FUN_0014fbd8)
+  { address = "0x00150f20", value = "0x3c020243" }, # lui $v0, 0x24 -> 0x243 (FUN_0014fbd8)
+  # the move data (WAZA struct): 0x2331C8 -> 0x025331C8 (lui 0x23 -> 0x253)
+  { address = "0x00102994", value = "0x3c070253" }, # lui $a3, 0x23 (Delay Slot) -> 0x253 (FUN_00102938)
+  { address = "0x001029f4", value = "0x3c020253" }, # lui $v0, 0x23 -> 0x253 (FUN_00102938)
+  { address = "0x00102a8c", value = "0x3c030253" }, # lui $v1, 0x23 -> 0x253 (FUN_00102a88)
+  { address = "0x00102acc", value = "0x3c020253" }, # lui $v0, 0x23 (Delay Slot) -> 0x253 (FUN_00102ac8)
+  { address = "0x00117d98", value = "0x3c050253" }, # lui $a1, 0x23 (Delay Slot) -> 0x253 (FUN_00117d48)
+  { address = "0x00117da4", value = "0x3c050253" }, # lui $a1, 0x23 -> 0x253 (FUN_00117d48)
+  { address = "0x00125e10", value = "0x3c020253" }, # lui $v0, 0x23 (Delay Slot) -> 0x253 (FUN_00125d58)
+  { address = "0x0012f174", value = "0x3c040253" }, # lui $a0, 0x23 -> 0x253 (FUN_0012f110)
+  { address = "0x00132388", value = "0x3c020253" }, # lui $v0, 0x23 -> 0x253 (FUN_00132158)
+  { address = "0x001323b0", value = "0x3c020253" }, # lui $v0, 0x23 -> 0x253 (FUN_00132158)
+  { address = "0x00135064", value = "0x3c030253" }, # lui $v1, 0x23 -> 0x253 (FUN_00135060)
+  { address = "0x0013e850", value = "0x3c100253" }, # lui $s0, 0x23 -> 0x253 (FUN_0013e838)
+  # the size classes: 0x234910 -> 0x02744910 (lui 0x23 -> 0x274)
+  { address = "0x001255d4", value = "0x3c020274" }, # lui $v0, 0x23 (Delay Slot) -> 0x274 (FUN_00125568)
+  { address = "0x001264b8", value = "0x3c030274" }, # lui $v1, 0x23 -> 0x274 (FUN_001264b0)
+  { address = "0x00126680", value = "0x3c030274" }, # lui $v1, 0x23 (Delay Slot) -> 0x274 (FUN_001264b0)
+  { address = "0x00126770", value = "0x3c030274" }, # lui $v1, 0x23 -> 0x274 (FUN_001264b0)
+  # the voice map: 0x2599B8 -> 0x027C99B8 (lui 0x26 -> 0x27D)
+  { address = "0x001b0a14", value = "0x3c03027d" }, # lui $v1, 0x26 -> 0x27D (FUN_001b0958)
+  # Choose Fighter FUN_0014fbd8: the grid size from 0x00000400 and the last scroll position (size - 22) from
+  # 0x00000404, written by overrides/vendetta_wrestlers.cpp (low memory the game never uses)
+  { address = "0x001506d8", value = "0x8c020400" }, # lw $v0, 0x400($zero): the grid size (was addiu 44): a search for a record [was addiu $v0, $zero, 0x2C]
+  { address = "0x00150850", value = "0x8c020400" }, # lw $v0, 0x400($zero): the grid size (was addiu 44): a search for a record [was addiu $v0, $zero, 0x2C]
+  { address = "0x001507b0", value = "0x8c030400" }, # lw $v1, 0x400($zero): the grid size (was addiu 44): RANDOM picks a slot below it [was addiu $v1, $zero, 0x2C]
+  { address = "0x001502f0", value = "0x8c060404" }, # lw $a2, 0x404($zero): the last scroll position, size - 22 (was addiu 22) [was addiu $a2, $zero, 0x16]
+  { address = "0x001503a0", value = "0x28447fff" }, # slti $a0, $v0, 0x7FFF: no wrap (was 44: scroll + cursor never reaches the size) [was slti $a0, $v0, 0x2C]
+  { address = "0x00150a58", value = "0x28447fff" }, # slti $a0, $v0, 0x7FFF: no wrap (was 44) [was slti $a0, $v0, 0x2C]
+  { address = "0x001510e8", value = "0x2a627fff" }, # slti $v0, $s3, 0x7FFF: the 22 tiles drawn never wrap (was 44) [was slti $v0, $s3, 0x2C]
+  { address = "0x00150884", value = "0x8c030404" }, # lw $v1, 0x404($zero): the last scroll position (a delay slot; was slti $v0, $s2, 24) [was slti $v0, $s2, 0x18 (Delay Slot)]
+  { address = "0x00150894", value = "0x2642fffe" }, # addiu $v0, $s2, -2 (was bnez $v0) [was bnez $v0, . + 4 + (0x4 << 2)]
+  { address = "0x00150898", value = "0x0062082a" }, # slt $at, $v1, $v0 (was addiu $v0, $s2, -2) [was addiu $v0, $s2, -0x2 (Delay Slot)]
+  { address = "0x0015089c", value = "0x0061100b" }, # movn $v0, $v1, $at: scroll = min(s2 - 2, last) (was addiu $v1, $s2, -22) [was addiu $v1, $s2, -0x16]
+  { address = "0x001508a0", value = "0x02421823" }, # subu $v1, $s2, $v0: cursor = s2 - scroll (was b) [was b . + 4 + (0x2 << 2)]
+  { address = "0x001508a4", value = "0x00000000" }, # nop (was addiu $v0, $zero, 22) [was addiu $v0, $zero, 0x16 (Delay Slot)]
+  { address = "0x001508a8", value = "0x00000000" }, # nop (was addiu $v1, $zero, 2) [was addiu $v1, $zero, 0x2]
+  # The winner banner FUN_0016b818: its text buffer 160 bytes (was 32: "%s WINS" overflowed past a 26-character name);
+  # the frame 0x80 bigger, the names table and the saved registers 0x80 higher
+  { address = "0x0016b818", value = "0x27bdff20" }, # addiu $sp, $sp, -0x60 -> +0x80 (FUN_0016b818)
+  { address = "0x0016b820", value = "0xffb100c0" }, # sd $s1, 0x40($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b828", value = "0xffb000b0" }, # sd $s0, 0x30($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b830", value = "0x27b000a0" }, # addiu $s0, $sp, 0x20 -> +0x80 (FUN_0016b818)
+  { address = "0x0016b834", value = "0xffbf00d0" }, # sd $ra, 0x50($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b8c8", value = "0xdfbf00d0" }, # ld $ra, 0x50($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b8d0", value = "0xdfb100c0" }, # ld $s1, 0x40($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b8dc", value = "0xdfbf00d0" }, # ld $ra, 0x50($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b8e4", value = "0xdfb100c0" }, # ld $s1, 0x40($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b8ec", value = "0x8fa600a0" }, # lw $a2, 0x20($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b914", value = "0xdfbf00d0" }, # ld $ra, 0x50($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b91c", value = "0x8fa600a0" }, # lw $a2, 0x20($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b944", value = "0x8fa600a4" }, # lw $a2, 0x24($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b988", value = "0xdfbf00d0" }, # ld $ra, 0x50($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b990", value = "0x8fa600a0" }, # lw $a2, 0x20($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b9b8", value = "0x8fa600a4" }, # lw $a2, 0x24($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016b9fc", value = "0x8fa600a8" }, # lw $a2, 0x28($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016ba3c", value = "0xdfbf00d0" }, # ld $ra, 0x50($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016ba40", value = "0xdfb100c0" }, # ld $s1, 0x40($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016ba44", value = "0xdfb000b0" }, # ld $s0, 0x30($sp) -> +0x80 (FUN_0016b818)
+  { address = "0x0016ba4c", value = "0x27bd00e0" }, # addiu $sp, $sp, 0x60 -> +0x80 (FUN_0016b818)
 ]

@@ -3495,10 +3495,10 @@ index 4c3f641..fac06ff 100644
  #endif
 diff --git a/ps2xRuntime/include/runtime/gs/gs_gpu.h b/ps2xRuntime/include/runtime/gs/gs_gpu.h
 new file mode 100644
-index 0000000..e9f8308
+index 0000000..ba03c49
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_gpu.h
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,199 @@
 +#pragma once
 +
 +// The GS drawn on the graphics card (paraLLEl-GS, Vulkan compute), next to the CPU renderer.
@@ -3675,9 +3675,26 @@ index 0000000..e9f8308
 +    virtual void setSharpness(float stops) = 0;
 +    virtual GSGpuStatus status() const = 0;
 +
++    // Any thread: a host image (a picture of any size made by the program) for paraLLEl-GS to draw instead of a GS
++    // texture; GS register 0x70 binds it to an address (third_party/parallel-gs gs_interface.hpp, a local addition).
++    // rgba: width x height RGBA8 with the GS's alpha (0x80 = opaque). Made on the renderer's thread when needed.
++    virtual void setHostImage(uint32_t id, uint32_t width, uint32_t height, std::vector<uint32_t> rgba)
++    {
++        (void)id, (void)width, (void)height, (void)rgba;
++    }
++    virtual void dropHostImage(uint32_t id) { (void)id; }
++
 +    // Idempotent; joins the renderer's thread, which owns (and destroys) every Vulkan object.
 +    virtual void shutdown() = 0;
 +};
++
++// A picture file (PNG, or any format raylib reads) as RGBA8, for host images. Any thread. Resized to exactly
++// width x height when both are given and differ from the file's size (0, 0: the file's own size). False if it can't
++// be read.
++bool gsDecodePicture(const uint8_t *bytes, size_t size, uint32_t width, uint32_t height, std::vector<uint32_t> &rgba,
++                     uint32_t &outWidth, uint32_t &outHeight);
++// rgba (width x height RGBA8) resized to newWidth x newHeight (a good filter). Any thread.
++void gsResizePicture(std::vector<uint32_t> &rgba, uint32_t width, uint32_t height, uint32_t newWidth, uint32_t newHeight);
 +
 +// nullptr when this build has no paraLLEl-GS or the device could not be set up; whyNot says which.
 +std::unique_ptr<GSGpuRenderer> makeGpuRenderer(const GSGpuOptions &options, std::string &whyNot);
@@ -12064,11 +12081,13 @@ index 5658928..79b729d 100644
  GSPrimitiveBatch GS::buildDrawBatch(int vertexCount) const
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu.cpp b/ps2xRuntime/src/lib/gs/gs_gpu.cpp
 new file mode 100644
-index 0000000..b5a3fee
+index 0000000..e61e3f5
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_gpu.cpp
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,125 @@
 +#include "runtime/gs/gs_gpu.h"
++
++#include "raylib.h"
 +
 +#include <algorithm>
 +#include <cstdlib>
@@ -12150,6 +12169,47 @@ index 0000000..b5a3fee
 +        options.gpuSelector = gpu;
 +    return options;
 +}
++
++bool gsDecodePicture(const uint8_t *bytes, size_t size, uint32_t width, uint32_t height, std::vector<uint32_t> &rgba,
++                     uint32_t &outWidth, uint32_t &outHeight)
++{
++    if (!bytes || size == 0u || size > 0x7FFFFFFFu)
++        return false;
++    // raylib picks the decoder by the file's extension; the bytes say which (PNG, JPEG, BMP, ...)
++    const char *type = ".png";
++    if (size >= 2u && bytes[0] == 0xFFu && bytes[1] == 0xD8u)
++        type = ".jpg";
++    else if (size >= 2u && bytes[0] == 'B' && bytes[1] == 'M')
++        type = ".bmp";
++    Image image = LoadImageFromMemory(type, bytes, static_cast<int>(size));
++    if (!image.data || image.width <= 0 || image.height <= 0)
++    {
++        UnloadImage(image);
++        return false;
++    }
++    ImageFormat(&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
++    if (width && height && (static_cast<uint32_t>(image.width) != width || static_cast<uint32_t>(image.height) != height))
++        ImageResize(&image, static_cast<int>(width), static_cast<int>(height));
++    outWidth = static_cast<uint32_t>(image.width);
++    outHeight = static_cast<uint32_t>(image.height);
++    rgba.resize(static_cast<size_t>(outWidth) * outHeight);
++    std::memcpy(rgba.data(), image.data, rgba.size() * 4u);
++    UnloadImage(image);
++    return true;
++}
++
++void gsResizePicture(std::vector<uint32_t> &rgba, uint32_t width, uint32_t height, uint32_t newWidth, uint32_t newHeight)
++{
++    if (rgba.size() != static_cast<size_t>(width) * height || !newWidth || !newHeight ||
++        (width == newWidth && height == newHeight))
++        return;
++    Image image = GenImageColor(static_cast<int>(width), static_cast<int>(height), BLANK); // R8G8B8A8, raylib's memory
++    std::memcpy(image.data, rgba.data(), rgba.size() * 4u);
++    ImageResize(&image, static_cast<int>(newWidth), static_cast<int>(newHeight));
++    rgba.resize(static_cast<size_t>(newWidth) * newHeight);
++    std::memcpy(rgba.data(), image.data, rgba.size() * 4u);
++    UnloadImage(image);
++}
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_backend.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_backend.cpp
 new file mode 100644
 index 0000000..7b28d1d
@@ -12199,10 +12259,10 @@ index 0000000..6085f2a
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
 new file mode 100644
-index 0000000..7bb06d3
+index 0000000..b98a443
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
-@@ -0,0 +1,1310 @@
+@@ -0,0 +1,1326 @@
 +// The GS on the graphics card: paraLLEl-GS (Arntzen Software AS, LGPL-3.0+) on Granite's Vulkan backend.
 +//
 +// The GS front end hands over the raw GS input in its own order (GIF data per path, register writes, presentations);
@@ -12530,6 +12590,17 @@ index 0000000..7bb06d3
 +            m_wantSharpness.store(std::clamp(stops, 0.0f, 2.0f), std::memory_order_relaxed);
 +        }
 +
++        void setHostImage(uint32_t id, uint32_t width, uint32_t height, std::vector<uint32_t> rgba) override
++        {
++            if (ParallelGS::GSInterface *gs = m_hostImages.load(std::memory_order_acquire))
++                gs->set_host_image(id, width, height, std::move(rgba));
++        }
++        void dropHostImage(uint32_t id) override
++        {
++            if (ParallelGS::GSInterface *gs = m_hostImages.load(std::memory_order_acquire))
++                gs->drop_host_image(id);
++        }
++
 +        GSGpuStatus status() const override
 +        {
 +            std::lock_guard<std::mutex> lock(m_statusMutex);
@@ -12810,10 +12881,12 @@ index 0000000..7bb06d3
 +
 +                m_device = &device;
 +                m_gs = &gs;
++                m_hostImages.store(&gs, std::memory_order_release);
 +                consume();
 +                const auto stopStart = Clock::now();
 +                auto stepMs = [&]()
 +                { return std::chrono::duration<double, std::milli>(Clock::now() - stopStart).count(); };
++                m_hostImages.store(nullptr, std::memory_order_release);
 +                m_gs = nullptr;
 +                m_device = nullptr;
 +                m_lastScanout = {};
@@ -13439,6 +13512,9 @@ index 0000000..7bb06d3
 +        uint64_t m_cachedRead = 0u;
 +        uint64_t m_pendingRecordBytes = 0u;
 +        alignas(64) std::atomic<uint64_t> m_presentsIssued{0u};
++
++        // set by the graphics card thread while it runs: the host images' queue (setHostImage, any thread)
++        std::atomic<ParallelGS::GSInterface *> m_hostImages{nullptr};
 +
 +        // the graphics card thread only
 +        alignas(64) Vulkan::Device *m_device = nullptr;

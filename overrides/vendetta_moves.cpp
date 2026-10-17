@@ -1187,7 +1187,7 @@ namespace vendetta_moves
     namespace
     {
         // ------------------------------------------------------------------------------------------ into the game
-        constexpr uint32_t kWaza = 0x2331C8u;    // the parsed move data
+        constexpr uint32_t kWaza = vendetta_store::kMoveData; // the parsed move data (moved into the store: vendetta_wrestlers.cpp)
         constexpr uint32_t kRecordArray = 0x14u; // + 0x04 stride, + 0x08 count, + 0x14 the move records
         constexpr uint32_t kNames = 0x28u;       // the move names: + 0x2C count, + 0x30 u16 offsets, + 0x34 strings
         constexpr uint32_t kTimingStride = 0x1Cu, kTimingArray = 0x24u; // the playback records (one per clip id)

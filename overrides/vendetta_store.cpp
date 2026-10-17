@@ -106,9 +106,9 @@ namespace vendetta_store
                       << std::endl;
             return 0u;
         }
-        if (g_committed < kStart + kFixedSize)
+        const uint32_t to = ((kStart + offset + size + kCommitStep - 1u) / kCommitStep) * kCommitStep;
+        if (g_committed < to)
         {
-            const uint32_t to = kStart + kCommitStep; // the fixed area lies in the first commit step
             if (!g_memory->commitRam(g_committed, to - g_committed))
             {
                 std::cerr << "[store] " << user << ": the PC refused the fixed area's memory" << std::endl;
@@ -121,6 +121,14 @@ namespace vendetta_store
     }
 
     uint8_t *host(uint32_t guestAddress) { return g_memory->getRDRAM() + (guestAddress & PS2_RAM_MASK); }
+
+    bool readable(uint32_t guestAddress, uint32_t size)
+    {
+        const uint64_t end = static_cast<uint64_t>(guestAddress) + size;
+        if (end <= kStart)
+            return true;
+        return guestAddress >= kStart && ((end <= g_committed) || (guestAddress >= g_matchCommitted && end <= kEnd));
+    }
 
     void beginMatch()
     {
