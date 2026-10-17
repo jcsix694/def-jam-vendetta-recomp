@@ -2798,18 +2798,40 @@ index 589d768..0189154 100644
      set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1") 
      set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
 diff --git a/ps2xRuntime/cmake/ReleaseMode.cmake b/ps2xRuntime/cmake/ReleaseMode.cmake
-index 92ef0d5..163ceb0 100644
+index 92ef0d5..53f0528 100644
 --- a/ps2xRuntime/cmake/ReleaseMode.cmake
 +++ b/ps2xRuntime/cmake/ReleaseMode.cmake
-@@ -15,7 +15,7 @@ function(EnableFastReleaseMode TargetName)
+@@ -2,9 +2,18 @@ include(CheckIPOSupported)
+ 
+ check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR)
+ 
++# The instruction set the release builds may use. A program built for AVX2 stops at once with an illegal instruction
++# (0xC000001D) on a processor without it, so a build for another PC sets this from that PC's processor:
++# empty = x64's own baseline (SSE2; the runtime's intrinsics still need SSE4.1).
++set(PS2X_MSVC_ARCH "AVX2" CACHE STRING "MSVC /arch for the release builds: AVX2, AVX, or empty for the x64 default")
++
+ function(EnableFastReleaseMode TargetName)
+     message("> Enabling optimization for: ${TargetName}")
+     if(MSVC)
++        set(arch_flag "")
++        if(PS2X_MSVC_ARCH)
++            set(arch_flag "/arch:${PS2X_MSVC_ARCH}")
++        endif()
+         target_compile_options(${TargetName} PRIVATE
+             $<$<CONFIG:Release>:
+                 /O2 # speed
+@@ -15,9 +24,9 @@ function(EnableFastReleaseMode TargetName)
                  /Gw # global data in COMDAT
                  /GF # string pooling
                  /Zc:inline # remove unreferenced inline
 -                /fp:fast # fast math (graphics friendly)
 +                /fp:precise # exact float maths: the game's float code and the VU model must not be reordered or fused
                  /DNDEBUG
-                 /arch:AVX2 # Advanced Vector Extensions 2
+-                /arch:AVX2 # Advanced Vector Extensions 2
++                ${arch_flag} # PS2X_MSVC_ARCH (AVX2 by default)
                  /GS- # Disable Buffer Security Check (faster)
+                 /Qspectre- # Disable Spectre mitigations (faster)
+             >
 diff --git a/ps2xRuntime/include/game_overrides.h b/ps2xRuntime/include/game_overrides.h
 index 3afaa31..a905ac0 100644
 --- a/ps2xRuntime/include/game_overrides.h
@@ -5079,10 +5101,10 @@ index 67c8184..633a964 100644
      void flushPipelines();
 diff --git a/ps2xRuntime/include/runtime/ps2_vu1_compiled.h b/ps2xRuntime/include/runtime/ps2_vu1_compiled.h
 new file mode 100644
-index 0000000..efed929
+index 0000000..0d3a76a
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_vu1_compiled.h
-@@ -0,0 +1,518 @@
+@@ -0,0 +1,565 @@
 +#ifndef PS2_VU1_COMPILED_H
 +#define PS2_VU1_COMPILED_H
 +
@@ -5104,7 +5126,10 @@ index 0000000..efed929
 +#include <cstdint>
 +#include <cstring>
 +#include <limits>
-+#if defined(__AVX2__)
++// vu1v's register-at-once lanes: SSE4.1 (as the runtime's own intrinsics), the double maths in one 256-bit register
++// with AVX2 and in two 128-bit halves without
++#if defined(__AVX2__) || defined(__SSE4_1__) || defined(_M_X64)
++#define VU1_SIMD 1
 +#include <immintrin.h>
 +#endif
 +
@@ -5309,15 +5334,27 @@ index 0000000..efed929
 +    }
 +}
 +
-+// The same rules on all four lanes of a register at once (SSE / AVX2): per lane exactly the operations of the
-+// vu1fast helpers above, in the same order. Results are stored as whole registers (store<Dest> blends the lanes that
-+// aren't written), so a later whole-register load is forwarded from one store. Dest / Lanes: bit c = component c
-+// (x = bit 0). Without AVX2, V is four floats and each helper runs the vu1fast helper per lane.
++// The same rules on all four lanes of a register at once (SSE4.1, with AVX2 where built for it): per lane exactly the
++// operations of the vu1fast helpers above, in the same order. Results are stored as whole registers (store<Dest> blends
++// the lanes that aren't written), so a later whole-register load is forwarded from one store. Dest / Lanes: bit c =
++// component c (x = bit 0). Without SSE4.1 (not x64), V is four floats and each helper runs the vu1fast helper per lane.
 +namespace vu1v
 +{
-+#if defined(__AVX2__)
++#if defined(VU1_SIMD)
 +    using V = __m128;
 +    using VI = __m128i;
++
++    // ordered compares (false for NaN; no NaN reaches them): the AVX form where built for AVX2, else SSE's (the same
++    // results; the two differ only in which NaNs raise the masked invalid flag)
++#if defined(__AVX2__)
++    VU1_FORCEINLINE V cmpGE(V a, V b) { return _mm_cmp_ps(a, b, _CMP_GE_OQ); }
++    VU1_FORCEINLINE V cmpLE(V a, V b) { return _mm_cmp_ps(a, b, _CMP_LE_OQ); }
++    VU1_FORCEINLINE V cmpEQ(V a, V b) { return _mm_cmp_ps(a, b, _CMP_EQ_OQ); }
++#else
++    VU1_FORCEINLINE V cmpGE(V a, V b) { return _mm_cmpge_ps(a, b); }
++    VU1_FORCEINLINE V cmpLE(V a, V b) { return _mm_cmple_ps(a, b); }
++    VU1_FORCEINLINE V cmpEQ(V a, V b) { return _mm_cmpeq_ps(a, b); }
++#endif
 +
 +    VU1_FORCEINLINE V load(const float *p) { return _mm_loadu_ps(p); }
 +    VU1_FORCEINLINE V loadBytes(const uint8_t *p) { return _mm_loadu_ps(reinterpret_cast<const float *>(p)); }
@@ -5360,16 +5397,18 @@ index 0000000..efed929
 +        {
 +            const V sign = _mm_set1_ps(-0.0f);
 +            const V magnitude = _mm_andnot_ps(sign, value);
-+            const V inRange = _mm_and_ps(_mm_and_ps(_mm_cmp_ps(magnitude, _mm_set1_ps(0x1p-100f), _CMP_GE_OQ),
-+                                                    _mm_cmp_ps(magnitude, _mm_set1_ps(0x1p126f), _CMP_LE_OQ)),
-+                                         _mm_cmp_ps(_mm_andnot_ps(sign, floatProduct),
-+                                                    _mm_mul_ps(magnitude, _mm_set1_ps(0x1p20f)), _CMP_LE_OQ));
++            const V inRange = _mm_and_ps(_mm_and_ps(cmpGE(magnitude, _mm_set1_ps(0x1p-100f)),
++                                                    cmpLE(magnitude, _mm_set1_ps(0x1p126f))),
++                                         cmpLE(_mm_andnot_ps(sign, floatProduct), _mm_mul_ps(magnitude, _mm_set1_ps(0x1p20f))));
 +            // a zero operand (common: matrix entries, w = 0): the product is an exact signed zero, so the exact sum is
 +            // c (clean: normal or zero) or a signed zero by the same IEEE rules as the float sum — the float result too
-+            const V zeroOperand = _mm_or_ps(_mm_cmp_ps(a, _mm_setzero_ps(), _CMP_EQ_OQ), _mm_cmp_ps(b, _mm_setzero_ps(), _CMP_EQ_OQ));
++            const V zeroOperand = _mm_or_ps(cmpEQ(a, _mm_setzero_ps()), cmpEQ(b, _mm_setzero_ps()));
 +            if ((~static_cast<unsigned>(_mm_movemask_ps(_mm_or_ps(inRange, zeroOperand))) & Dest) == 0u)
 +                return value;
 +        }
++        alignas(16) float values[4];
++        alignas(32) double exacts[4];
++#if defined(__AVX2__)
 +        const __m256d product = _mm256_mul_pd(_mm256_cvtps_pd(a), _mm256_cvtps_pd(b));
 +        const __m256d exact = Subtract ? _mm256_sub_pd(_mm256_cvtps_pd(c), product)
 +                                       : _mm256_add_pd(_mm256_cvtps_pd(c), product);
@@ -5380,10 +5419,30 @@ index 0000000..efed929
 +        const unsigned lanes = static_cast<unsigned>(_mm256_movemask_pd(special)) & Dest;
 +        if (lanes == 0u)
 +            return value;
-+        alignas(16) float values[4];
-+        alignas(32) double exacts[4];
-+        _mm_store_ps(values, value);
 +        _mm256_store_pd(exacts, exact);
++#else
++        // the same in two halves: lanes x, y (low) and z, w (high)
++        const auto exactHalf = [](V cv, V av, V bv)
++        {
++            const __m128d product = _mm_mul_pd(_mm_cvtps_pd(av), _mm_cvtps_pd(bv));
++            return Subtract ? _mm_sub_pd(_mm_cvtps_pd(cv), product) : _mm_add_pd(_mm_cvtps_pd(cv), product);
++        };
++        const auto specialHalf = [](__m128d exact)
++        {
++            const __m128d magnitude = _mm_andnot_pd(_mm_set1_pd(-0.0), exact);
++            return static_cast<unsigned>(_mm_movemask_pd(_mm_or_pd(
++                _mm_cmplt_pd(magnitude, _mm_set1_pd(static_cast<double>(std::numeric_limits<float>::min()))),
++                _mm_cmpgt_pd(magnitude, _mm_set1_pd(static_cast<double>(std::numeric_limits<float>::max()))))));
++        };
++        const __m128d exactLow = exactHalf(c, a, b);
++        const __m128d exactHigh = exactHalf(_mm_movehl_ps(c, c), _mm_movehl_ps(a, a), _mm_movehl_ps(b, b));
++        const unsigned lanes = (specialHalf(exactLow) | (specialHalf(exactHigh) << 2)) & Dest;
++        if (lanes == 0u)
++            return value;
++        _mm_store_pd(exacts, exactLow);
++        _mm_store_pd(exacts + 2, exactHigh);
++#endif
++        _mm_store_ps(values, value);
 +        for (unsigned component = 0; component < 4u; ++component)
 +        {
 +            if ((lanes & (1u << component)) != 0u)
@@ -5395,10 +5454,20 @@ index 0000000..efed929
 +    // = vu1fast::floatToInt(value, scale) per lane: (double)value * scale, clamped to int32, truncated
 +    VU1_FORCEINLINE V floatToInt(V value, float scale)
 +    {
++#if defined(__AVX2__)
 +        __m256d scaled = _mm256_mul_pd(_mm256_cvtps_pd(value), _mm256_set1_pd(static_cast<double>(scale)));
 +        scaled = _mm256_min_pd(_mm256_max_pd(scaled, _mm256_set1_pd(static_cast<double>(std::numeric_limits<int32_t>::min()))),
 +                               _mm256_set1_pd(static_cast<double>(std::numeric_limits<int32_t>::max())));
 +        return _mm_castsi128_ps(_mm256_cvttpd_epi32(scaled));
++#else
++        const auto half = [scale](V v)
++        {
++            const __m128d scaled = _mm_mul_pd(_mm_cvtps_pd(v), _mm_set1_pd(static_cast<double>(scale)));
++            return _mm_cvttpd_epi32(_mm_min_pd(_mm_max_pd(scaled, _mm_set1_pd(static_cast<double>(std::numeric_limits<int32_t>::min()))),
++                                               _mm_set1_pd(static_cast<double>(std::numeric_limits<int32_t>::max()))));
++        };
++        return _mm_castsi128_ps(_mm_unpacklo_epi64(half(value), half(_mm_movehl_ps(value, value))));
++#endif
 +    }
 +
 +    // static_cast<float>(int32 lane bits) / divisor (ITOF4 / 12 / 15; ITOF0 = intToFloat(v))
