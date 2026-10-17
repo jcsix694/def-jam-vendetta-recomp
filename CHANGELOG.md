@@ -5,6 +5,23 @@ The newest version is at the top.
 
 ---
 
+## 0.4.1
+
+### Fixed
+- **Setup works on PCs whose processor doesn't support AVX2.** On these PCs the setup stopped at "Recompiling the
+  game" with exit code 3221225501. The setup now checks your processor and builds the game to suit it. PCs with AVX2
+  get the same game as before.
+- **No slowdown on those PCs.** The game built for a processor without AVX2 now draws as fast as the normal one, 4
+  player matches included.
+
+### Good to know
+- If the setup stopped for you before, download this version, unzip it and run the setup again.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.4.0
 
 ### New
