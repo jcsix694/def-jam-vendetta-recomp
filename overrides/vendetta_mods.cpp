@@ -5,6 +5,7 @@
 #include "ps2_runtime.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <condition_variable>
 #include <cstdlib>
@@ -584,6 +585,41 @@ namespace vendetta_mods
         std::lock_guard<std::mutex> lock(g_aheadLock);
         g_kept[keyOf(path)] = std::move(kept);
         return true;
+    }
+
+    void forEachAtOnce(size_t count, const std::function<void(size_t)> &work)
+    {
+        constexpr size_t kThreads = 16u;
+        std::atomic<size_t> next{0};
+        const auto run = [&]()
+        {
+            for (size_t i; (i = next.fetch_add(1)) < count;)
+            {
+                try
+                {
+                    work(i);
+                }
+                catch (...)
+                {
+                    // a file that can't be read is read (or reported) again by whoever needs it
+                }
+            }
+        };
+        std::vector<std::thread> threads;
+        for (size_t t = 1; t < std::min(kThreads, count); ++t)
+            threads.emplace_back(run);
+        run();
+        for (std::thread &thread : threads)
+            thread.join();
+    }
+
+    void readAheadAll(const std::vector<std::filesystem::path> &paths)
+    {
+        forEachAtOnce(paths.size(), [&paths](size_t i)
+        {
+            std::vector<uint8_t> bytes;
+            readAhead(paths[i], bytes);
+        });
     }
 
     bool readWhole(const std::filesystem::path &path, std::vector<uint8_t> &bytes)

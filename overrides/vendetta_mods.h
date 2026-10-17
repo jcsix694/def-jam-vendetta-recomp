@@ -94,6 +94,12 @@ namespace vendetta_mods
     // the kept bytes if the file is unchanged since (its size and time), else reads the file. dropAhead() forgets them.
     void runAhead(std::function<void()> job);
     bool readAhead(const std::filesystem::path &path, std::vector<uint8_t> &bytes);
+    void readAheadAll(const std::vector<std::filesystem::path> &paths); // readAhead for each, several at once
+
+    // Runs work(0) ... work(count - 1) on several threads and returns when all are done. For opening many files: the
+    // first open of a file since the PC started costs about 11 ms (Windows checks it), reading it almost nothing, so
+    // 1,000 files take 11 s one after another and 0.5 s sixteen at a time.
+    void forEachAtOnce(size_t count, const std::function<void(size_t)> &work);
     bool readWhole(const std::filesystem::path &path, std::vector<uint8_t> &bytes);
     void dropAhead();
 

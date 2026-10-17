@@ -1052,12 +1052,13 @@ namespace vendetta_animations
         vendetta_mods::runAhead([names]()
         {
             std::vector<uint8_t> bytes;
+            std::vector<std::filesystem::path> files; // read at the end, several at once
             const auto inMod = [](const vendetta_mods::Mod &mod, const std::string &relative)
             { return (mod.folder / std::filesystem::path(relative)).lexically_normal(); };
-            const auto withSettings = [&bytes](const std::filesystem::path &file)
+            const auto withSettings = [&files](const std::filesystem::path &file)
             {
-                if (vendetta_mods::readAhead(file, bytes))
-                    vendetta_mods::readAhead(std::filesystem::path(file).replace_extension(".json"), bytes);
+                files.push_back(file);
+                files.push_back(std::filesystem::path(file).replace_extension(".json"));
             };
             std::set<std::string> named; // what the slots name, upper case
             std::set<std::filesystem::path> folders;
@@ -1098,7 +1099,8 @@ namespace vendetta_animations
             for (const std::filesystem::path &folder : folders)
                 for (const auto &entry : std::filesystem::recursive_directory_iterator(folder, ec))
                     if (entry.is_regular_file(ec))
-                        vendetta_mods::readAhead(entry.path(), bytes);
+                        files.push_back(entry.path());
+            vendetta_mods::readAheadAll(files);
         });
     }
 

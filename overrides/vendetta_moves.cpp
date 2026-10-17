@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1096,6 +1097,30 @@ namespace vendetta_moves
 
         void indexModMoves()
         {
+            // every move.json read first, several at once (cold files cost milliseconds each to open), then gone
+            // through in the load order
+            const auto start = std::chrono::steady_clock::now();
+            std::vector<std::filesystem::path> moveFiles;
+            for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
+            {
+                const Json *section = mod.manifest.find("new");
+                const Json *list = section ? section->find("moves") : nullptr;
+                if (list && list->isArray())
+                    for (const Json &item : list->items)
+                        if (item.isString())
+                            moveFiles.push_back(vendetta_mods::modFile(mod, item.text + "/move.json", "move"));
+            }
+            std::vector<std::string> texts(moveFiles.size());
+            std::vector<char> opened(moveFiles.size(), 0);
+            vendetta_mods::forEachAtOnce(moveFiles.size(), [&](size_t i)
+            {
+                if (moveFiles[i].empty())
+                    return;
+                std::ifstream in(moveFiles[i], std::ios::binary);
+                texts[i].assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+                opened[i] = in ? 1 : 0;
+            });
+            size_t next = 0;
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
                 const Json *section = mod.manifest.find("new");
@@ -1115,14 +1140,13 @@ namespace vendetta_moves
                         std::cerr << "[moves] " << mod.name << ": new moves: each folder should be a name in quotes" << std::endl;
                         continue;
                     }
-                    const std::filesystem::path moveJson = vendetta_mods::modFile(mod, item.text + "/move.json", "move");
+                    const size_t at = next++;
+                    const std::filesystem::path &moveJson = moveFiles[at];
                     if (moveJson.empty())
                         continue;
-                    std::ifstream in(moveJson, std::ios::binary);
-                    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
                     Json j;
                     std::string error;
-                    if (!in || !vendetta_mods::parseJson(text, j, error) || !j.isObject())
+                    if (!opened[at] || !vendetta_mods::parseJson(texts[at], j, error) || !j.isObject())
                     {
                         std::cerr << "[moves] " << mod.name << ": " << moveJson.string() << ": not a JSON object"
                                   << (error.empty() ? "" : ": " + error) << " - \"" << item.text << "\" skipped" << std::endl;
@@ -1143,8 +1167,9 @@ namespace vendetta_moves
                     byFolder.push_back(i);
             }
             if (!g_known.empty())
-                std::cerr << "[moves] " << g_known.size() << " new move(s) in the mods; each is read at the match that uses it"
-                          << std::endl;
+                std::cerr << "[moves] " << g_known.size() << " new move(s) in the mods (their names read in "
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()
+                          << " ms); each is read at the match that uses it" << std::endl;
         }
 
         // the moves with this name on screen or folder name (any case), in the load order; the first that reads without a
