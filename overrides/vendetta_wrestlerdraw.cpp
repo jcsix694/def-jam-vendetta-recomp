@@ -22,6 +22,17 @@
 // Everything else stays the game's: posing, the face, the lights, the skin upload and TEXFLUSH, the shadow pass, the
 // see-through parts (ALPHA1 / 2, drawn on the main processor), the body points.
 //
+// A mod wrestler with a model of its own (vendetta_wrestlers.h: model.wrs, as adjmk writes the game's format; glTF to
+// come) is always drawn by our code, whatever the switch: the game still loads a game model behind it (its "based on",
+// else Briggs') and poses it; before each pose (FUN_001b1b20) our code writes the mod file's skeleton into that copy
+// (every bone's inverse bind and rest matrix of BODY, BODY2, FACE and both hands, and the face, lip, eye and hand
+// templates), so the game poses the mod's own face and hands; the body's part call then draws the mod's body, hands
+// and face with those posed bones and the game's lights, the hands' and face's calls draw nothing for it, and the
+// game's see-through parts of the model behind (FUN_001b2088) are not drawn. The shadow is the game's (the model
+// behind's: every game model's is the same); a shadow or a Low Poly body in the mod's file is ignored. The skin: the
+// mod file's own (decoded from its upload packet), or textures/skin.png at any size, as a host image bound to the
+// skin's address (GS register 0x71) around the mod's triangles. A file that can't be used leaves the game's model.
+//
 // VENDETTA_WRESTLERDRAW=1      our draw (sampling the skin the game uploaded)
 // VENDETTA_WRESTLERDRAW=ab[:N] the game's draw and ours in turn, N seconds each (default 2): pictures compared
 // VENDETTA_WRESTLERDRAW=flip   ours, and F9 (with the game's window in front) swaps between the game's draw and ours; the
@@ -34,13 +45,19 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_gsdraw.h"
+#include "vendetta_wrestlers.h"
+#include "runtime/gs/gs_gpu.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <memory>
+#include <unordered_map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -116,18 +133,20 @@ namespace vendetta_wrestlerdraw
             std::memcpy(a, out, sizeof(out));
         }
 
-        // The stream's rows as FUN_001b93a0 writes them (0x1B93E4-0x1B9470), into `stream` (the part's stream start)
-        void writeRows(uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours, uint8_t *stream)
+        // The stream's rows as FUN_001b93a0 writes them (0x1B93E4-0x1B9470), into `stream`: the bones' matrices from
+        // `posed` (the game's posed part), their segments from `layout` (the part whose stream it is: the same part
+        // for the game's own models, the mod's part for a mod's model)
+        void writeRows(const uint8_t *posed, const uint8_t *layout, const uint8_t *lightMatrix, const uint8_t *colours,
+                       uint8_t *stream)
         {
-            const uint8_t *p = mem(rdram, part);
-            std::memcpy(stream + 0x40, mem(rdram, colours), 64);
+            std::memcpy(stream + 0x40, colours, 64);
             float light[16];
-            std::memcpy(light, mem(rdram, lightMatrix), 64);
-            const uint32_t bones = word(p + 8);
+            std::memcpy(light, lightMatrix, 64);
+            const uint32_t bones = std::min(word(posed + 8), word(layout + 8));
             for (uint32_t k = 0; k < bones && k < 256u; ++k)
             {
-                const uint8_t *bone = p + 0x10 + 0x190 * k;
-                const int32_t segment = static_cast<int32_t>(word(bone + 8));
+                const uint8_t *bone = posed + 0x10 + 0x190 * k;
+                const int32_t segment = static_cast<int32_t>(word(layout + 0x10 + 0x190 * k + 8));
                 if (segment < 0)
                     continue;
                 uint8_t *rows = stream + 0x80 + 0x80 * static_cast<uint32_t>(segment);
@@ -138,6 +157,12 @@ namespace vendetta_wrestlerdraw
                 multiply(m, light);
                 std::memcpy(rows + 0x40, m, 64);
             }
+        }
+
+        void writeRows(uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours, uint8_t *stream)
+        {
+            const uint8_t *p = mem(rdram, part);
+            writeRows(p, p, mem(rdram, lightMatrix), mem(rdram, colours), stream);
         }
 
         // ------------------------------------------------------------------ reading the part's stream
@@ -296,12 +321,11 @@ namespace vendetta_wrestlerdraw
             packet.lastTag = SIZE_MAX;
         }
 
-        // The part drawn from its stream (the rows already written). False: not readable (the caller lets the game
-        // draw it).
-        bool drawPart(uint8_t *rdram, uint32_t part)
+        // The part drawn from its stream (the rows already written). `image`: a host image bound to TEX0's address
+        // around its triangles (a mod's skin), 0 for none. False: not readable (the caller lets the game draw it).
+        bool drawPart(const uint8_t *p, uint32_t image = 0u)
         {
-            const uint8_t *p = mem(rdram, part);
-            const uint8_t *stream = mem(rdram, part + (word(p) & ~3u));
+            const uint8_t *stream = p + (word(p) & ~3u);
             const uint32_t bytes = word(p + 4);
             uint32_t setupRows = 0;
             std::vector<Batch> batches;
@@ -320,6 +344,9 @@ namespace vendetta_wrestlerdraw
             const VuRounding rounding;
             Packet packet;
             packet.ad(word(tex0 + 8) & 0xFFu, uint64_t(word(tex0)) | (uint64_t(word(tex0 + 4)) << 32));
+            const uint32_t tbp = word(tex0) & 0x3FFFu;
+            if (image)
+                packet.ad(0x71u, uint64_t(tbp) | (uint64_t(image) << 32)); // GS register 0x71: our image at this address
             std::vector<Out> outs;
             for (const Batch &b : batches)
             {
@@ -433,6 +460,8 @@ namespace vendetta_wrestlerdraw
                 if (packet.q.size() * 8u >= kPacketBytes)
                     send(packet);
             }
+            if (image)
+                packet.ad(0x71u, uint64_t(tbp)); // unbound: the game's own draws at this address are untouched
             send(packet);
             ++g_stats.parts;
             return true;
@@ -533,7 +562,7 @@ namespace vendetta_wrestlerdraw
                 (std::memcmp(copy.data(), mem(rdram, at), bytes) == 0 ? g_rowsSame : g_rowsDifferent)++;
             }
             g_ourTriangles.clear();
-            drawPart(rdram, part);
+            drawPart(mem(rdram, part));
             g_ourWindow.insert(g_ourWindow.end(), g_ourTriangles.begin(), g_ourTriangles.end());
             ++g_checkParts;
             static auto last = Clock::now();
@@ -584,6 +613,313 @@ namespace vendetta_wrestlerdraw
             g_checkParts = g_rowsSame = g_rowsDifferent = 0;
         }
 
+        // ------------------------------------------------------------------ the mods' own models
+
+        constexpr uint32_t kPose = 0x1B1B20u;       // FUN_001b1b20(fighter, draw): pose, then draw the fighter
+        constexpr uint32_t kSeeThrough = 0x1B2088u; // FUN_001b2088(fighter): its see-through parts (ALPHA1 / 2)
+        constexpr uint32_t kRigs = 0x1E13980u, kRigSize = 0x34Cu, kRigModel = 0x334u; // the rig's model pointer
+        constexpr uint32_t kFighters = 0x22FE08u, kFighterSize = 0xCD8u, kFighterRecord = 0x34u;
+        constexpr uint32_t kModelBuffer = 0x96000u; // a fighter's model buffer (0x8C4500 + n x 0x96000)
+        constexpr uint32_t kSkinImageBase = 0x50000000u; // our host image ids for the mods' skins
+        constexpr int kBody = 1, kBody2 = 2, kFace = 3, kLeftHand = 4, kRightHand = 5, kTexture = 18;
+
+        PS2Runtime::RecompiledFunction g_originalPose = nullptr, g_originalSeeThrough = nullptr;
+
+        struct ModModel
+        {
+            std::vector<uint8_t> file;
+            int32_t part[32];
+            bool ok = false;
+            uint32_t image = 0;
+            const uint8_t *at(int slot) const { return part[slot] >= 0 ? file.data() + part[slot] : nullptr; }
+            uint8_t *at(int slot) { return part[slot] >= 0 ? file.data() + part[slot] : nullptr; }
+        };
+
+        std::unordered_map<uint32_t, std::unique_ptr<ModModel>> g_models; // by record
+        uint32_t g_lastRecords[4] = {~0u, ~0u, ~0u, ~0u};
+        uint32_t g_nextImage = kSkinImageBase;
+        // VENDETTA_MODMODEL_GAMEDRAW=1 (a test, the reference picture): a mod's WRS copied whole into the game's model
+        // buffer (the PS2 way; it must fit 614,400 bytes), so the game draws it itself; our draw leaves it alone
+        bool g_modGameDraw = false;
+
+        GSGpuRenderer *gpu() { return g_runtime ? g_runtime->gs().gpuRendererForSettings() : nullptr; }
+
+        // a part's offset in a WRS (self-relative entries at + 0x10 + 4 n, -1 = none), or -1
+        int32_t slotOffset(const uint8_t *wrs, size_t size, int slot)
+        {
+            const uint32_t at = 0x10u + 4u * static_cast<uint32_t>(slot);
+            if (at + 4u > size)
+                return -1;
+            const int32_t v = static_cast<int32_t>(word(wrs + at));
+            if (v == -1)
+                return -1;
+            const int64_t o = int64_t(at) + v;
+            return o > 0 && o < int64_t(size) ? static_cast<int32_t>(o) : -1;
+        }
+
+        // The skin from the file's upload packet (slot 18: the T8 picture sent as CT32, then its CLUT), decoded as the
+        // GS reads it; or textures/skin.png. Made a host image. False: none (the model behind's skin shows).
+        bool makeSkin(ModModel &m, const vendetta_wrestlers::ModelFile &files)
+        {
+            GSGpuRenderer *renderer = gpu();
+            if (!renderer)
+                return false;
+            std::vector<uint32_t> rgba;
+            uint32_t w = 0, h = 0;
+            std::error_code ec;
+            if (!files.textures.empty() && std::filesystem::is_regular_file(files.textures / "skin.png", ec))
+            {
+                std::ifstream in(files.textures / "skin.png", std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                if (gsDecodePicture(bytes.data(), bytes.size(), 0, 0, rgba, w, h))
+                    for (uint32_t &c : rgba) // PNG alpha (255 = solid) to the GS's (128 = solid)
+                        c = (c & 0x00FFFFFFu) | ((((c >> 24) * 128u + 127u) / 255u) << 24);
+                else
+                    std::cerr << "[wrestlers] " << files.modName << ": " << files.wrestler << ": textures/skin.png can't be read"
+                              << std::endl;
+            }
+            if (rgba.empty())
+            {
+                const uint8_t *t = m.at(kTexture);
+                if (!t)
+                    return false;
+                const uint8_t *packet = t + (word(t) & ~3u);
+                const uint32_t bytes = word(t + 4);
+                if (packet + bytes > m.file.data() + m.file.size())
+                    return false;
+                // the uploads (the picture, then its CLUT) sent to the addresses the game gives them (slot 0: BITBLTBUF's
+                // DBP, word + 0x14, as FUN_001b8568 patches it), in a copy
+                std::vector<uint8_t> copy(packet, packet + bytes);
+                const uint32_t dbp[2] = {0x1800u, 0x2000u};
+                uint32_t uploads = 0;
+                for (uint32_t o = 0; o + 0x60u <= bytes && uploads < 2u; ++uploads)
+                {
+                    const uint32_t w = (word(copy.data() + o + 0x14) & ~0x3FFFu) | dbp[uploads];
+                    std::memcpy(copy.data() + o + 0x14, &w, 4);
+                    o += 0x60u + (word(copy.data() + o + 0x50) & 0x7FFFu) * 16u;
+                }
+                if (uploads < 2u)
+                    return false;
+                GsScratch scratch;
+                scratch.replay(copy.data(), bytes);
+                const uint64_t tex0 = uint64_t(dbp[0]) | (8ull << 14) | (0x13ull << 20) | (9ull << 26) | (9ull << 30) |
+                                      (1ull << 34) | (uint64_t(dbp[1]) << 37);
+                if (!scratch.decode(tex0, rgba, w, h))
+                    return false;
+            }
+            // VENDETTA_MODSKIN_DUMP=<file>: the skin as it is made (u32 width, u32 height, then RGBA8, the GS's alpha)
+            if (const char *dump = std::getenv("VENDETTA_MODSKIN_DUMP"); dump && *dump)
+            {
+                std::ofstream out(dump, std::ios::binary);
+                out.write(reinterpret_cast<const char *>(&w), 4);
+                out.write(reinterpret_cast<const char *>(&h), 4);
+                out.write(reinterpret_cast<const char *>(rgba.data()), static_cast<std::streamsize>(rgba.size() * 4u));
+            }
+            m.image = g_nextImage++;
+            renderer->setHostImage(m.image, w, h, std::move(rgba));
+            return true;
+        }
+
+        // A mod's model read and checked: the game's format (WRS); glTF to come.
+        std::unique_ptr<ModModel> loadModel(const vendetta_wrestlers::ModelFile &files)
+        {
+            auto m = std::make_unique<ModModel>();
+            const std::string what = "[wrestlers] " + files.modName + ": " + files.wrestler + ": " + files.model.filename().string();
+            if (files.model.extension() != ".wrs")
+            {
+                std::cerr << what << ": glTF models are not read yet: its game model shows" << std::endl;
+                return m;
+            }
+            std::ifstream in(files.model, std::ios::binary);
+            m->file.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            if (m->file.size() < 0x100u || std::memcmp(m->file.data(), "WRS ", 4) != 0)
+            {
+                std::cerr << what << ": not a model in the game's format (WRS): its game model shows" << std::endl;
+                return m;
+            }
+            for (int n = 0; n < 32; ++n)
+                m->part[n] = slotOffset(m->file.data(), m->file.size(), n);
+            // the parts our draw uses: the body (required), the face and the hands (if there); the bones as the game's rig
+            const struct { int slot; uint32_t bones; const char *name; bool required; } parts[] = {
+                {kBody, 42u, "the body (BODY)", true}, {kFace, 11u, "the face", false},
+                {kLeftHand, 13u, "the left hand", false}, {kRightHand, 13u, "the right hand", false}};
+            for (const auto &part : parts)
+            {
+                const uint8_t *p = m->at(part.slot);
+                if (!p)
+                {
+                    if (part.required)
+                    {
+                        std::cerr << what << ": no " << part.name << ": its game model shows" << std::endl;
+                        return m;
+                    }
+                    continue;
+                }
+                uint32_t setupRows = 0;
+                std::vector<Batch> batches;
+                const uint32_t bytes = word(p + 4);
+                if (word(p + 8) != part.bones || p + (word(p) & ~3u) + bytes > m->file.data() + m->file.size() ||
+                    !readStream(p + (word(p) & ~3u), bytes, setupRows, batches))
+                {
+                    std::cerr << what << ": " << part.name << " can't be read (" << word(p + 8) << " bones, the game's rig has "
+                              << part.bones << "): its game model shows" << std::endl;
+                    return m;
+                }
+            }
+            m->ok = true;
+            const bool skin = makeSkin(*m, files);
+            std::cerr << what << ": read (" << m->file.size() / 1024 << " KB" << (skin ? ", its skin" : ", no skin of its own")
+                      << ")" << std::endl;
+            return m;
+        }
+
+        // The mod model of fighter i (its record's own model), read on first use; nullptr: none or unusable
+        ModModel *modelOf(uint8_t *rdram, uint32_t i)
+        {
+            if (i >= 4u || g_modGameDraw)
+                return nullptr;
+            const uint32_t record = word(mem(rdram, kFighters + kFighterSize * i + kFighterRecord));
+            const vendetta_wrestlers::ModelFile *files = vendetta_wrestlers::modelFile(record);
+            if (!files)
+                return nullptr;
+            auto found = g_models.find(record);
+            if (found == g_models.end())
+                found = g_models.emplace(record, loadModel(*files)).first;
+            return found->second->ok ? found->second.get() : nullptr;
+        }
+
+        // Models of records no longer in the match let go (and their skins)
+        void dropUnused(uint8_t *rdram)
+        {
+            uint32_t records[4];
+            for (uint32_t i = 0; i < 4u; ++i)
+                records[i] = word(mem(rdram, kFighters + kFighterSize * i + kFighterRecord));
+            if (std::equal(records, records + 4, g_lastRecords))
+                return;
+            std::copy(records, records + 4, g_lastRecords);
+            for (auto it = g_models.begin(); it != g_models.end();)
+            {
+                if (std::find(records, records + 4, it->first) == records + 4)
+                {
+                    if (it->second->image)
+                        if (GSGpuRenderer *renderer = gpu())
+                            renderer->dropHostImage(it->second->image);
+                    it = g_models.erase(it);
+                }
+                else
+                    ++it;
+            }
+        }
+
+        // The mod file's skeleton into the game's copy of the model behind it: every bone's inverse bind (+0x10) and
+        // rest matrix (+0x50) of BODY and BODY2 (both from the mod's BODY: a Low Poly body in the file is ignored), FACE
+        // and the hands, and the templates (slots 8-13: face, lip, eye, hands, the body's) where the counts agree.
+        void writeSkeleton(uint8_t *rdram, uint32_t carrier, const ModModel &m)
+        {
+            const uint8_t *game = mem(rdram, carrier);
+            auto gamePart = [&](int slot) -> uint8_t * {
+                const int32_t o = slotOffset(game, kModelBuffer, slot);
+                return o < 0 ? nullptr : mem(rdram, carrier + static_cast<uint32_t>(o));
+            };
+            const struct { int game, mod; } parts[] = {{kBody, kBody}, {kBody2, kBody}, {kFace, kFace},
+                                                        {kLeftHand, kLeftHand}, {kRightHand, kRightHand}};
+            for (const auto &pair : parts)
+            {
+                uint8_t *to = gamePart(pair.game);
+                const uint8_t *from = m.at(pair.mod);
+                if (!to || !from || word(to + 8) != word(from + 8))
+                    continue;
+                for (uint32_t k = 0; k < word(from + 8); ++k)
+                    std::memcpy(to + 0x10 + 0x190 * k + 0x10, from + 0x10 + 0x190 * k + 0x10, 0x80);
+            }
+            for (int slot = 8; slot <= 13; ++slot)
+            {
+                uint8_t *to = gamePart(slot);
+                const uint8_t *from = m.at(slot);
+                if (to && from && word(to) == word(from) && word(from) <= 64u)
+                    std::memcpy(to + 4, from + 4, 32u * word(from));
+            }
+        }
+
+        // The fighter whose model holds this address, or 4
+        uint32_t fighterOf(uint8_t *rdram, uint32_t address)
+        {
+            for (uint32_t i = 0; i < 4u; ++i)
+            {
+                const uint32_t model = word(mem(rdram, kRigs + kRigSize * i + kRigModel));
+                if (model && address >= model && address < model + kModelBuffer)
+                    return i;
+            }
+            return 4u;
+        }
+
+        // FUN_001b1b20(fighter, draw): a mod model's skeleton into the model behind it, then the game's own routine
+        void poseHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            dropUnused(rdram);
+            const uint32_t i = getRegU32(ctx, 4);
+            if (g_modGameDraw)
+            {
+                g_modGameDraw = false; // modelOf: the model itself, read
+                ModModel *m = modelOf(rdram, i);
+                g_modGameDraw = true;
+                const uint32_t carrier = word(mem(rdram, kRigs + kRigSize * i + kRigModel));
+                if (m && carrier && m->file.size() <= kModelBuffer &&
+                    std::memcmp(mem(rdram, carrier), m->file.data(), 0x90) != 0)
+                {
+                    std::memcpy(mem(rdram, carrier), m->file.data(), m->file.size());
+                    std::cerr << "[wrestlers] the mod's model copied into fighter " << i << "'s buffer: the game draws it" << std::endl;
+                }
+                g_originalPose(rdram, ctx, runtime);
+                return;
+            }
+            if (ModModel *m = modelOf(rdram, i))
+                if (const uint32_t carrier = word(mem(rdram, kRigs + kRigSize * i + kRigModel)))
+                    writeSkeleton(rdram, carrier, *m);
+            g_originalPose(rdram, ctx, runtime);
+        }
+
+        // FUN_001b2088(fighter): the model behind a mod model has no see-through parts on screen
+        void seeThroughHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (modelOf(rdram, getRegU32(ctx, 4)))
+            {
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            g_originalSeeThrough(rdram, ctx, runtime);
+        }
+
+        // The body's call for a mod fighter: its body, hands and face, each with the posed bones of the game's part of the
+        // same kind, the game's lights, the skin's address the game just wrote into the body's stream (TEX0, VU 0x3B)
+        void drawModel(uint8_t *rdram, R5900Context *ctx, ModModel &m, uint32_t fighter)
+        {
+            const uint32_t carrier = word(mem(rdram, kRigs + kRigSize * fighter + kRigModel));
+            const uint8_t *game = mem(rdram, carrier);
+            const uint8_t *body = mem(rdram, getRegU32(ctx, 4)); // the posed body: BODY or BODY2 (the same skeleton)
+            const uint8_t *light = mem(rdram, getRegU32(ctx, 5)), *colours = mem(rdram, getRegU32(ctx, 6));
+            const uint8_t *tex0 = body + (word(body) & ~3u) + 0x30u;
+            const struct { int slot; } order[] = {{kBody}, {kLeftHand}, {kRightHand}, {kFace}};
+            for (const auto &o : order)
+            {
+                uint8_t *part = m.at(o.slot);
+                if (!part)
+                    continue;
+                const uint8_t *posed = body;
+                if (o.slot != kBody)
+                {
+                    const int32_t off = slotOffset(game, kModelBuffer, o.slot);
+                    if (off < 0)
+                        continue;
+                    posed = mem(rdram, carrier + static_cast<uint32_t>(off));
+                }
+                uint8_t *stream = part + (word(part) & ~3u);
+                std::memcpy(stream + 0x30u, tex0, 16); // the skin's address (the slot the game uploaded to)
+                writeRows(posed, part, light, colours, stream);
+                drawPart(part, m.image);
+            }
+        }
+
         // ------------------------------------------------------------------ the hook
 
         void drawPartHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -591,6 +927,21 @@ namespace vendetta_wrestlerdraw
             const uint32_t ra = getRegU32(ctx, 31), part = getRegU32(ctx, 4);
             const bool wrestler = ra == kFromBody || ra == kFromLeftHand || ra == kFromRightHand || ra == kFromFace;
             if (!wrestler || part == 0u)
+            {
+                g_originalDrawPart(rdram, ctx, runtime);
+                return;
+            }
+            // a mod fighter's own model: drawn at the body's call, nothing at the hands' and face's
+            if (const uint32_t fighter = fighterOf(rdram, part); fighter < 4u)
+                if (ModModel *m = modelOf(rdram, fighter))
+                {
+                    if (ra == kFromBody)
+                        drawModel(rdram, ctx, *m, fighter);
+                    logStats();
+                    ctx->pc = ra;
+                    return;
+                }
+            if (g_mode == Mode::Off)
             {
                 g_originalDrawPart(rdram, ctx, runtime);
                 return;
@@ -610,7 +961,7 @@ namespace vendetta_wrestlerdraw
             const uint8_t *p = mem(rdram, part);
             uint8_t *stream = mem(rdram, part + (word(p) & ~3u));
             writeRows(rdram, part, getRegU32(ctx, 5), getRegU32(ctx, 6), stream);
-            if (!drawPart(rdram, part))
+            if (!drawPart(mem(rdram, part)))
             {
                 logStats();
                 g_originalDrawPart(rdram, ctx, runtime); // not readable: the game's own draw (it writes the same rows)
@@ -624,10 +975,16 @@ namespace vendetta_wrestlerdraw
     void install(PS2Runtime &runtime)
     {
         const char *value = std::getenv("VENDETTA_WRESTLERDRAW");
-        if (!value || !*value || std::string(value) == "0")
+        const std::string v = value ? value : "";
+        // a mod wrestler with its own model: our draw for it whatever the switch
+        bool modModels = false;
+        for (uint32_t record = vendetta_wrestlers::kFirstNewRecord; record < vendetta_wrestlers::endRecord(); ++record)
+            modModels = modModels || vendetta_wrestlers::modelFile(record) != nullptr;
+        if ((v.empty() || v == "0") && !modModels)
             return;
-        const std::string v = value;
-        if (v == "flip")
+        if (v.empty() || v == "0")
+            g_mode = Mode::Off;
+        else if (v == "flip")
             g_mode = Mode::Flip;
         else if (v == "check")
         {
@@ -644,19 +1001,29 @@ namespace vendetta_wrestlerdraw
         else
             g_mode = Mode::Ours;
         g_log = std::getenv("VENDETTA_WRESTLERLOG") && *std::getenv("VENDETTA_WRESTLERLOG") != '0';
+        g_modGameDraw = std::getenv("VENDETTA_MODMODEL_GAMEDRAW") && *std::getenv("VENDETTA_MODMODEL_GAMEDRAW") != '0';
         g_runtime = &runtime;
         g_originalDrawPart = runtime.lookupFunction(kDrawPart);
-        if (!g_originalDrawPart)
+        g_originalPose = runtime.lookupFunction(kPose);
+        g_originalSeeThrough = runtime.lookupFunction(kSeeThrough);
+        if (!g_originalDrawPart || !g_originalPose || !g_originalSeeThrough)
         {
-            std::cerr << "[wrestlers] the game's part draw FUN_001b93a0 not found: off" << std::endl;
+            std::cerr << "[wrestlers] the game's fighter draw routines not found: off" << std::endl;
             g_mode = Mode::Off;
             return;
         }
         runtime.replaceFunction(kDrawPart, drawPartHook);
-        std::cerr << "[wrestlers] on: the wrestlers drawn by our code ("
-                  << (g_mode == Mode::Check ? "checked against the game's" : g_mode == Mode::Ab ? "in turn with the game's"
-                      : g_mode == Mode::Flip ? "F9 swaps it with the game's" : "the skin the game uploads")
-                  << ")" << std::endl;
+        if (modModels)
+        {
+            runtime.replaceFunction(kPose, poseHook);
+            runtime.replaceFunction(kSeeThrough, seeThroughHook);
+            std::cerr << "[wrestlers] mods' own models: drawn by our code" << std::endl;
+        }
+        if (g_mode != Mode::Off)
+            std::cerr << "[wrestlers] on: the wrestlers drawn by our code ("
+                      << (g_mode == Mode::Check ? "checked against the game's" : g_mode == Mode::Ab ? "in turn with the game's"
+                          : g_mode == Mode::Flip ? "F9 swaps it with the game's" : "the skin the game uploads")
+                      << ")" << std::endl;
     }
 }
 

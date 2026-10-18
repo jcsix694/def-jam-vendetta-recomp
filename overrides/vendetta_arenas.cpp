@@ -163,8 +163,7 @@ namespace vendetta_arenas
         uint32_t g_split = 1;                        // VENDETTA_ARENA_SPLIT: each drawn triangle as N (a speed test)
 
         // Our copy of GS memory: the arena's part 1 replayed into it.
-        std::vector<uint8_t> g_vram;
-        uint32_t g_uploadLow = 0, g_uploadHigh = 0;  // the blocks the arena's uploads wrote [low, high)
+        GsScratch g_scratch; // the arena's uploads replayed (the blocks they wrote: low, high)
         std::unordered_map<uint64_t, uint32_t> g_images; // TEX0 (texture bits) -> host image id
         uint32_t g_nextImage = kImageIdBase;
 
@@ -421,152 +420,15 @@ namespace vendetta_arenas
         // into our copy of GS memory the way the GS lays it out.
         void replayUploads(const uint8_t *data, uint32_t bytes)
         {
-            static std::once_flag tables;
-            std::call_once(tables, [] { GSMem::InitLookupTables(); });
-            g_vram.assign(GSMem::MEMORY_SIZE, 0);
-            g_uploadLow = 0x4000u;
-            g_uploadHigh = 0u;
-            uint32_t dbp = 0, dbw = 0, dpsm = 0, dsax = 0, dsay = 0, rrw = 0, rrh = 0, x = 0, y = 0;
-            uint32_t o = 0, uploads = 0;
-            while (o + 16u <= bytes)
-            {
-                uint64_t lo, hi;
-                std::memcpy(&lo, data + o, 8);
-                std::memcpy(&hi, data + o + 8, 8);
-                o += 16u;
-                const uint32_t nloop = static_cast<uint32_t>(lo & 0x7FFFu);
-                const uint32_t flg = static_cast<uint32_t>((lo >> 58) & 3u);
-                const uint32_t nreg = static_cast<uint32_t>((lo >> 60) & 0xFu) ? static_cast<uint32_t>((lo >> 60) & 0xFu) : 16u;
-                if (flg == 0u)
-                {
-                    for (uint32_t i = 0; i < nloop * nreg && o + 16u <= bytes; ++i, o += 16u)
-                    {
-                        if (((hi >> (4u * (i % nreg))) & 0xFu) != 0xEu)
-                            continue;
-                        uint64_t value, reg;
-                        std::memcpy(&value, data + o, 8);
-                        std::memcpy(&reg, data + o + 8, 8);
-                        switch (reg & 0xFFu)
-                        {
-                        case 0x50:
-                            dbp = static_cast<uint32_t>((value >> 32) & 0x3FFFu);
-                            dbw = static_cast<uint32_t>((value >> 48) & 0x3Fu);
-                            dpsm = static_cast<uint32_t>((value >> 56) & 0x3Fu);
-                            break;
-                        case 0x51:
-                            dsax = static_cast<uint32_t>((value >> 32) & 0x7FFu);
-                            dsay = static_cast<uint32_t>((value >> 48) & 0x7FFu);
-                            break;
-                        case 0x52:
-                            rrw = static_cast<uint32_t>(value & 0xFFFu);
-                            rrh = static_cast<uint32_t>((value >> 32) & 0xFFFu);
-                            break;
-                        case 0x53:
-                            x = y = 0;
-                            break;
-                        }
-                    }
-                }
-                else if (flg == 2u)
-                {
-                    const uint32_t end = std::min(bytes, o + nloop * 16u);
-                    const uint32_t bpp = dpsm == 0x14u ? 4u : dpsm == 0x13u ? 8u : (dpsm == 0x02u || dpsm == 0x0Au) ? 16u : 32u;
-                    auto put = [&](uint32_t value) {
-                        if (!rrw || y >= rrh)
-                            return;
-                        const uint32_t px = dsax + x, py = dsay + y;
-                        uint8_t *v = g_vram.data();
-                        switch (dpsm)
-                        {
-                        case 0x00: GSMem::WriteCT32(v, dbp, dbw, px, py, value); break;
-                        case 0x01: GSMem::WriteCT24(v, dbp, dbw, px, py, value); break;
-                        case 0x02: GSMem::WriteCT16(v, dbp, dbw, px, py, value); break;
-                        case 0x0A: GSMem::WriteCT16S(v, dbp, dbw, px, py, value); break;
-                        case 0x13: GSMem::WriteP8(v, dbp, dbw, px, py, value); break;
-                        case 0x14: GSMem::WriteP4(v, dbp, dbw, px, py, value); break;
-                        default: break;
-                        }
-                        if (++x >= rrw)
-                        {
-                            x = 0;
-                            ++y;
-                        }
-                    };
-                    for (uint32_t p = o; p < end; p += 4u)
-                    {
-                        uint32_t word;
-                        std::memcpy(&word, data + p, 4);
-                        if (bpp == 32u)
-                            put(word);
-                        else if (bpp == 16u)
-                        {
-                            put(word & 0xFFFFu);
-                            put(word >> 16);
-                        }
-                        else if (bpp == 8u)
-                            for (uint32_t b = 0; b < 4u; ++b)
-                                put((word >> (8u * b)) & 0xFFu);
-                        else
-                            for (uint32_t b = 0; b < 8u; ++b)
-                                put((word >> (4u * b)) & 0xFu);
-                    }
-                    g_uploadLow = std::min(g_uploadLow, dbp);
-                    g_uploadHigh = std::max(g_uploadHigh, dbp + 1u);
-                    ++uploads;
-                    o = end;
-                }
-                else
-                    o += nloop * 16u; // REGLIST: none in the arena's files
-                if (lo & 0x8000u)
-                    break; // EOP
-            }
+            const uint32_t uploads = g_scratch.replay(data, bytes);
             if (g_log)
-                std::cerr << "[arenas] textures: " << uploads << " uploads replayed, blocks 0x" << std::hex << g_uploadLow
-                          << "-0x" << g_uploadHigh << std::dec << std::endl;
+                std::cerr << "[arenas] textures: " << uploads << " uploads replayed, blocks 0x" << std::hex << g_scratch.low
+                          << "-0x" << g_scratch.high << std::dec << std::endl;
         }
 
-        // One texture (TEX0) decoded from our copy into RGBA8 with the GS's alpha (0x80 = opaque). T4 / T8 with a
-        // CT32 CLUT (CSM1) and CT32: what the arenas use.
         bool decode(uint64_t tex0, std::vector<uint32_t> &rgba, uint32_t &w, uint32_t &h)
         {
-            const uint32_t tbp = static_cast<uint32_t>(tex0 & 0x3FFFu), tbw = static_cast<uint32_t>((tex0 >> 14) & 0x3Fu);
-            const uint32_t psm = static_cast<uint32_t>((tex0 >> 20) & 0x3Fu);
-            const uint32_t tw = static_cast<uint32_t>((tex0 >> 26) & 0xFu), th = static_cast<uint32_t>((tex0 >> 30) & 0xFu);
-            const uint32_t cbp = static_cast<uint32_t>((tex0 >> 37) & 0x3FFFu), cpsm = static_cast<uint32_t>((tex0 >> 51) & 0xFu);
-            const uint32_t csm = static_cast<uint32_t>((tex0 >> 55) & 1u);
-            if (g_vram.empty() || tw > 10u || th > 10u || tbp < g_uploadLow || tbp >= g_uploadHigh)
-                return false;
-            if ((psm == 0x13u || psm == 0x14u) && (cpsm != 0u || csm != 0u))
-                return false;
-            if (psm != 0x00u && psm != 0x13u && psm != 0x14u)
-                return false;
-            w = 1u << tw;
-            h = 1u << th;
-            uint8_t *v = g_vram.data();
-            uint32_t clut[256] = {};
-            if (psm == 0x13u)
-                for (uint32_t i = 0; i < 256u; ++i)
-                {
-                    const uint32_t j = (i & 0xE7u) | ((i & 0x08u) << 1) | ((i & 0x10u) >> 1);
-                    clut[i] = GSMem::ReadCT32(v, cbp, 1, j & 0xFu, j >> 4);
-                }
-            else if (psm == 0x14u)
-                for (uint32_t i = 0; i < 16u; ++i)
-                    clut[i] = GSMem::ReadCT32(v, cbp, 1, i & 7u, i >> 3);
-            rgba.resize(size_t(w) * h);
-            for (uint32_t y = 0; y < h; ++y)
-                for (uint32_t x = 0; x < w; ++x)
-                {
-                    uint32_t c;
-                    if (psm == 0x13u)
-                        c = clut[GSMem::ReadP8(v, tbp, tbw, x, y) & 0xFFu];
-                    else if (psm == 0x14u)
-                        c = clut[GSMem::ReadP4(v, tbp, tbw, x, y) & 0xFu];
-                    else
-                        c = GSMem::ReadCT32(v, tbp, tbw, x, y);
-                    rgba[size_t(y) * w + x] = c;
-                }
-            return true;
+            return g_scratch.decode(tex0, rgba, w, h);
         }
 
         // The host image for a TEX0 (decoded on first use), 0 when there is none.

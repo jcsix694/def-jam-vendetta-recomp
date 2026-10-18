@@ -101,6 +101,8 @@ namespace vendetta_wrestlers
         std::vector<Wrestler> g_wrestlers;
         std::vector<SlotFile> g_slotFiles;
         std::vector<AttirePictures> g_attirePictures; // by record - 63
+        std::vector<ModelFile> g_modelFiles;          // by record - 63 (an empty model: none of its own)
+        constexpr const char *kModelNames[] = {"model.wrs", "model.glb", "model.gltf"};
         std::vector<uint32_t> g_firstAttires;         // each new wrestler's first attire (record - 63), in grid order
         constexpr int kWantBehind = 6, kWantAhead = 10; // wrestlers either side of a tile drawn whose pictures are read
         uint32_t g_endRecord = kFirstNewRecord;
@@ -408,7 +410,21 @@ namespace vendetta_wrestlers
                         continue;
                     }
                     uint32_t looksBase = 0, looksCount = 0, voiceBase = 0, voiceCount = 0;
-                    const std::string basedOn = text(j, "based on");
+                    // a model of its own in its folder or an attire's: then "based on" may be left out (Briggs' model
+                    // stands behind it, only for the game's own work: its bones posed, its shadow)
+                    bool ownModel = false;
+                    {
+                        std::vector<std::string> folders{item.text};
+                        if (const vendetta_mods::Json *a = j.find("attires"); a && a->isArray())
+                            for (const vendetta_mods::Json &f : a->items)
+                                if (f.isString())
+                                    folders.push_back(item.text + "/" + f.text);
+                        std::error_code ec;
+                        for (const std::string &folder : folders)
+                            for (const char *modelName : kModelNames)
+                                ownModel = ownModel || std::filesystem::is_regular_file(mod.folder / (folder + "/" + modelName), ec);
+                    }
+                    const std::string basedOn = text(j, "based on", ownModel ? "Briggs" : "");
                     if (!gameWrestler(basedOn, looksBase, looksCount))
                     {
                         std::cerr << "[wrestlers] " << mod.name << ": " << name << ": \"based on\" must name a game wrestler (\""
@@ -536,6 +552,31 @@ namespace vendetta_wrestlers
                         if (const std::filesystem::path png = picture("logo.png"); !png.empty())
                             pictures.logo = vendetta_pictures::add(png, 128u, 64u, 4u);
                         g_attirePictures.push_back(pictures);
+                        // its own model: the attire's folder first, then the wrestler's; its textures folder likewise
+                        {
+                            ModelFile model;
+                            model.modName = mod.name;
+                            model.wrestler = name;
+                            std::error_code ec;
+                            for (const std::string &folder : {attireFolders[k], item.text})
+                            {
+                                if (folder.empty())
+                                    continue;
+                                if (model.model.empty())
+                                    for (const char *modelName : kModelNames)
+                                        if (std::filesystem::is_regular_file(mod.folder / (folder + "/" + modelName), ec))
+                                        {
+                                            model.model = mod.folder / (folder + "/" + modelName);
+                                            break;
+                                        }
+                                if (model.textures.empty() && std::filesystem::is_directory(mod.folder / (folder + "/textures"), ec))
+                                    model.textures = mod.folder / (folder + "/textures");
+                            }
+                            if (!model.model.empty())
+                                std::cerr << "[wrestlers] " << mod.name << ": " << name << " (record " << record << "): its own model "
+                                          << model.model.filename().string() << std::endl;
+                            g_modelFiles.push_back(model);
+                        }
                         float sizeValue = size;
                         std::memcpy(guest(vendetta_store::kSizeClasses + 4u * record), &sizeValue, 4);
                         write32(vendetta_store::kVoiceMap + 4u * record, read32(kGameVoices + 4u * voiceBase));
@@ -939,6 +980,14 @@ namespace vendetta_wrestlers
         runtime.replaceFunction(kMatchInit, matchInit);
         runtime.replaceFunction(kTextMeasure, textMeasure);
         runtime.replaceFunction(kTextDraw, textDraw);
+    }
+
+    const ModelFile *modelFile(uint32_t record)
+    {
+        if (record < kFirstNewRecord || record - kFirstNewRecord >= g_modelFiles.size())
+            return nullptr;
+        const ModelFile &model = g_modelFiles[record - kFirstNewRecord];
+        return model.model.empty() ? nullptr : &model;
     }
 }
 

@@ -9,13 +9,16 @@
 #pragma once
 
 #include "ps2_runtime.h"
+#include "runtime/gs/ps2_gs_memory.h"
 
+#include <algorithm>
 #include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -247,6 +250,163 @@ namespace vendetta_gsdraw
                       v.x / 16.0, v.y / 16.0, v.z, s, t, q, v.s, v.t, v.q, v.rgba);
         return text;
     }
+
+    // ---- a copy of GS memory for decoding textures from their upload packets
+    struct GsScratch
+    {
+        std::vector<uint8_t> vram;
+        uint32_t low = 0x4000u, high = 0u; // the blocks the uploads wrote [low, high)
+
+        // GS uploads (GIF A+D BITBLTBUF / TRXPOS / TRXREG / TRXDIR + IMAGE) written into this copy of GS memory the
+        // way the GS lays it out (cleared first); returns how many were replayed.
+        uint32_t replay(const uint8_t *data, uint32_t bytes)
+        {
+            static std::once_flag tables;
+            std::call_once(tables, [] { GSMem::InitLookupTables(); });
+            vram.assign(GSMem::MEMORY_SIZE, 0);
+            low = 0x4000u;
+            high = 0u;
+            uint32_t dbp = 0, dbw = 0, dpsm = 0, dsax = 0, dsay = 0, rrw = 0, rrh = 0, x = 0, y = 0;
+            uint32_t o = 0, uploads = 0;
+            while (o + 16u <= bytes)
+            {
+                uint64_t lo, hi;
+                std::memcpy(&lo, data + o, 8);
+                std::memcpy(&hi, data + o + 8, 8);
+                o += 16u;
+                const uint32_t nloop = static_cast<uint32_t>(lo & 0x7FFFu);
+                const uint32_t flg = static_cast<uint32_t>((lo >> 58) & 3u);
+                const uint32_t nreg = static_cast<uint32_t>((lo >> 60) & 0xFu) ? static_cast<uint32_t>((lo >> 60) & 0xFu) : 16u;
+                if (flg == 0u)
+                {
+                    for (uint32_t i = 0; i < nloop * nreg && o + 16u <= bytes; ++i, o += 16u)
+                    {
+                        if (((hi >> (4u * (i % nreg))) & 0xFu) != 0xEu)
+                            continue;
+                        uint64_t value, reg;
+                        std::memcpy(&value, data + o, 8);
+                        std::memcpy(&reg, data + o + 8, 8);
+                        switch (reg & 0xFFu)
+                        {
+                        case 0x50:
+                            dbp = static_cast<uint32_t>((value >> 32) & 0x3FFFu);
+                            dbw = static_cast<uint32_t>((value >> 48) & 0x3Fu);
+                            dpsm = static_cast<uint32_t>((value >> 56) & 0x3Fu);
+                            break;
+                        case 0x51:
+                            dsax = static_cast<uint32_t>((value >> 32) & 0x7FFu);
+                            dsay = static_cast<uint32_t>((value >> 48) & 0x7FFu);
+                            break;
+                        case 0x52:
+                            rrw = static_cast<uint32_t>(value & 0xFFFu);
+                            rrh = static_cast<uint32_t>((value >> 32) & 0xFFFu);
+                            break;
+                        case 0x53:
+                            x = y = 0;
+                            break;
+                        }
+                    }
+                }
+                else if (flg == 2u)
+                {
+                    const uint32_t end = std::min(bytes, o + nloop * 16u);
+                    const uint32_t bpp = dpsm == 0x14u ? 4u : dpsm == 0x13u ? 8u : (dpsm == 0x02u || dpsm == 0x0Au) ? 16u : 32u;
+                    auto put = [&](uint32_t value) {
+                        if (!rrw || y >= rrh)
+                            return;
+                        const uint32_t px = dsax + x, py = dsay + y;
+                        uint8_t *v = vram.data();
+                        switch (dpsm)
+                        {
+                        case 0x00: GSMem::WriteCT32(v, dbp, dbw, px, py, value); break;
+                        case 0x01: GSMem::WriteCT24(v, dbp, dbw, px, py, value); break;
+                        case 0x02: GSMem::WriteCT16(v, dbp, dbw, px, py, value); break;
+                        case 0x0A: GSMem::WriteCT16S(v, dbp, dbw, px, py, value); break;
+                        case 0x13: GSMem::WriteP8(v, dbp, dbw, px, py, value); break;
+                        case 0x14: GSMem::WriteP4(v, dbp, dbw, px, py, value); break;
+                        default: break;
+                        }
+                        if (++x >= rrw)
+                        {
+                            x = 0;
+                            ++y;
+                        }
+                    };
+                    for (uint32_t p = o; p < end; p += 4u)
+                    {
+                        uint32_t word;
+                        std::memcpy(&word, data + p, 4);
+                        if (bpp == 32u)
+                            put(word);
+                        else if (bpp == 16u)
+                        {
+                            put(word & 0xFFFFu);
+                            put(word >> 16);
+                        }
+                        else if (bpp == 8u)
+                            for (uint32_t b = 0; b < 4u; ++b)
+                                put((word >> (8u * b)) & 0xFFu);
+                        else
+                            for (uint32_t b = 0; b < 8u; ++b)
+                                put((word >> (4u * b)) & 0xFu);
+                    }
+                    low = std::min(low, dbp);
+                    high = std::max(high, dbp + 1u);
+                    ++uploads;
+                    o = end;
+                }
+                else
+                    o += nloop * 16u; // REGLIST: none in the arena's files
+                if (lo & 0x8000u)
+                    break; // EOP
+            }
+            return uploads;
+        }
+
+        // One texture (TEX0) decoded from this copy into RGBA8 with the GS's alpha (0x80 = opaque). T4 / T8 with a
+        // CT32 CLUT (CSM1) and CT32: what the arenas and the wrestlers' skins use.
+        bool decode(uint64_t tex0, std::vector<uint32_t> &rgba, uint32_t &w, uint32_t &h)
+        {
+            const uint32_t tbp = static_cast<uint32_t>(tex0 & 0x3FFFu), tbw = static_cast<uint32_t>((tex0 >> 14) & 0x3Fu);
+            const uint32_t psm = static_cast<uint32_t>((tex0 >> 20) & 0x3Fu);
+            const uint32_t tw = static_cast<uint32_t>((tex0 >> 26) & 0xFu), th = static_cast<uint32_t>((tex0 >> 30) & 0xFu);
+            const uint32_t cbp = static_cast<uint32_t>((tex0 >> 37) & 0x3FFFu), cpsm = static_cast<uint32_t>((tex0 >> 51) & 0xFu);
+            const uint32_t csm = static_cast<uint32_t>((tex0 >> 55) & 1u);
+            if (vram.empty() || tw > 10u || th > 10u || tbp < low || tbp >= high)
+                return false;
+            if ((psm == 0x13u || psm == 0x14u) && (cpsm != 0u || csm != 0u))
+                return false;
+            if (psm != 0x00u && psm != 0x13u && psm != 0x14u)
+                return false;
+            w = 1u << tw;
+            h = 1u << th;
+            uint8_t *v = vram.data();
+            uint32_t clut[256] = {};
+            if (psm == 0x13u)
+                for (uint32_t i = 0; i < 256u; ++i)
+                {
+                    const uint32_t j = (i & 0xE7u) | ((i & 0x08u) << 1) | ((i & 0x10u) >> 1);
+                    clut[i] = GSMem::ReadCT32(v, cbp, 1, j & 0xFu, j >> 4);
+                }
+            else if (psm == 0x14u)
+                for (uint32_t i = 0; i < 16u; ++i)
+                    clut[i] = GSMem::ReadCT32(v, cbp, 1, i & 7u, i >> 3);
+            rgba.resize(size_t(w) * h);
+            for (uint32_t y = 0; y < h; ++y)
+                for (uint32_t x = 0; x < w; ++x)
+                {
+                    uint32_t c;
+                    if (psm == 0x13u)
+                        c = clut[GSMem::ReadP8(v, tbp, tbw, x, y) & 0xFFu];
+                    else if (psm == 0x14u)
+                        c = clut[GSMem::ReadP4(v, tbp, tbw, x, y) & 0xFu];
+                    else
+                        c = GSMem::ReadCT32(v, tbp, tbw, x, y);
+                    rgba[size_t(y) * w + x] = c;
+                }
+            return true;
+        }
+    };
 
     // ---- the window title, for the F9 swap test modes
 
