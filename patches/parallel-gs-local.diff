@@ -1,5 +1,5 @@
 diff --git a/gs/gs_interface.cpp b/gs/gs_interface.cpp
-index ea00016..ecf7fb2 100644
+index ea00016..4e62895 100644
 --- a/gs/gs_interface.cpp
 +++ b/gs/gs_interface.cpp
 @@ -1543,6 +1543,18 @@ uint32_t GSInterface::drawing_kick_update_texture(FBFeedbackMode feedback_mode,
@@ -53,7 +53,7 @@ index ea00016..ecf7fb2 100644
  	if (XDIR == LOCAL_TO_LOCAL)
  	{
  		auto dst_rect = compute_page_rect(transfer_state.copy.bitbltbuf.desc.DBP,
-@@ -4147,6 +4173,89 @@ void GSInterface::packed_FOG(const void *words)
+@@ -4147,6 +4173,104 @@ void GSInterface::packed_FOG(const void *words)
  	TRACE("FOG", registers.fog);
  }
  
@@ -92,6 +92,21 @@ index ea00016..ecf7fb2 100644
 +	drain_host_images();
 +	host_image_armed_tbp = uint32_t(payload & 0x3fffu);
 +	host_image_armed_id = uint32_t(payload >> 32);
++}
++
++void GSInterface::a_d_HOSTBIND(uint64_t payload)
++{
++	// Binds (or with id 0 unbinds) at once, with no transfer: for the program's own draws, which bind their image
++	// around their primitives and unbind it after, so the game's texture at that address is untouched.
++	drain_host_images();
++	uint32_t tbp = uint32_t(payload & 0x3fffu);
++	uint32_t id = uint32_t(payload >> 32);
++	if (id)
++		host_image_bound[tbp] = id;
++	else
++		host_image_bound.erase(tbp);
++	state_tracker.last_texture_descriptor = {};
++	state_tracker.dirty_flags |= STATE_DIRTY_TEX_BIT | STATE_DIRTY_PRIM_TEMPLATE_BIT;
 +}
 +
 +void GSInterface::host_image_transfer(uint32_t dbp)
@@ -143,15 +158,32 @@ index ea00016..ecf7fb2 100644
  void GSInterface::setup_handlers()
  {
  	for (auto &h : ad_handlers)
-@@ -4161,6 +4270,7 @@ void GSInterface::setup_handlers()
+@@ -4161,6 +4285,8 @@ void GSInterface::setup_handlers()
  #define DECL_REG(reg, addr) ad_handlers[addr] = &GSInterface::a_d_##reg;
  #include "gs_register_addr.hpp"
  #undef DECL_REG
 +	ad_handlers[0x70] = &GSInterface::a_d_HOSTIMAGE; // a local addition: host images (gs_interface.hpp)
++	ad_handlers[0x71] = &GSInterface::a_d_HOSTBIND;  // a local addition: host images bound at once
  
  	reglist_handlers[int(GIFAddr::PRIM)] = &GSInterface::a_d_PRIM;
  	reglist_handlers[int(GIFAddr::RGBAQ)] = &GSInterface::a_d_RGBAQ;
-@@ -4445,6 +4555,7 @@ void GSInterface::set_debug_mode(const DebugMode &mode)
+@@ -4340,10 +4466,13 @@ void GSInterface::gif_transfer(uint32_t path_index, const void *data, size_t siz
+ 		}
+ 		else
+ 		{
+-			if (path.reg == 0 && optimized_draw_handler[path_index])
++			// (A local fix: the loops left in this transfer are counted from i, not from its start. A packet split
++			// across transfers mid-loop read past the end, and with less than one loop left made no progress; a
++			// partial loop goes register by register below.)
++			if (path.reg == 0 && optimized_draw_handler[path_index] && size - i >= nreg)
+ 			{
+ 				// Should this divide be optimized to use divide by constant trick?
+-				uint32_t nloops_to_run = std::min<uint32_t>(size / nreg, path.tag.NLOOP - path.loop);
++				uint32_t nloops_to_run = std::min<uint32_t>(uint32_t((size - i) / nreg), path.tag.NLOOP - path.loop);
+ 				(this->*optimized_draw_handler[path_index])(&qwords[i], nloops_to_run);
+ 				i += nloops_to_run * nreg;
+ 				path.loop += nloops_to_run;
+@@ -4445,6 +4574,7 @@ void GSInterface::set_debug_mode(const DebugMode &mode)
  void GSInterface::set_hacks(const Hacks &hacks_)
  {
  	hacks = hacks_;
@@ -159,7 +191,7 @@ index ea00016..ecf7fb2 100644
  
  	if (!hacks.backbuffer_promotion)
  	{
-@@ -4679,7 +4790,9 @@ ScanoutResult GSInterface::vsync(const VSyncInfo &info_)
+@@ -4679,7 +4809,9 @@ ScanoutResult GSInterface::vsync(const VSyncInfo &info_)
  	                                    priv_registers.smode2.INT &&
  	                                    priv_registers.smode1.CMOD != SMODE1Bits::CMOD_PROGRESSIVE;
  
@@ -171,7 +203,7 @@ index ea00016..ecf7fb2 100644
  
  	auto result = renderer.vsync(priv_registers, info,
 diff --git a/gs/gs_interface.hpp b/gs/gs_interface.hpp
-index 9f05da8..3d0e7a9 100644
+index 9f05da8..a684a77 100644
 --- a/gs/gs_interface.hpp
 +++ b/gs/gs_interface.hpp
 @@ -14,6 +14,8 @@
@@ -206,7 +238,7 @@ index 9f05da8..3d0e7a9 100644
  };
  
  class SignalInterface
-@@ -303,7 +314,33 @@ public:
+@@ -303,7 +314,35 @@ public:
  
  	void read_transfer_fifo(void *data, uint32_t num_128b_words);
  
@@ -216,7 +248,8 @@ index 9f05da8..3d0e7a9 100644
 +	// the address unbinds it. A draw sampling a bound address samples the image, normalised by the GS texture's own
 +	// size, so it lines up in every coordinate and wrap mode. set_host_image() / drop_host_image() may be called from
 +	// any thread (queued; the images are made on this one when the register is next written). rgba: width x height
-+	// RGBA8 with the GS's alpha (0x80 = opaque).
++	// RGBA8 with the GS's alpha (0x80 = opaque). The private register 0x71, same payload, binds (id 0: unbinds) at
++	// once with no transfer: the program's own draws bind their image around their primitives and unbind it after.
 +	void set_host_image(uint32_t id, uint32_t width, uint32_t height, std::vector<uint32_t> rgba);
 +	void drop_host_image(uint32_t id);
 +
@@ -236,6 +269,7 @@ index 9f05da8..3d0e7a9 100644
 +	void host_image_transfer(uint32_t dbp);
 +	uint32_t use_host_image(const TextureDescriptor &desc, const Vulkan::ImageHandle &image);
 +	void a_d_HOSTIMAGE(uint64_t payload);
++	void a_d_HOSTBIND(uint64_t payload);
 +
  	friend class PageTracker;
  	void flush(PageTrackerFlushFlags flags, FlushReason reason);

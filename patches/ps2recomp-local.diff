@@ -3279,7 +3279,7 @@ index 2421f9e..53d30c7 100644
 +    bool m_stopWorkers = false;
  };
 diff --git a/ps2xRuntime/include/runtime/gs/gs_frontend.h b/ps2xRuntime/include/runtime/gs/gs_frontend.h
-index 4c3f641..fac06ff 100644
+index 4c3f641..b106c89 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
 +++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
 @@ -2,13 +2,16 @@
@@ -3299,7 +3299,7 @@ index 4c3f641..fac06ff 100644
  
  struct GSDebugSnapshot
  {
-@@ -104,9 +107,12 @@ public:
+@@ -104,9 +107,15 @@ public:
  
      void init(uint8_t *vram, uint32_t vramSize, struct GSRegisters *privRegs = nullptr);
      void reset();
@@ -3310,10 +3310,13 @@ index 4c3f641..fac06ff 100644
 +    // path: the GIF path the packet came by (1 = VU1 XGKICK, 2 = VIF1, 3 = GIF DMA) — an unfinished tag continues
 +    // only with more data from the same path.
 +    void processGIFPacket(const uint8_t *data, uint32_t sizeBytes, uint8_t path = 3u);
++    // A debugging tap: called with every packet processGIFPacket receives, before it is read (none by default).
++    using GifTap = void (*)(void *user, uint8_t path, const uint8_t *data, uint32_t sizeBytes);
++    void setGifTap(GifTap tap, void *user) { m_gifTap = tap; m_gifTapUser = user; }
      bool processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes);
      void uploadImageNative(uint64_t bitbltbuf,
                             uint64_t trxpos,
-@@ -116,6 +122,14 @@ public:
+@@ -116,6 +125,14 @@ public:
                             uint32_t sizeBytes);
      void writeRegister(uint8_t regAddr, uint64_t value);
  
@@ -3328,7 +3331,7 @@ index 4c3f641..fac06ff 100644
      const uint8_t *lockDisplaySnapshot(uint32_t &outSize);
      void unlockDisplaySnapshot();
      uint32_t getLastDisplayBaseBytes() const;
-@@ -129,6 +143,54 @@ public:
+@@ -129,6 +146,54 @@ public:
      bool isDebugHistoryPaused() const;
      void setDebugHistoryPaused(bool paused);
      bool getPreferredDisplaySource(GSFrameReg &outSource, uint32_t &outDestFbp) const;
@@ -3383,7 +3386,7 @@ index 4c3f641..fac06ff 100644
      void latchHostPresentationFrame();
      bool copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
                                            uint32_t &outWidth,
-@@ -172,7 +234,27 @@ private:
+@@ -172,7 +237,27 @@ private:
      bool tryProcessNativeImageUploadPacket(const uint8_t *data, uint32_t sizeBytes);
      GSPrimitiveBatch buildDrawBatch(int vertexCount) const;
      void updatePreferredDisplaySourceForDraw(const GSPrimitiveBatch &batch);
@@ -3412,7 +3415,7 @@ index 4c3f641..fac06ff 100644
  
  
      GSContext &activeContext();
-@@ -191,6 +273,20 @@ private:
+@@ -191,6 +276,20 @@ private:
  
      uint8_t m_curR = 0x80, m_curG = 0x80, m_curB = 0x80, m_curA = 0x80;
      float m_curQ = 1.0f;
@@ -3433,7 +3436,7 @@ index 4c3f641..fac06ff 100644
      float m_curS = 0.0f, m_curT = 0.0f;
      uint16_t m_curU = 0, m_curV = 0;
      uint8_t m_curFog = 0;
-@@ -213,6 +309,50 @@ private:
+@@ -213,6 +312,50 @@ private:
  
      static constexpr int kMaxVerts = 6;
      GSVertex m_vtxQueue[kMaxVerts];
@@ -3484,12 +3487,14 @@ index 4c3f641..fac06ff 100644
      int m_vtxCount = 0;
      int m_vtxIndex = 0;
  
-@@ -241,7 +381,30 @@ private:
+@@ -241,7 +384,32 @@ private:
      uint64_t m_debugLastVsyncTick = UINT64_MAX;
      bool m_debugHistoryPaused = true;
  
 +    // presentation state (the producer: whoever holds m_stateMutex)
 +    bool m_vramWrittenSincePresent = true;
++    GifTap m_gifTap = nullptr;
++    void *m_gifTapUser = nullptr;
 +    bool m_hasPresented = false;
 +    GSPresentationRequest m_lastPresentRequest{};
 +    GSDisplayRegs m_lastPresentedRegs{};
@@ -10784,7 +10789,7 @@ index f0ad507..8fa3249 100644
      result.displayFbp = displayFrame.fbp;
      result.sourceFbp = selected.fbp;
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 5658928..79b729d 100644
+index 5658928..51deae2 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -1,8 +1,17 @@
@@ -11398,13 +11403,15 @@ index 5658928..79b729d 100644
  }
  
  bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
-@@ -638,13 +1075,46 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+@@ -638,13 +1075,48 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
      return true;
  }
  
 -void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 +void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes, uint8_t path)
  {
++    if (m_gifTap)
++        m_gifTap(m_gifTapUser, path, data, sizeBytes);
 +    gateForeignCall();
 +    ps2_host_profile::Scope profile(ps2_host_profile::GsLock);
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
@@ -11447,7 +11454,7 @@ index 5658928..79b729d 100644
          return;
  
      PS2_IF_AGRESSIVE_LOGS({
-@@ -668,7 +1138,6 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -668,7 +1140,6 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
          }
      });
  
@@ -11455,7 +11462,7 @@ index 5658928..79b729d 100644
      while (offset + 16 <= sizeBytes)
      {
          uint64_t tagLo = loadLE64(data + offset);
-@@ -684,6 +1153,7 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -684,6 +1155,7 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
              nreg = 16;
  
          recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
@@ -11463,7 +11470,7 @@ index 5658928..79b729d 100644
  
          bool pre = ((tagLo >> 46) & 1) != 0;
          if (pre)
-@@ -695,61 +1165,135 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -695,61 +1167,135 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
          for (uint32_t i = 0; i < nreg; ++i)
              regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
  
@@ -11631,7 +11638,7 @@ index 5658928..79b729d 100644
  
          const bool pre = ((tag.lo >> 46u) & 1u) != 0u;
          if (pre)
-@@ -762,8 +1306,10 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -762,8 +1308,10 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
              {
                  const uint64_t lo = loadLE64(data + offset);
                  const uint64_t hi = loadLE64(data + offset + 8u);
@@ -11642,7 +11649,7 @@ index 5658928..79b729d 100644
              }
          }
  
-@@ -783,7 +1329,9 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
+@@ -783,7 +1331,9 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
                             const uint8_t *data,
                             uint32_t sizeBytes)
  {
@@ -11652,7 +11659,7 @@ index 5658928..79b729d 100644
      uploadImageNativeUnlocked(bitbltbuf, trxpos, trxreg, trxdir, data, sizeBytes);
  }
  
-@@ -796,6 +1344,25 @@ void GS::uploadImageNativeUnlocked(uint64_t bitbltbuf,
+@@ -796,6 +1346,25 @@ void GS::uploadImageNativeUnlocked(uint64_t bitbltbuf,
  {
      if (!data || sizeBytes == 0 || !m_backend)
          return;
@@ -11678,7 +11685,7 @@ index 5658928..79b729d 100644
  
      writeRegisterUnlocked(GS_REG_BITBLTBUF, bitbltbuf);
      writeRegisterUnlocked(GS_REG_TRXPOS, trxpos);
-@@ -927,6 +1494,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -927,6 +1496,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -11686,7 +11693,7 @@ index 5658928..79b729d 100644
          vtx.x = static_cast<float>(x) / 16.0f;
          vtx.y = static_cast<float>(y) / 16.0f;
          vtx.z = static_cast<float>(z);
-@@ -964,6 +1532,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -964,6 +1534,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -11694,7 +11701,7 @@ index 5658928..79b729d 100644
          vtx.x = static_cast<float>(x) / 16.0f;
          vtx.y = static_cast<float>(y) / 16.0f;
          vtx.z = static_cast<float>(z);
-@@ -998,6 +1567,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -998,6 +1569,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -11702,7 +11709,7 @@ index 5658928..79b729d 100644
          vtx.x = static_cast<float>(lo & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((lo >> 32) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<float>((hi >> 4) & 0xFFFFFF);
-@@ -1029,6 +1599,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -1029,6 +1601,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -11710,7 +11717,7 @@ index 5658928..79b729d 100644
          vtx.x = static_cast<float>(lo & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((lo >> 32) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<float>(hi & 0xFFFFFFFF);
-@@ -1061,7 +1632,12 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -1061,7 +1634,12 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
  
  void GS::writeRegister(uint8_t regAddr, uint64_t value)
  {
@@ -11723,7 +11730,7 @@ index 5658928..79b729d 100644
      writeRegisterUnlocked(regAddr, value);
  }
  
-@@ -1186,6 +1762,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1186,6 +1764,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
      case GS_REG_XYZF3:
      {
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -11731,7 +11738,7 @@ index 5658928..79b729d 100644
          vtx.x = static_cast<float>(value & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((value >> 16) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<double>((value >> 32) & 0xFFFFFF);
-@@ -1206,6 +1783,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1206,6 +1785,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
      case GS_REG_XYZ3:
      {
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -11739,7 +11746,7 @@ index 5658928..79b729d 100644
          vtx.x = static_cast<float>(value & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((value >> 16) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<double>((value >> 32) & 0xFFFFFFFF);
-@@ -1240,6 +1818,14 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1240,6 +1820,14 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
          t.csa = static_cast<uint8_t>((value >> 56) & 0x1F);
          t.cld = static_cast<uint8_t>((value >> 61) & 0x7);
          m_backend->LoadClut(t, m_texclut);
@@ -11754,7 +11761,7 @@ index 5658928..79b729d 100644
          break;
      }
      case GS_REG_CLAMP_1:
-@@ -1392,6 +1978,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1392,6 +1980,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
              command.trxreg = m_trxreg;
              command.direction = m_trxdir;
              m_backend->BeginTransfer(command);
@@ -11762,7 +11769,7 @@ index 5658928..79b729d 100644
          }
          recordTransferDebugEventUnlocked();
          break;
-@@ -1575,8 +2162,16 @@ void GS::vertexKick(bool drawing)
+@@ -1575,8 +2164,16 @@ void GS::vertexKick(bool drawing)
      if (drawing && m_backend)
      {
          GSPrimitiveBatch batch = buildDrawBatch(needed);
@@ -11780,7 +11787,7 @@ index 5658928..79b729d 100644
          recordDrawDebugEventUnlocked(needed);
      }
  
-@@ -1590,15 +2185,19 @@ void GS::vertexKick(bool drawing)
+@@ -1590,15 +2187,19 @@ void GS::vertexKick(bool drawing)
          break;
      case GS_PRIM_LINESTRIP:
          m_vtxQueue[0] = m_vtxQueue[1];
@@ -11800,7 +11807,7 @@ index 5658928..79b729d 100644
          m_vtxCount = 2;
          break;
      default:
-@@ -1607,28 +2206,306 @@ void GS::vertexKick(bool drawing)
+@@ -1607,28 +2208,306 @@ void GS::vertexKick(bool drawing)
      }
  }
  
@@ -12109,7 +12116,7 @@ index 5658928..79b729d 100644
      return m_backend ? m_backend->ConsumeLocalToHostBytes(dst, maxBytes) : 0u;
  }
  
-@@ -1637,7 +2514,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1637,7 +2516,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
      if (!backend)
          backend = std::make_unique<GSCpuBackend>();
  
@@ -12119,7 +12126,7 @@ index 5658928..79b729d 100644
      std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
      if (m_backend)
      {
-@@ -1657,21 +2536,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1657,21 +2538,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
          }
      }
  
