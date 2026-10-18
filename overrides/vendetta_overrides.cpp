@@ -37,6 +37,7 @@ void installVendettaTestMatch(PS2Runtime &runtime);  // vendetta_testmatch.cpp: 
 void installVendettaPictures(PS2Runtime &runtime);  // vendetta_pictures.cpp: pictures from mods' files (host images)
 void installVendettaWrestlers(PS2Runtime &runtime); // vendetta_wrestlers.cpp: new wrestlers from mods (after the animations)
 void installVendettaArenas(PS2Runtime &runtime);    // vendetta_arenas.cpp: the arena drawn by our code (VENDETTA_ARENADRAW)
+void installVendettaWrestlerDraw(PS2Runtime &runtime); // vendetta_wrestlerdraw.cpp: the wrestlers drawn by our code (VENDETTA_WRESTLERDRAW)
 
 namespace
 {
@@ -580,6 +581,7 @@ namespace
         installVendettaPictures(runtime);
         installVendettaWrestlers(runtime);
         installVendettaArenas(runtime);
+        installVendettaWrestlerDraw(runtime);
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         // a project keeps its own memory cards: projects\<name>\saves\mc0 (and mc1 beside it); the original game keeps
         // the ones beside the program's game folder
