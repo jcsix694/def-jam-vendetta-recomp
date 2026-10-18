@@ -85,6 +85,8 @@ namespace vendetta_arenas
         constexpr uint32_t kDrawShadow = 0x1B9880u;   // FUN_001b9880(object, camera, shadow): the shadow floor (99)
         constexpr uint32_t kUpload = 0x1B85C0u;       // FUN_001b85c0(p): one GIF DMA from p + p[0], p[1] bytes
         constexpr uint32_t kUploadFromArena = 0x165C70u; // the return address of its call in the arena set-up
+        constexpr uint32_t kIntros = 0x1245C8u;          // FUN_001245c8(a0): the match's intros by match kind (a log line)
+        constexpr uint32_t kMatchKind = 0x2361CEu;       // the match kind byte
         constexpr uint32_t kScenePointer = 0x29A930u;    // gp - 0x1C40: the scene (part 0), 0xB1C500 in the game
         constexpr uint32_t kSceneBytes = 0xB9000u;       // the scene buffer's size
         constexpr uint32_t kVenue = 0x296600u;           // the renderer's venue
@@ -109,6 +111,7 @@ namespace vendetta_arenas
         PS2Runtime::RecompiledFunction g_originalDrawScrolled = nullptr;
         PS2Runtime::RecompiledFunction g_originalDrawShadow = nullptr;
         PS2Runtime::RecompiledFunction g_originalUpload = nullptr;
+        PS2Runtime::RecompiledFunction g_originalIntros = nullptr;
         using Clock = std::chrono::steady_clock;
         const Clock::time_point g_start = Clock::now();
 
@@ -1793,6 +1796,16 @@ namespace vendetta_arenas
                           << " textures (" << images << " uses)" << std::endl;
         }
 
+        // VENDETTA_ARENALOG: a line each time the match's intros start (a0 = 1 when Survival skips an arena's fly-in it
+        // has shown in this run: the "intro skip"), with the match kind and the venue
+        void intros(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            std::cerr << "[arenas] intros: FUN_001245c8(a0 = " << getRegU32(ctx, 4) << "), match kind 0x" << std::hex
+                      << (Ps2FastRead32(rdram, kMatchKind & ~3u) >> ((kMatchKind & 3u) * 8u) & 0xFFu) << std::dec
+                      << ", venue " << Ps2FastRead32(rdram, kVenue) << std::endl;
+            g_originalIntros(rdram, ctx, runtime);
+        }
+
         // The arena's textures, read as the game uploads them.
         void upload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -1874,6 +1887,8 @@ namespace vendetta_arenas
         runtime.replaceFunction(kDrawScrolled, drawScrolled);
         runtime.replaceFunction(kDrawShadow, drawShadow);
         runtime.replaceFunction(kUpload, upload);
+        if (g_log && (g_originalIntros = runtime.lookupFunction(kIntros)) != nullptr)
+            runtime.replaceFunction(kIntros, intros);
         std::cerr << "[arenas] on: the arena drawn by our code ("
                   << (g_mode == Mode::Vram ? "the game's uploaded textures" : g_mode == Mode::Ab ? "in turn with the game's"
                       : g_mode == Mode::Flip ? "F9 swaps it with the game's" : "textures as host images")
