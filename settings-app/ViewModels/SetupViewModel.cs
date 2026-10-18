@@ -107,9 +107,10 @@ public partial class SetupViewModel : ObservableObject
         {
             new("Reading your disc", 0.06, "about 1 min"),
             new("Getting the build tools", 0.04, "only if they're missing"),
-            new("Building the recompiler", 0.12, "about 1 min"),
-            new("Turning the game's code into C++", 0.10, "under a minute"),
-            new("Building the game", 0.66, "about 10 min"),
+            new("Building the recompiler", 0.11, "about 1 min"),
+            new("Turning the game's code into C++", 0.09, "under a minute"),
+            new("Building the game", 0.56, "about 10 min"),
+            new("Preparing graphics for your PC", 0.12, "about 2 min"),
             new("Finishing", 0.02, ""),
         };
     }

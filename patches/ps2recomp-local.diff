@@ -3522,10 +3522,10 @@ index 4c3f641..b106c89 100644
  #endif
 diff --git a/ps2xRuntime/include/runtime/gs/gs_gpu.h b/ps2xRuntime/include/runtime/gs/gs_gpu.h
 new file mode 100644
-index 0000000..ba03c49
+index 0000000..61bba2e
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_gpu.h
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,200 @@
 +#pragma once
 +
 +// The GS drawn on the graphics card (paraLLEl-GS, Vulkan compute), next to the CPU renderer.
@@ -3587,6 +3587,7 @@ index 0000000..ba03c49
 +    bool sync = false;
 +    size_t ringBytes = size_t{16} << 20u;
 +    std::string gpuSelector;
++    bool prepareLog = false; // "[prepare] N of M" lines on stdout while the pipelines are pre-built (--prepare-graphics)
 +
 +    static GSGpuOptions fromEnvironment();
 +};
@@ -4591,12 +4592,14 @@ index 0000000..8337038
 +}
 diff --git a/ps2xRuntime/include/runtime/ps2_host_update.h b/ps2xRuntime/include/runtime/ps2_host_update.h
 new file mode 100644
-index 0000000..f98e608
+index 0000000..8da3052
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_update.h
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,34 @@
 +#pragma once
 +
++#include <cstdint>
++#include <functional>
 +#include <string>
 +
 +// An update check when the game starts, before its window opens (Windows). A game build names its GitHub repository and
@@ -4621,6 +4624,11 @@ index 0000000..f98e608
 +    // gives up after 2 seconds; the popup waits for the player. Returns false when the player chose Update: the game
 +    // should end.
 +    bool checkAtStart();
++
++    // A popup while the graphics card's pipelines are prepared at the start (a progress bar, no buttons; it closes
++    // itself once finished() says so). progress(done, total) is asked a few times a second. Returns at once where
++    // there is no such popup (not Windows).
++    void showPreparing(const std::function<void(uint32_t &, uint32_t &)> &progress, const std::function<bool()> &finished);
 +}
 diff --git a/ps2xRuntime/include/runtime/ps2_host_window.h b/ps2xRuntime/include/runtime/ps2_host_window.h
 new file mode 100644
@@ -12337,10 +12345,10 @@ index 0000000..6085f2a
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
 new file mode 100644
-index 0000000..b98a443
+index 0000000..b1fe89b
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
-@@ -0,0 +1,1326 @@
+@@ -0,0 +1,1465 @@
 +// The GS on the graphics card: paraLLEl-GS (Arntzen Software AS, LGPL-3.0+) on Granite's Vulkan backend.
 +//
 +// The GS front end hands over the raw GS input in its own order (GIF data per path, register writes, presentations);
@@ -12360,6 +12368,7 @@ index 0000000..b98a443
 +#include "shaders/slangmosh.hpp"
 +#include "gs_vulkan_shared.h"
 +#include "gs_vulkan_present.h"
++#include "runtime/ps2_host_update.h"
 +
 +#include <windows.h>
 +
@@ -12373,6 +12382,8 @@ index 0000000..b98a443
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
++#include <filesystem>
++#include <fstream>
 +#include <future>
 +#include <immintrin.h>
 +#include <iostream>
@@ -12386,6 +12397,81 @@ index 0000000..b98a443
 +}
 +
 +void stopSharedPictures() { g_sharedStopped.store(true, std::memory_order_release); }
++
++namespace
++{
++    // The graphics cache: the pipelines the graphics card's driver built, kept in a file beside the game program so
++    // the next start doesn't build them again (paraLLEl-GS pre-builds about 10,900 at every start; built afresh that
++    // takes minutes). VENDETTA_GRAPHICS_CACHE=0: none; =<path>: another file. A cache made for another card or driver
++    // is set aside by the driver (Granite checks the card's pipelineCacheUUID) and built again.
++    std::filesystem::path graphicsCachePath()
++    {
++        const char *setting = std::getenv("VENDETTA_GRAPHICS_CACHE");
++        if (setting && *setting)
++            return std::string(setting) == "0" ? std::filesystem::path() : std::filesystem::path(setting);
++#if defined(_WIN32)
++        std::wstring path(32768, L'\0');
++        const DWORD n = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
++        path.resize(n);
++        return std::filesystem::path(path).parent_path() / "graphics-cache.bin";
++#else
++        return "graphics-cache.bin";
++#endif
++    }
++
++    // Before any pipeline is built. Returns the bytes read (0: a fresh cache).
++    size_t loadGraphicsCache(Vulkan::Device &device, const std::filesystem::path &path)
++    {
++        std::vector<uint8_t> data;
++        if (!path.empty())
++        {
++            std::ifstream in(path, std::ios::binary);
++            if (in)
++                data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
++        }
++        if (!device.init_pipeline_cache(data.empty() ? nullptr : data.data(), data.size()))
++        {
++            std::cerr << "[gpu-gs] graphics cache: could not be set up" << std::endl;
++            return 0;
++        }
++        if (!data.empty())
++            std::cerr << "[gpu-gs] graphics cache: " << data.size() / 1024 << " KB read from " << path.string() << std::endl;
++        return data.size();
++    }
++
++    // Written when it has grown since it was read or last written (a new file, then renamed over the old one).
++    void saveGraphicsCache(Vulkan::Device &device, const std::filesystem::path &path, size_t &known)
++    {
++        if (path.empty())
++            return;
++        const size_t size = device.get_pipeline_cache_size();
++        if (size == 0 || size == known)
++            return;
++        std::vector<uint8_t> data(size);
++        if (!device.get_pipeline_cache_data(data.data(), data.size()))
++            return;
++        std::filesystem::path partial = path;
++        partial += ".new";
++        {
++            std::ofstream out(partial, std::ios::binary | std::ios::trunc);
++            out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
++            if (!out)
++            {
++                std::cerr << "[gpu-gs] graphics cache: could not write " << partial.string() << std::endl;
++                return;
++            }
++        }
++        std::error_code error;
++        std::filesystem::rename(partial, path, error);
++        if (error)
++        {
++            std::cerr << "[gpu-gs] graphics cache: could not write " << path.string() << ": " << error.message() << std::endl;
++            return;
++        }
++        known = size;
++        std::cerr << "[gpu-gs] graphics cache: " << size / 1024 << " KB written to " << path.string() << std::endl;
++    }
++}
 +
 +bool vulkanPresentWanted()
 +{
@@ -12537,6 +12623,34 @@ index 0000000..b98a443
 +            std::future<std::string> ready = m_ready.get_future();
 +            m_thread = std::thread([this]
 +                                   { threadMain(); });
++            // The thread reports ready once the pipelines are prepared (built, or read from the graphics cache): when
++            // that will take a while (over 20 s at the pace of its first 3 s; read from the cache it is a few seconds),
++            // a popup shows how far it has come (VENDETTA_PREPARE_POPUP=0: none).
++            const char *popup = std::getenv("VENDETTA_PREPARE_POPUP");
++            const bool popupAllowed = !(popup && *popup == '0');
++            while (popupAllowed && ready.wait_for(std::chrono::milliseconds(250)) != std::future_status::ready)
++            {
++                const uint32_t done = m_prepareDone.load(std::memory_order_relaxed);
++                const uint32_t total = m_prepareTotal.load(std::memory_order_relaxed);
++                const int64_t startNs = m_prepareStartNs.load(std::memory_order_relaxed);
++                if (total == 0u || startNs == 0)
++                    continue;
++                const double elapsed =
++                    std::chrono::duration<double>(Clock::now().time_since_epoch()).count() - double(startNs) * 1e-9;
++                if (elapsed < 3.0)
++                    continue;
++                std::cerr << "[gpu-gs] preparing pipelines: " << done << " of " << total << " after " << elapsed
++                          << " s" << std::endl;
++                if (elapsed * double(total) / double(std::max(done, 1u)) > 20.0)
++                    ps2_host_update::showPreparing(
++                        [this](uint32_t &d, uint32_t &t)
++                        {
++                            d = m_prepareDone.load(std::memory_order_relaxed);
++                            t = m_prepareTotal.load(std::memory_order_relaxed);
++                        },
++                        [&ready] { return ready.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; });
++                break;
++            }
 +            std::string error = ready.get();
 +            if (!error.empty())
 +            {
@@ -12894,6 +13008,8 @@ index 0000000..b98a443
 +                Vulkan::Device &device = *deviceHolder;
 +                device.set_context(context);
 +                device.init_frame_contexts(12);
++                const std::filesystem::path cachePath = graphicsCachePath();
++                size_t cacheBytes = loadGraphicsCache(device, cachePath);
 +
 +                auto gsHolder = std::make_unique<ParallelGS::GSInterface>();
 +                ParallelGS::GSInterface &gs = *gsHolder;
@@ -12939,6 +13055,34 @@ index 0000000..b98a443
 +                          << " hires=" << (m_options.highResolutionScanout ? 1 : 0)
 +                          << " external-memory=" << (context.get_enabled_device_features().supports_external ? "yes" : "no")
 +                          << std::endl;
++                {
++                    // the pipelines paraLLEl-GS pre-builds (gs.init started them on its own threads): the game starts
++                    // when they are ready, not while they are built (a game started meanwhile waits for each one it
++                    // needs, and freezes for seconds at a time); then they are kept in the graphics cache
++                    const auto prepareStart = Clock::now();
++                    m_prepareStartNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(prepareStart.time_since_epoch()).count(),
++                                           std::memory_order_relaxed);
++                    uint32_t done = 0, total = 0, shown = 0;
++                    for (;;)
++                    {
++                        gs.get_precompile_progress(done, total);
++                        m_prepareDone.store(done, std::memory_order_relaxed);
++                        m_prepareTotal.store(total, std::memory_order_relaxed);
++                        if (done >= total)
++                            break;
++                        if (m_options.prepareLog && done / 500u != shown)
++                        {
++                            shown = done / 500u;
++                            std::cout << "[prepare] " << done << " of " << total << std::endl;
++                        }
++                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
++                    }
++                    const double seconds = std::chrono::duration<double>(Clock::now() - prepareStart).count();
++                    std::cerr << "[gpu-gs] pipelines prepared: " << total << " in " << seconds << " s" << std::endl;
++                    if (m_options.prepareLog)
++                        std::cout << "[prepare] " << total << " of " << total << " in " << seconds << " s" << std::endl;
++                    saveGraphicsCache(device, cachePath, cacheBytes);
++                }
 +                reported = true;
 +                m_ready.set_value(std::string());
 +
@@ -12983,6 +13127,7 @@ index 0000000..b98a443
 +                // holds one never ends), then the device.
 +                gsHolder.reset();
 +                device.wait_idle();
++                saveGraphicsCache(device, cachePath, cacheBytes);
 +                deviceHolder.reset();
 +                if (m_profile)
 +                    std::fprintf(stderr, "[gpu-gs] closed in %.1f ms%c", stepMs(), 10);
@@ -13575,6 +13720,8 @@ index 0000000..b98a443
 +        std::string m_deviceName;
 +        std::promise<std::string> m_ready;
 +        std::thread m_thread;
++        std::atomic<uint32_t> m_prepareDone{0}, m_prepareTotal{0}; // the pipelines' pre-build, for the popup
++        std::atomic<int64_t> m_prepareStartNs{0};
 +
 +        std::unique_ptr<uint8_t[]> m_ringStorage;
 +        uint8_t *m_ring = nullptr;
@@ -17026,10 +17173,10 @@ index 0000000..852e59e
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_update.cpp b/ps2xRuntime/src/lib/ps2_host_update.cpp
 new file mode 100644
-index 0000000..f1303d5
+index 0000000..7cb7c1b
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_update.cpp
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,464 @@
 +#include "runtime/ps2_host_update.h"
 +
 +#include <iostream>
@@ -17042,7 +17189,11 @@ index 0000000..f1303d5
 +#define WIN32_LEAN_AND_MEAN
 +#endif
 +#include <windows.h>
++#include <commctrl.h>
 +#include <winhttp.h>
++
++// Windows' newer controls (version 6): the popups' current look and the task dialog with a progress bar
++#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 +
 +#include <array>
 +#include <chrono>
@@ -17076,6 +17227,7 @@ index 0000000..f1303d5
 +
 +#if !defined(_WIN32)
 +    bool checkAtStart() { return true; }
++    void showPreparing(const std::function<void(uint32_t &, uint32_t &)> &, const std::function<bool()> &) {}
 +#else
 +    namespace
 +    {
@@ -17318,6 +17470,63 @@ index 0000000..f1303d5
 +            CloseHandle(process.hProcess);
 +            return true;
 +        }
++    }
++
++    void showPreparing(const std::function<void(uint32_t &, uint32_t &)> &progress, const std::function<bool()> &finished)
++    {
++        // TaskDialogIndirect is in the version 6 controls only: looked up, so the program still starts without them
++        using TaskDialogFn = HRESULT(WINAPI *)(const TASKDIALOGCONFIG *, int *, int *, BOOL *);
++        HMODULE controls = LoadLibraryW(L"comctl32.dll");
++        const auto taskDialog = controls ? reinterpret_cast<TaskDialogFn>(GetProcAddress(controls, "TaskDialogIndirect")) : nullptr;
++        if (!taskDialog)
++        {
++            std::cerr << "[update] no task dialog (Windows' version 6 controls): preparing without a popup" << std::endl;
++            while (!finished())
++                std::this_thread::sleep_for(std::chrono::milliseconds(100));
++            return;
++        }
++        struct State
++        {
++            const std::function<void(uint32_t &, uint32_t &)> *progress;
++            const std::function<bool()> *finished;
++        } state{&progress, &finished};
++        const std::wstring title = wide(config().title.empty() ? std::string("PS2Recomp") : config().title);
++        TASKDIALOGCONFIG dialog{};
++        dialog.cbSize = sizeof(dialog);
++        dialog.dwFlags = TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER;
++        dialog.pszWindowTitle = title.c_str();
++        dialog.pszMainIcon = TD_INFORMATION_ICON;
++        dialog.pszMainInstruction = L"Preparing graphics for your PC";
++        dialog.pszContent = L"This happens once, after an update or a new graphics driver, and can take a minute or two. "
++                            L"The game starts by itself when it's done.";
++        dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&state);
++        dialog.pfCallback = [](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT
++        {
++            const State &s = *reinterpret_cast<const State *>(data);
++            if (notification == TDN_CREATED)
++            {
++                SendMessageW(window, TDM_SET_PROGRESS_BAR_RANGE, 0, MAKELPARAM(0, 1000));
++                SendMessageW(window, TDM_ENABLE_BUTTON, IDOK, FALSE); // no buttons: it closes itself
++                SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
++            }
++            else if (notification == TDN_TIMER)
++            {
++                uint32_t done = 0, total = 0;
++                (*s.progress)(done, total);
++                if (total != 0u)
++                    SendMessageW(window, TDM_SET_PROGRESS_BAR_POS, static_cast<WPARAM>(uint64_t(done) * 1000u / total), 0);
++                if ((*s.finished)())
++                {
++                    SendMessageW(window, TDM_ENABLE_BUTTON, IDOK, TRUE);
++                    PostMessageW(window, TDM_CLICK_BUTTON, IDOK, 0);
++                }
++            }
++            return S_OK;
++        };
++        std::cerr << "[update] preparing graphics: popup shown" << std::endl;
++        taskDialog(&dialog, nullptr, nullptr, nullptr);
++        while (!finished())
++            std::this_thread::sleep_for(std::chrono::milliseconds(50));
 +    }
 +
 +    bool checkAtStart()
@@ -22374,17 +22583,18 @@ index 6974254..6fe0609 100644
 +    return true;
 +}
 diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
-index 563bcbd..29120fb 100644
+index 563bcbd..d20d0c8 100644
 --- a/ps2xRuntime/src/main.cpp
 +++ b/ps2xRuntime/src/main.cpp
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,7 @@
  #include "ps2_runtime.h"
 +#include "runtime/ps2_host_settings.h"
 +#include "runtime/ps2_host_update.h"
++#include "runtime/gs/gs_gpu.h"
  #include "games_database.h"
  #if defined(PS2X_ENABLE_DEBUG_UI) && !defined(PLATFORM_VITA)
  #include "ps2_debug_panel.h"
-@@ -14,6 +16,7 @@
+@@ -14,6 +17,7 @@
  #include <exception>
  #include <algorithm>
  #include <cstdlib>
@@ -22392,7 +22602,7 @@ index 563bcbd..29120fb 100644
  
  #if defined(__ANDROID__)
  #include <android/log.h>
-@@ -157,19 +160,60 @@ namespace
+@@ -157,19 +161,79 @@ namespace
          {
              return configuredPath;
          }
@@ -22444,6 +22654,25 @@ index 563bcbd..29120fb 100644
      setupTerminateLogger();
 +    // before anything reads a VENDETTA_* switch: the settings fill in the ones the environment doesn't set
 +    ps2_host_settings::load(argc > 0 ? argv[0] : nullptr);
++    // --prepare-graphics (the setup, after building the game): the graphics card's pipelines built and kept in the
++    // graphics cache, so the player's first start doesn't build them; "[prepare] N of M" lines on stdout; no window
++    if (argc > 1 && std::string(argv[1]) == "--prepare-graphics")
++    {
++        GSGpuOptions options = GSGpuOptions::fromEnvironment();
++        options.prepareLog = true;
++        std::string whyNot;
++#if defined(_WIN32)
++        _putenv_s("VENDETTA_PREPARE_POPUP", "0");
++#endif
++        auto renderer = makeGpuRenderer(options, whyNot);
++        if (!renderer)
++            std::cout << "[prepare] not possible: " << whyNot << std::endl;
++        const int code = renderer ? 0 : 1;
++        renderer.reset();
++        std::cout.flush();
++        std::cerr.flush();
++        return code;
++    }
 +    // a newer release: Update (the launcher takes over, the game ends) or Play; before the window opens
 +    if (!ps2_host_update::checkAtStart())
 +    {

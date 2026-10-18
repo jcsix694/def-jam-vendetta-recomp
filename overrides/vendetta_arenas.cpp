@@ -156,6 +156,7 @@ namespace vendetta_arenas
         std::unordered_map<uint32_t, Mesh> g_meshes; // by object address
         std::vector<int32_t> g_gameIds;              // VENDETTA_ARENA_GAMEIDS: objects left to the game (a test)
         uint32_t g_stress = 1, g_texScale = 1;       // VENDETTA_ARENA_STRESS / _TEXSCALE (speed tests)
+        uint32_t g_checker = 0;                      // VENDETTA_ARENA_TESTTEX=checker[:N]: N-texel squares (a shimmer test)
         uint32_t g_split = 1;                        // VENDETTA_ARENA_SPLIT: each drawn triangle as N (a speed test)
 
         // Our copy of GS memory: the arena's part 1 replayed into it.
@@ -585,6 +586,16 @@ namespace vendetta_arenas
                     w *= g_texScale;
                     h *= g_texScale;
                 }
+                // the finest detail a texture can have: every other square of N texels at half brightness (the alpha,
+                // and so the see-through parts, kept)
+                if (g_checker)
+                    for (uint32_t y = 0; y < h; ++y)
+                        for (uint32_t x = 0; x < w; ++x)
+                            if (((x / g_checker) ^ (y / g_checker)) & 1u)
+                            {
+                                uint32_t &c = rgba[size_t(y) * w + x];
+                                c = (c & 0xFF000000u) | ((c >> 1) & 0x007F7F7Fu);
+                            }
                 id = g_nextImage++;
                 renderer->setHostImage(id, w, h, std::move(rgba));
             }
@@ -1869,6 +1880,11 @@ namespace vendetta_arenas
             g_stress = static_cast<uint32_t>(std::clamp(std::atoi(n), 1, 100));
         if (const char *n = std::getenv("VENDETTA_ARENA_SPLIT"))
             g_split = static_cast<uint32_t>(std::clamp(std::atoi(n), 1, 100));
+        if (const char *t = std::getenv("VENDETTA_ARENA_TESTTEX"); t && std::strncmp(t, "checker", 7) == 0)
+        {
+            g_checker = t[7] == ':' ? static_cast<uint32_t>(std::clamp(std::atoi(t + 8), 1, 64)) : 1u;
+            g_texScale = 8;
+        }
         if (const char *k = std::getenv("VENDETTA_ARENA_TEXSCALE"))
             g_texScale = static_cast<uint32_t>(std::clamp(std::atoi(k), 1, 16));
         g_log = std::getenv("VENDETTA_ARENALOG") && *std::getenv("VENDETTA_ARENALOG") != '0';

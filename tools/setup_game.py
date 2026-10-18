@@ -36,7 +36,8 @@ VS_COMPONENTS = ['Microsoft.VisualStudio.Workload.VCTools', 'Microsoft.VisualStu
 # FetchContent name -> the folder a release brings it in (source/deps/<folder>)
 DEPS = {'ELFIO': 'elfio', 'TOML11': 'toml11', 'FMT': 'fmt', 'LIBDWARF': 'libdwarf', 'RABBITIZER': 'rabbitizer',
         'RAYLIB': 'raylib', 'IMGUI': 'imgui', 'RLIMGUI': 'rlimgui'}
-STEPS = ['Your disc', 'Build tools', 'The recompiler', 'Recompiling the game', 'Building the game', 'Finishing']
+STEPS = ['Your disc', 'Build tools', 'The recompiler', 'Recompiling the game', 'Building the game',
+         'Preparing graphics', 'Finishing']
 
 
 def say(text):
@@ -402,8 +403,31 @@ def mark_changed_files(data, after_copy):
         say(f'{marked} files changed since the game was last built: marked as changed')
 
 
-def step_finish(out_dir, data):
+def step_graphics(out_dir, data):
+    """The graphics card's pipelines built now and kept in graphics-cache.bin beside the game, so its first start
+    doesn't build them (a couple of minutes). Never stops the setup: the game builds them itself when this can't."""
     step(6, STEPS[5])
+    exe = os.path.join(out_dir, 'ps2EntryRunner.exe')
+    env = dict(os.environ)
+    env['VENDETTA_GRAPHICS_CACHE'] = os.path.join(data, 'graphics-cache.bin')
+    # the player's settings (they pick the graphics card) when there are any yet; none on a first install
+    settings = os.path.join(data, 'settings.toml')
+    env['VENDETTA_SETTINGS'] = settings if os.path.isfile(settings) else 'none'
+
+    def parse(line):
+        m = re.match(r'\[prepare\] (\d+) of (\d+)', line)
+        if m and int(m.group(2)):
+            progress(int(m.group(1)) / int(m.group(2)))
+
+    try:
+        run([exe, '--prepare-graphics'], env=env, cwd=data, parse=parse)
+    except SetupError as error:
+        say(f'graphics not prepared ({error}): the game prepares them at its first start')
+    progress(1.0)
+
+
+def step_finish(out_dir, data):
+    step(7, STEPS[6])
     exe = os.path.join(out_dir, 'ps2EntryRunner.exe')
     if not os.path.isfile(exe):
         raise SetupError('the game was not built')
@@ -440,6 +464,7 @@ def main():
         recompiler = step_recompiler(env, data, arch)
         step_recompile(recompiler, data)
         out_dir = step_game(env, data, arch)
+        step_graphics(out_dir, data)
         step_finish(out_dir, data)
     except SetupError as error:
         # the step it stopped in, the tool's own error lines, and what they mean when it is a known one

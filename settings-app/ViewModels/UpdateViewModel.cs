@@ -36,7 +36,7 @@ public partial class UpdateViewModel : ObservableObject
     private static readonly string[] SetupParts =
     {
         "reading your disc", "the build tools", "the recompiler", "turning the game's code into C++ and checking what changed",
-        "building the game", "finishing",
+        "building the game", "preparing graphics for your PC", "finishing",
     };
     private readonly Stopwatch _setupClock = new(); // since the rebuild's current part began
 
