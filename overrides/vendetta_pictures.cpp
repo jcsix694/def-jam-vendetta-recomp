@@ -151,7 +151,7 @@ namespace vendetta_pictures
                         continue;
                     }
                     p.state = State::Failed;
-                    std::cerr << "[pictures] " << p.file.string() << " can't be read as a picture" << std::endl;
+                    vendetta_mods::problem() << "[pictures] " << p.file.string() << " can't be read as a picture" << std::endl;
                 }
                 keepBudget();
             }

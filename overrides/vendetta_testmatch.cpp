@@ -10,6 +10,8 @@
 //                   { "record": 9, "attire": 0, "control": "cpu", "level": 1 } ],
 //     "repeat": { "fighter": 1, "slot": 12 },
 //     "keep health": [ true, true ], "loop": true, "skip movies": true }
+// "match": "1-on-1" (two fighters) or "4-way" (four, all against all: the block as Battle's Free For All leaves it,
+// +0x10 = 1, +0x14 = +0x18 = 4, the pads 0 / 4 / 5 / 6).
 // "record" = a character record (0-62, or a record a mod adds), "attire" = added to it (the menus give the grid slot's
 // first record + the attire); "control" = human / cpu / dummy (a computer player that never presses anything: no
 // attacks, blocks or reversals); "level" = the computer's skill 0-2; "arena" = the stage 0-11 as Choose Stage numbers
@@ -80,7 +82,8 @@ namespace vendetta_testmatch
 
     struct Setup
     {
-        std::array<Fighter, 2> fighters{};
+        std::array<Fighter, 4> fighters{};
+        int count = 2; // 2 (1-on-1) or 4 (4-way)
         int arena = 0;
         int repeatFighter = -1;
         int repeatSlot = -1;
@@ -163,17 +166,21 @@ namespace vendetta_testmatch
         auto flag = [](const vendetta_mods::Json *j, bool fallback) {
             return j && j->type == vendetta_mods::Json::Type::Bool ? j->boolean : fallback;
         };
-        if (const auto *m = json.find("match"); m && m->isString() && m->text != "1-on-1")
-            std::cerr << "[testmatch] only \"1-on-1\" is made so far: a 1-on-1" << std::endl;
+        out.count = 2;
+        if (const auto *m = json.find("match"); m && m->isString() && m->text == "4-way")
+            out.count = 4;
+        else if (m && m->isString() && m->text != "1-on-1")
+            std::cerr << "[testmatch] \"match\" is \"1-on-1\" or \"4-way\": a 1-on-1" << std::endl;
         out.arena = std::clamp(number(json.find("arena"), 0), 0, 11);
         const auto *fighters = json.find("fighters");
-        if (!fighters || !fighters->isArray() || fighters->items.size() != 2)
+        if (!fighters || !fighters->isArray() || fighters->items.size() != size_t(out.count))
         {
-            std::cerr << "[testmatch] \"fighters\" should list two fighters: the game starts as usual" << std::endl;
+            std::cerr << "[testmatch] \"fighters\" should list " << out.count << " fighters: the game starts as usual"
+                      << std::endl;
             return false;
         }
         const auto *keep = json.find("keep health");
-        for (size_t i = 0; i < 2; ++i)
+        for (size_t i = 0; i < size_t(out.count); ++i)
         {
             const auto &f = fighters->items[i];
             Fighter &o = out.fighters[i];
@@ -187,7 +194,7 @@ namespace vendetta_testmatch
         }
         if (const auto *repeat = json.find("repeat"); repeat && repeat->isObject())
         {
-            out.repeatFighter = std::clamp(number(repeat->find("fighter"), -1), -1, 1);
+            out.repeatFighter = std::clamp(number(repeat->find("fighter"), -1), -1, out.count - 1);
             out.repeatSlot = number(repeat->find("slot"), -1);
         }
         out.loop = flag(json.find("loop"), true);
@@ -235,7 +242,8 @@ namespace vendetta_testmatch
         const uint32_t fe = kFrontEnd;
         uint32_t cpuBits = 0;
         int level = 1;
-        for (int p = 0; p < 2; ++p)
+        const int count = g_setup.count;
+        for (int p = 0; p < count; ++p)
             if (g_setup.fighters[p].control != Control::Human)
             {
                 cpuBits |= 1u << p;
@@ -243,21 +251,22 @@ namespace vendetta_testmatch
                 if (g_setup.fighters[p].control == Control::Cpu && (p == g_setup.repeatFighter || g_setup.repeatFighter < 0))
                     level = g_setup.fighters[p].level;
             }
-        Ps2FastWrite32(rdram, fe + 0x10, 0u);             // 1-ON-1 BATTLE
-        Ps2FastWrite32(rdram, fe + 0x14, 2u);
-        Ps2FastWrite32(rdram, fe + 0x18, 2u);
+        Ps2FastWrite32(rdram, fe + 0x10, count == 4 ? 1u : 0u); // FREE FOR ALL / 1-ON-1 BATTLE
+        Ps2FastWrite32(rdram, fe + 0x14, uint32_t(count));
+        Ps2FastWrite32(rdram, fe + 0x18, uint32_t(count));
         Ps2FastWrite32(rdram, fe + 0x1C, 0u);
         Ps2FastWrite32(rdram, fe + 0x20, cpuBits);
         // the pads: port 1 plays the first human (port 2 the other side)
-        const bool humanRight = g_setup.fighters[0].control != Control::Human && g_setup.fighters[1].control == Control::Human;
+        const bool humanRight = count == 2 && g_setup.fighters[0].control != Control::Human &&
+                                g_setup.fighters[1].control == Control::Human;
         Ps2FastWrite32(rdram, fe + 0x24, humanRight ? 4u : 0u);
         Ps2FastWrite32(rdram, fe + 0x28, humanRight ? 0u : 4u);
         Ps2FastWrite32(rdram, fe + 0x2C, 5u);
         Ps2FastWrite32(rdram, fe + 0x30, 6u);
         for (int p = 0; p < 4; ++p)
         {
-            Ps2FastWrite32(rdram, fe + 0x34 + 4u * p, p < 2 ? uint32_t(g_setup.fighters[p].record) : 0xFFFFFFFFu);
-            Ps2FastWrite32(rdram, fe + 0x44 + 4u * p, p < 2 ? uint32_t(g_setup.fighters[p].attire) : 0u);
+            Ps2FastWrite32(rdram, fe + 0x34 + 4u * p, p < count ? uint32_t(g_setup.fighters[p].record) : 0xFFFFFFFFu);
+            Ps2FastWrite32(rdram, fe + 0x44 + 4u * p, p < count ? uint32_t(g_setup.fighters[p].attire) : 0u);
             Ps2FastWrite32(rdram, fe + 0x770 + 0x4Cu * p, 0u); // no profile: nothing is saved
         }
         Ps2FastWrite32(rdram, fe + 0x54, uint32_t(g_setup.arena));
@@ -266,9 +275,10 @@ namespace vendetta_testmatch
         Ps2FastWrite32(rdram, fe + 0x08, 0x19u);
         Ps2FastWrite32(rdram, fe + 0x04, 0x19u);          // what Choose Stage leaves: the match setup next
         g_started = true;
-        std::cerr << "[testmatch] straight into the match: records " << g_setup.fighters[0].record << " + "
-                  << g_setup.fighters[0].attire << " and " << g_setup.fighters[1].record << " + " << g_setup.fighters[1].attire
-                  << ", stage " << g_setup.arena << ", computer bits " << cpuBits << ", level " << level << std::endl;
+        std::cerr << "[testmatch] straight into the match (" << (count == 4 ? "4-way" : "1-on-1") << "): records";
+        for (int p = 0; p < count; ++p)
+            std::cerr << (p ? ", " : " ") << g_setup.fighters[p].record << " + " << g_setup.fighters[p].attire;
+        std::cerr << ", stage " << g_setup.arena << ", computer bits " << cpuBits << ", level " << level << std::endl;
         returnToCaller(ctx);
     }
 
@@ -277,7 +287,7 @@ namespace vendetta_testmatch
     void brain(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         const uint32_t player = getRegU32(ctx, 4);
-        if (!g_started || player > 1u)
+        if (!g_started || player >= uint32_t(g_setup.count))
         {
             g_originalBrain(rdram, ctx, runtime);
             return;
@@ -364,7 +374,7 @@ namespace vendetta_testmatch
         g_originalMatchLogic(rdram, ctx, runtime);
         if (!g_started)
             return;
-        for (uint32_t p = 0; p < 2; ++p)
+        for (uint32_t p = 0; p < uint32_t(g_setup.count); ++p)
         {
             const uint32_t f = kFighters + kFighterSize * p;
             if (g_setup.fighters[p].keepHealth)

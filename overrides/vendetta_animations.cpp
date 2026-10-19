@@ -333,7 +333,7 @@ namespace vendetta_animations
         std::string why;
         if (!readFile(file, clip.bytes) || !clipLooksValid(clip.bytes, why))
         {
-            std::cerr << "[mods] " << mod.name << ": " << what << " " << relative << " left out: "
+            vendetta_mods::problem() << "[mods] " << mod.name << ": " << what << " " << relative << " left out: "
                       << (why.empty() ? "can't be read" : why) << std::endl;
             return nullptr;
         }
@@ -349,7 +349,7 @@ namespace vendetta_animations
             const std::string where = mod.name + ": " + settingsFile.filename().string();
             if (!readFile(settingsFile, text) ||
                 !vendetta_mods::parseJson(std::string(text.begin(), text.end()), settings, why) || !settings.isObject())
-                std::cerr << "[mods] " << where << " can't be read" << (why.empty() ? "" : ": " + why)
+                vendetta_mods::problem() << "[mods] " << where << " can't be read" << (why.empty() ? "" : ": " + why)
                           << " - the animation is used without it" << std::endl;
             else if (const vendetta_mods::Json *sounds = settings.find("sounds"))
             {
@@ -551,7 +551,7 @@ namespace vendetta_animations
         std::string why;
         if (!looksOriginal(why))
         {
-            std::cerr << "[mods] the game data doesn't look like the original disc's (" << why
+            vendetta_mods::problem() << "[mods] the game data doesn't look like the original disc's (" << why
                       << "); mods are off: they need the original Def Jam Vendetta (USA) disc" << std::endl;
             g_state = State::Off;
             return false;
@@ -561,7 +561,7 @@ namespace vendetta_animations
         uint32_t moved = 0;
         if (!growBank1Index(kClipIds, moved) || !growBank1Timing(kClipIds))
         {
-            std::cerr << "[mods] no room in the store for the animation tables: mods are off" << std::endl;
+            vendetta_mods::problem() << "[mods] no room in the store for the animation tables: mods are off" << std::endl;
             g_state = State::Off;
             return false;
         }
@@ -620,19 +620,14 @@ namespace vendetta_animations
         g_stamps.clear();
     }
 
-    // The character table's rows (one per wrestler attire) whose name - full or short - is `name` (any case).
+    // The rows (one per wrestler attire, with a moveset) of the wrestler called `name` (any case): a game wrestler by
+    // the game's own names, a new one by its folder's or any attire's names (vendetta_wrestlers::recordsNamed).
     std::vector<uint32_t> attiresOf(const std::string &name)
     {
         std::vector<uint32_t> rows;
-        const std::string want = upper(name);
-        for (uint32_t row = 0; row < vendetta_wrestlers::endRecord(); ++row)
-        {
-            if (!hasMoveset(row))
-                continue;
-            const uint32_t entry = kCharacters + 0x20u * row;
-            if (upper(guestString(read32(entry))) == want || upper(guestString(read32(entry + 4u))) == want)
+        for (uint32_t row : vendetta_wrestlers::recordsNamed(name))
+            if (hasMoveset(row))
                 rows.push_back(row);
-        }
         return rows;
     }
 
@@ -644,6 +639,7 @@ namespace vendetta_animations
         std::string modName;
         std::string wrestler;
         int flags = -1;
+        bool base = false; // from a new wrestler's own moveset.json (edits go on top of it)
     };
 
     // The number in "game move 56 CEMENT HANDS" (the name after it is for people), or -1.
@@ -658,14 +654,15 @@ namespace vendetta_animations
     }
     using SlotChanges = std::map<std::pair<uint32_t, uint32_t>, SlotChange>; // (attire, slot) -> what goes there
 
-    // "wrestlers": { "<wrestler>": "<file>" } of every mod, for the match's attires only (only the listed slots change).
+    // The match's attires' slots: first each new wrestler's own moveset.json (all its slots: the base), then every mod's
+    // "wrestlers": { "<wrestler>": "<file>" } edits on top (only the listed slots change; a later mod's win).
     SlotChanges readSlotChanges(const std::set<uint32_t> &matchAttires)
     {
         SlotChanges changes;
         std::map<std::tuple<std::string, std::string, std::string>, uint32_t> clashes; // (mod, wrestler, earlier mod) -> slots
         // One slot file for one wrestler: its slots for the attires in this match.
         const auto readSlotFile = [&](const std::string &modName, const std::string &wrestler, const std::filesystem::path &file,
-                                      const std::vector<uint32_t> &all)
+                                      const std::vector<uint32_t> &all, bool base)
         {
             std::vector<uint32_t> attires;
             for (uint32_t attire : all)
@@ -679,7 +676,7 @@ namespace vendetta_animations
             if (file.empty() || !readFile(file, bytes) ||
                 !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error) || !moveset.isObject())
             {
-                std::cerr << "[mods] " << modName << ": " << wrestler << "'s file can't be read"
+                vendetta_mods::problem() << "[mods] " << modName << ": " << wrestler << "'s file can't be read"
                           << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
                 return;
             }
@@ -689,7 +686,7 @@ namespace vendetta_animations
                 const long slot = std::strtol(slotText.c_str(), &end, 10);
                 if (slotText.empty() || *end != '\0' || slot < 0 || slot >= static_cast<long>(kSlots))
                 {
-                    std::cerr << "[mods] " << modName << ": " << wrestler << ": \"" << slotText
+                    vendetta_mods::problem() << "[mods] " << modName << ": " << wrestler << ": \"" << slotText
                               << "\" isn't a moveset slot (0-127) - skipped" << std::endl;
                     continue;
                 }
@@ -698,19 +695,23 @@ namespace vendetta_animations
                 if (!move || !move->isString() ||
                     (flags && (flags->type != vendetta_mods::Json::Type::Number || flags->number < 0 || flags->number > 15)))
                 {
-                    std::cerr << "[mods] " << modName << ": " << wrestler << " slot " << slot
+                    vendetta_mods::problem() << "[mods] " << modName << ": " << wrestler << " slot " << slot
                               << ": the move should be a name in quotes (or { \"move\": ..., \"flags\": 0-15 }) - skipped" << std::endl;
                     continue;
                 }
                 for (uint32_t attire : attires)
                 {
                     SlotChange &change = changes[{attire, static_cast<uint32_t>(slot)}];
-                    if (!change.modName.empty() && change.modName != modName && attire == attires.front())
+                    if (!change.modName.empty() && !change.base && change.modName != modName && attire == attires.front())
                         ++clashes[{modName, wrestler, change.modName}];
-                    change = {move->text, modName, wrestler, flags ? static_cast<int>(flags->number) : -1};
+                    change = {move->text, modName, wrestler, flags ? static_cast<int>(flags->number) : -1, base};
                 }
             }
         };
+        // the base: each new wrestler's own moveset.json
+        for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
+            readSlotFile(own.modName, own.wrestler, own.file, own.records, true);
+        // the edits on top, in load order
         for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
         {
             const vendetta_mods::Json *wrestlers = mod.manifest.find("wrestlers");
@@ -718,7 +719,7 @@ namespace vendetta_animations
                 continue;
             if (!wrestlers->isObject())
             {
-                std::cerr << "[mods] " << mod.name << ": \"wrestlers\" should be { \"<wrestler>\": \"<file>\" }" << std::endl;
+                vendetta_mods::problem() << "[mods] " << mod.name << ": \"wrestlers\" should be { \"<wrestler>\": \"<file>\" }" << std::endl;
                 continue;
             }
             for (const auto &[wrestler, fileValue] : wrestlers->members)
@@ -726,20 +727,17 @@ namespace vendetta_animations
                 const std::vector<uint32_t> all = attiresOf(wrestler);
                 if (all.empty())
                 {
-                    std::cerr << "[mods] " << mod.name << ": the game has no wrestler called \"" << wrestler << "\" - skipped"
+                    vendetta_mods::problem() << "[mods] " << mod.name << ": the game has no wrestler called \"" << wrestler << "\" - skipped"
                               << std::endl;
                     continue;
                 }
                 const std::filesystem::path file =
                     fileValue.isString() ? vendetta_mods::modFile(mod, fileValue.text, "wrestler") : std::filesystem::path();
-                readSlotFile(mod.name, wrestler, file, all);
+                readSlotFile(mod.name, wrestler, file, all, false);
             }
         }
-        // a new wrestler's own slot file ("moveset" in its wrestler.json), after its mod's
-        for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
-            readSlotFile(own.modName, own.wrestler, own.file, own.records);
         for (const auto &[who, slots] : clashes)
-            std::cerr << "[mods] " << std::get<0>(who) << ": " << std::get<1>(who) << ": " << slots << " slot(s) also set by "
+            vendetta_mods::problem() << "[mods] " << std::get<0>(who) << ": " << std::get<1>(who) << ": " << slots << " slot(s) also set by "
                       << std::get<2>(who) << " - " << std::get<0>(who) << "'s are used (later in the load order)" << std::endl;
         return changes;
     }
@@ -767,7 +765,7 @@ namespace vendetta_animations
                 continue;
             if (!list->isArray())
             {
-                std::cerr << "[mods] " << mod.name << ": \"new\": \"animations\" should be a list of files: [\"animations/<name>.bin\"]"
+                vendetta_mods::problem() << "[mods] " << mod.name << ": \"new\": \"animations\" should be a list of files: [\"animations/<name>.bin\"]"
                           << std::endl;
                 continue;
             }
@@ -775,7 +773,7 @@ namespace vendetta_animations
             {
                 if (!item.isString())
                 {
-                    std::cerr << "[mods] " << mod.name << ": new animations: each file should be a name in quotes" << std::endl;
+                    vendetta_mods::problem() << "[mods] " << mod.name << ": new animations: each file should be a name in quotes" << std::endl;
                     continue;
                 }
                 const std::string name = std::filesystem::path(item.text).stem().string();
@@ -786,7 +784,7 @@ namespace vendetta_animations
                 if (!clip)
                     continue;
                 if (gameNames.count(key))
-                    std::cerr << "[mods] " << mod.name << ": new animation \"" << name
+                    vendetta_mods::problem() << "[mods] " << mod.name << ": new animation \"" << name
                               << "\" has the name of one of the game's own clips - to change the game's, use \"replace\""
                               << std::endl;
                 const auto earlier = byName.find(key);
@@ -794,7 +792,7 @@ namespace vendetta_animations
                 {
                     NewClip &was = added[earlier->second];
                     if (was.clip != clip)
-                        std::cerr << "[mods] " << mod.name << ": new animation \"" << name << "\" was also added by "
+                        vendetta_mods::problem() << "[mods] " << mod.name << ": new animation \"" << name << "\" was also added by "
                                   << was.clip->modName << " - " << mod.name << "'s is used (later in the load order)" << std::endl;
                     was.clip = clip;
                     continue;
@@ -833,7 +831,7 @@ namespace vendetta_animations
         std::vector<NewClip> added = collectNewClips(byName, animationNames);
         if (added.size() > room)
         {
-            std::cerr << "[mods] new animations: " << added.size() << " in this match, " << room
+            vendetta_mods::problem() << "[mods] new animations: " << added.size() << " in this match, " << room
                       << " fit (the numbers stop at 4,095) - the rest left out" << std::endl;
             counts.skipped += static_cast<uint32_t>(added.size() - room);
             added.resize(room);
@@ -896,7 +894,7 @@ namespace vendetta_animations
                 continue;
             if (!animations->isObject())
             {
-                std::cerr << "[mods] " << mod.name << ": \"replace\": \"animations\" should be { \"<game clip>\": \"<file>\" }"
+                vendetta_mods::problem() << "[mods] " << mod.name << ": \"replace\": \"animations\" should be { \"<game clip>\": \"<file>\" }"
                           << std::endl;
                 continue;
             }
@@ -905,14 +903,14 @@ namespace vendetta_animations
                 const auto found = byName.find(upper(gameName));
                 if (found == byName.end())
                 {
-                    std::cerr << "[mods] " << mod.name << ": replace: the game has no animation called \"" << gameName
+                    vendetta_mods::problem() << "[mods] " << mod.name << ": replace: the game has no animation called \"" << gameName
                               << "\" - skipped" << std::endl;
                     ++counts.skipped;
                     continue;
                 }
                 if (!fileValue.isString())
                 {
-                    std::cerr << "[mods] " << mod.name << ": replace " << gameName << ": the file should be a name in quotes"
+                    vendetta_mods::problem() << "[mods] " << mod.name << ": replace " << gameName << ": the file should be a name in quotes"
                               << std::endl;
                     ++counts.skipped;
                     continue;
@@ -998,6 +996,8 @@ namespace vendetta_animations
                                               ? uint16_t(0xFFFFu)
                                               : static_cast<uint16_t>(high | static_cast<uint32_t>(gameMoveNumber(change.value)));
                 std::memcpy(guest(slotAddress), &newValue, 2);
+                if (vendetta_mods::detailLog() && !change.base)
+                    std::cerr << label << ": " << change.value << " (" << change.modName << ")" << std::endl;
                 ++counts.slots;
                 continue;
             }
@@ -1021,7 +1021,7 @@ namespace vendetta_animations
             const uint32_t count = read32(kWaza + 8u);
             if (value == 0xFFFFu || (value & 0xFFFu) >= count)
             {
-                std::cerr << label << " is empty - a new animation needs a move to copy there - skipped" << std::endl;
+                vendetta_mods::problem() << label << " is empty - a new animation needs a move to copy there - skipped" << std::endl;
                 continue;
             }
             const uint32_t base = value & 0xFFFu;
@@ -1030,7 +1030,7 @@ namespace vendetta_animations
             {
                 if (count > kMaxRecord)
                 {
-                    std::cerr << label << ": no room for another move this match (moveset slots hold 12 bits, 4,096) - the game's move stays"
+                    vendetta_mods::problem() << label << ": no room for another move this match (moveset slots hold 12 bits, 4,096) - the game's move stays"
                               << std::endl;
                     continue;
                 }
@@ -1093,13 +1093,17 @@ namespace vendetta_animations
         std::vector<int32_t> records;
         for (uint32_t p = 0; p < 4u; ++p)
             records.push_back(static_cast<int32_t>(read32(list + 4u + 4u * p)));
-        std::set<std::string> names; // the match's wrestlers' full and short names, upper case
+        std::set<uint32_t> attires; // the match's wrestlers' attires (records)
         for (uint32_t attire : attiresFor(records))
+            attires.insert(attire);
+        const auto inMatch = [attires](const std::vector<uint32_t> &rows)
         {
-            names.insert(upper(guestString(read32(kCharacters + 0x20u * attire))));
-            names.insert(upper(guestString(read32(kCharacters + 0x20u * attire + 4u))));
-        }
-        vendetta_mods::runAhead([names]()
+            for (uint32_t row : rows)
+                if (attires.count(row))
+                    return true;
+            return false;
+        };
+        vendetta_mods::runAhead([inMatch]()
         {
             std::vector<uint8_t> bytes;
             std::vector<std::filesystem::path> files; // read at the end, several at once
@@ -1120,7 +1124,7 @@ namespace vendetta_animations
                     {
                         vendetta_mods::Json moveset;
                         std::string error;
-                        if (!names.count(upper(wrestler)) || !file.isString() ||
+                        if (!inMatch(vendetta_wrestlers::recordsNamed(wrestler)) || !file.isString() ||
                             !vendetta_mods::readAhead(inMod(mod, file.text), bytes) ||
                             !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error))
                             continue;
@@ -1141,7 +1145,7 @@ namespace vendetta_animations
                 // a new wrestler's moveset.json: the mod moves it names
                 vendetta_mods::Json moveset;
                 std::string error;
-                if (!names.count(upper(own.wrestler)) || !vendetta_mods::readAhead(own.file, bytes) ||
+                if (!inMatch(own.records) || !vendetta_mods::readAhead(own.file, bytes) ||
                     !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error))
                     continue;
                 for (const auto &[slot, value] : moveset.members)
@@ -1302,7 +1306,7 @@ namespace vendetta_animations
         g_originalMatchInit = runtime.lookupFunction(kMatchInit);
         if (!g_originalLoadMatch || !g_originalMatchInit)
         {
-            std::cerr << "[mods] the match loader / init isn't where the original program has it: mods are off" << std::endl;
+            vendetta_mods::problem() << "[mods] the match loader / init isn't where the original program has it: mods are off" << std::endl;
             return;
         }
         runtime.replaceFunction(kLoadMatch, loadMatchHook);

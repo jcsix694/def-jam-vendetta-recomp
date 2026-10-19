@@ -48,6 +48,7 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_gsdraw.h"
+#include "vendetta_mods.h"
 #include "vendetta_wrestlers.h"
 #include "runtime/gs/gs_gpu.h"
 
@@ -798,8 +799,9 @@ namespace vendetta_wrestlerdraw
                     for (uint32_t &c : rgba) // PNG alpha (255 = solid) to the GS's (128 = solid)
                         c = (c & 0x00FFFFFFu) | ((((c >> 24) * 128u + 127u) / 255u) << 24);
                 else
-                    std::cerr << "[wrestlers] " << files.modName << ": " << files.wrestler << ": textures/skin.png can't be read"
-                              << std::endl;
+                    vendetta_mods::problem() << "[wrestlers] " << files.modName << ": " << files.wrestler
+                                             << ": textures\\skin.png can't be read as a picture: the model file's own skin is used"
+                                             << std::endl;
             }
             if (rgba.empty())
             {
@@ -878,21 +880,87 @@ namespace vendetta_wrestlerdraw
             return true;
         }
 
-        // A mod's model read and checked: the game's format (WRS); glTF to come.
+        // Everything drawPart relies on in a part, checked once when a mod's model is read, so a model that is read can't
+        // fail in the middle of a match (by then its skeleton is in the model behind): the batches, the setup rows drawPart
+        // reads (the tags, TEX0 and the colours, VU 0x39-0x3F), each vertex's matrix palette inside the setup rows, and
+        // every strip's and loose triangle's vertex address inside its batch
+        bool validatePart(const uint8_t *p, const uint8_t *end)
+        {
+            const uint8_t *stream = p + (word(p) & ~3u);
+            const uint32_t bytes = word(p + 4);
+            uint32_t setupRows = 0;
+            std::vector<Batch> batches;
+            if (bytes == 0u || bytes > 0x100000u || stream < p || stream + bytes > end ||
+                !readStream(stream, bytes, setupRows, batches) || setupRows < 7u)
+                return false;
+            auto inSetup = [&](uint32_t address) { // a palette: 8 rows from its address
+                address &= 0xFFFFu;
+                return address >= 0x39u && address + 8u <= 0x39u + setupRows;
+            };
+            for (const Batch &b : batches)
+            {
+                if (b.rows < 1u || uint64_t(b.at) + 16ull * b.rows > bytes)
+                    return false;
+                const uint8_t *rows = stream + b.at;
+                const uint32_t one = word(rows) & 0xFFFFu, two = word(rows + 4) & 0xFFFFu, strips = word(rows + 8) & 0xFFFFu;
+                const uint32_t loose = word(rows + 12) & 0x7FFFu;
+                const uint64_t vertexRows = 3ull * one + 4ull * two;
+                if (1ull + vertexRows > b.rows)
+                    return false;
+                uint32_t row = 1;
+                for (uint32_t v = 0; v < one + two; ++v)
+                {
+                    const uint8_t *r = rows + 16u * row;
+                    if (v < one ? !inSetup(word(r + 12)) : !inSetup(word(r + 48)) || !inSetup(word(r + 56)))
+                        return false;
+                    row += v < one ? 3u : 4u;
+                }
+                const uint32_t words = (b.rows - 1u - static_cast<uint32_t>(vertexRows)) * 4u;
+                const uint8_t *idx = rows + 16u * (1u + static_cast<uint32_t>(vertexRows));
+                auto vertexOk = [&](uint32_t address) {
+                    const uint32_t r = (address & 0xFFFFu) - b.top;
+                    return r >= 1u && r < b.rows;
+                };
+                uint64_t k = 0;
+                for (uint32_t s = 0; s < strips; ++s)
+                {
+                    if (k >= words)
+                        return false;
+                    const uint32_t count = word(idx + 4u * k++);
+                    if (k + count > words || count < 3u)
+                        return false;
+                    for (uint32_t j = 0; j < count; ++j)
+                        if (!vertexOk(word(idx + 4u * (k + j))))
+                            return false;
+                    k += count;
+                }
+                if (k + 3ull * loose > words)
+                    return false;
+                for (uint64_t t = 0; t < 3ull * loose; ++t)
+                    if (!vertexOk(word(idx + 4u * (k + t))))
+                        return false;
+            }
+            return true;
+        }
+
+        // A mod's model read and checked: the game's format (WRS); glTF to come. Anything wrong: a line in mods.log and
+        // the model behind it (Briggs') is used instead, the whole match.
         std::unique_ptr<ModModel> loadModel(const vendetta_wrestlers::ModelFile &files)
         {
             auto m = std::make_unique<ModModel>();
             const std::string what = "[wrestlers] " + files.modName + ": " + files.wrestler + ": " + files.model.filename().string();
+            const char *const instead = ": Briggs' model is used instead";
             if (files.model.extension() != ".wrs")
             {
-                std::cerr << what << ": glTF models are not read yet: its game model shows" << std::endl;
+                vendetta_mods::problem() << what << ": glTF models are not read yet" << instead << std::endl;
                 return m;
             }
             std::ifstream in(files.model, std::ios::binary);
             m->file.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
             if (m->file.size() < 0x100u || std::memcmp(m->file.data(), "WRS ", 4) != 0)
             {
-                std::cerr << what << ": not a model in the game's format (WRS): its game model shows" << std::endl;
+                vendetta_mods::problem() << what << (m->file.empty() ? ": can't be read" : ": not a model in the game's format (WRS)")
+                                         << instead << std::endl;
                 return m;
             }
             for (int n = 0; n < 32; ++n)
@@ -908,26 +976,32 @@ namespace vendetta_wrestlerdraw
                 {
                     if (part.required)
                     {
-                        std::cerr << what << ": no " << part.name << ": its game model shows" << std::endl;
+                        vendetta_mods::problem() << what << ": it has no " << part.name << instead << std::endl;
                         return m;
                     }
                     continue;
                 }
-                uint32_t setupRows = 0;
-                std::vector<Batch> batches;
-                const uint32_t bytes = word(p + 4);
-                if (word(p + 8) != part.bones || p + (word(p) & ~3u) + bytes > m->file.data() + m->file.size() ||
-                    !readStream(p + (word(p) & ~3u), bytes, setupRows, batches))
+                if (word(p + 8) != part.bones)
                 {
-                    std::cerr << what << ": " << part.name << " can't be read (" << word(p + 8) << " bones, the game's rig has "
-                              << part.bones << "): its game model shows" << std::endl;
+                    vendetta_mods::problem() << what << ": " << part.name << " has " << word(p + 8) << " bones, the game's rig has "
+                                             << part.bones << instead << std::endl;
+                    return m;
+                }
+                if (!validatePart(p, m->file.data() + m->file.size()))
+                {
+                    vendetta_mods::problem() << what << ": " << part.name << " is damaged (its data runs past the file or points "
+                                             << "outside itself)" << instead << std::endl;
                     return m;
                 }
             }
+            if (gpu() && !makeSkin(*m, files)) // (the CPU renderer has no host images: the model behind's skin there)
+            {
+                vendetta_mods::problem() << what << ": no skin can be read (none in textures\\ and the file's own is damaged)"
+                                         << instead << std::endl;
+                return m;
+            }
             m->ok = true;
-            const bool skin = makeSkin(*m, files);
-            std::cerr << what << ": read (" << m->file.size() / 1024 << " KB" << (skin ? ", its skin" : ", no skin of its own")
-                      << ")" << std::endl;
+            std::cerr << what << ": read (" << m->file.size() / 1024 << " KB)" << std::endl;
             return m;
         }
 
@@ -1060,6 +1134,15 @@ namespace vendetta_wrestlerdraw
         void drawModel(uint8_t *rdram, R5900Context *ctx, ModModel &m, uint32_t fighter)
         {
             const uint32_t carrier = word(mem(rdram, kRigs + kRigSize * fighter + kRigModel));
+            // each fighter's own copy of the model behind (where the mod's skeleton is written): one line when it changes
+            static uint32_t lastCarrier[4] = {};
+            if (lastCarrier[fighter & 3u] != carrier)
+            {
+                lastCarrier[fighter & 3u] = carrier;
+                std::cerr << "[wrestlers] fighter " << fighter << " (record "
+                          << word(mem(rdram, kFighters + kFighterSize * fighter + kFighterRecord)) << "): the model behind in "
+                          << std::hex << "0x" << carrier << std::dec << ", the mod's skeleton written there" << std::endl;
+            }
             const uint8_t *game = mem(rdram, carrier);
             const uint8_t *body = mem(rdram, getRegU32(ctx, 4)); // the posed body: BODY or BODY2 (the same skeleton)
             const uint8_t *light = mem(rdram, getRegU32(ctx, 5)), *colours = mem(rdram, getRegU32(ctx, 6));
@@ -1190,7 +1273,7 @@ namespace vendetta_wrestlerdraw
         g_originalSeeThrough = runtime.lookupFunction(kSeeThrough);
         if (!g_originalDrawPart || !g_originalPose || !g_originalSeeThrough)
         {
-            std::cerr << "[wrestlers] the game's fighter draw routines not found: off" << std::endl;
+            vendetta_mods::problem() << "[wrestlers] the game's fighter draw routines not found: off" << std::endl;
             g_mode = Mode::Off;
             return;
         }

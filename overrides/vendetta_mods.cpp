@@ -3,12 +3,14 @@
 #include "vendetta_mods.h"
 
 #include "ps2_runtime.h"
+#include "runtime/ps2_host_settings.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <condition_variable>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -267,6 +269,7 @@ namespace vendetta_mods
         std::vector<Mod> findMods()
         {
             std::vector<Mod> mods;
+            startProblemLog();
             if (modsOff())
             {
                 std::cerr << "[mods] off (VENDETTA_MODS=0)" << std::endl;
@@ -303,7 +306,7 @@ namespace vendetta_mods
                 if (!file)
                 {
                     if (testFolder)
-                        std::cerr << "[mods] " << mod.folderName << ": no mod.json - skipped" << std::endl;
+                        problem() << "[mods] " << mod.folderName << ": no mod.json - skipped" << std::endl;
                     continue;
                 }
                 std::stringstream text;
@@ -311,7 +314,7 @@ namespace vendetta_mods
                 std::string error;
                 if (!parseJson(text.str(), mod.manifest, error) || !mod.manifest.isObject())
                 {
-                    std::cerr << "[mods] " << mod.folderName << ": mod.json can't be read: "
+                    problem() << "[mods] " << mod.folderName << ": mod.json can't be read: "
                               << (error.empty() ? "it isn't a JSON object" : error) << " - skipped" << std::endl;
                     continue;
                 }
@@ -332,7 +335,7 @@ namespace vendetta_mods
                                            { return lower(m.folderName) == lower(want) || lower(m.name) == lower(want); });
                     if (it == found.end())
                     {
-                        std::cerr << "[mods] " << project->name << ": \"" << want
+                        problem() << "[mods] " << project->name << ": \"" << want
                                   << "\" is ticked but isn't installed in mods\\ - skipped" << std::endl;
                         continue;
                     }
@@ -360,7 +363,7 @@ namespace vendetta_mods
                                            { return lower(m.folderName) == want || lower(m.name) == want; });
                     if (it == found.end())
                     {
-                        std::cerr << "[mods] order.txt names \"" << want << "\", which isn't a mod in that folder" << std::endl;
+                        problem() << "[mods] order.txt names \"" << want << "\", which isn't a mod in that folder" << std::endl;
                         continue;
                     }
                     named.push_back(std::move(*it));
@@ -387,7 +390,7 @@ namespace vendetta_mods
                                                          { return &m != &mod && provides(m, need.text); });
                         if (!present)
                         {
-                            std::cerr << "[mods] " << mod.name << " needs \"" << need.text << "\", which "
+                            problem() << "[mods] " << mod.name << " needs \"" << need.text << "\", which "
                                       << (project ? "isn't ticked in the project" : "isn't in that folder") << " - skipped"
                                       << std::endl;
                             ok = false;
@@ -468,7 +471,7 @@ namespace vendetta_mods
                 return nullptr;
             if (name.find_first_of("\\/:") != std::string::npos || name == "." || name == "..")
             {
-                std::cerr << "[projects] \"" << name << "\" isn't a project's name - playing the original game" << std::endl;
+                problem() << "[projects] \"" << name << "\" isn't a project's name - playing the original game" << std::endl;
                 return nullptr;
             }
             auto project = std::make_unique<Project>();
@@ -482,7 +485,7 @@ namespace vendetta_mods
                 text << file.rdbuf();
             if (!file || !parseJson(text.str(), manifest, error) || !manifest.isObject())
             {
-                std::cerr << "[projects] " << name << ": " << (project->folder / "project.json").string()
+                problem() << "[projects] " << name << ": " << (project->folder / "project.json").string()
                           << (file ? " can't be read" + (error.empty() ? std::string() : ": " + error) : std::string(" is missing"))
                           << " - playing the original game" << std::endl;
                 return nullptr;
@@ -490,7 +493,7 @@ namespace vendetta_mods
             if (const Json *mods = manifest.find("mods"))
             {
                 if (!mods->isArray())
-                    std::cerr << "[projects] " << name << ": \"mods\" should be a list of mod folders - no mods" << std::endl;
+                    problem() << "[projects] " << name << ": \"mods\" should be a list of mod folders - no mods" << std::endl;
                 else
                     for (const Json &m : mods->items)
                         if (m.isString() && !m.text.empty())
@@ -659,17 +662,84 @@ namespace vendetta_mods
         const std::string folder = mod.folder.lexically_normal().string();
         if (path.string().compare(0, folder.size(), folder) != 0)
         {
-            std::cerr << "[mods] " << mod.name << ": " << what << " \"" << relative << "\" is outside the mod's folder - skipped"
+            problem() << "[mods] " << mod.name << ": " << what << " \"" << relative << "\" is outside the mod's folder - skipped"
                       << std::endl;
             return {};
         }
         std::error_code ec;
         if (!std::filesystem::is_regular_file(path, ec))
         {
-            std::cerr << "[mods] " << mod.name << ": " << what << " \"" << relative << "\" isn't in the mod's folder - skipped"
+            problem() << "[mods] " << mod.name << ": " << what << " \"" << relative << "\" isn't in the mod's folder - skipped"
                       << std::endl;
             return {};
         }
         return path;
+    }
+
+    namespace
+    {
+        std::mutex g_problemLock;
+        std::ofstream g_problemFile;
+        bool g_problemStarted = false;
+
+        // mods.log: beside settings.toml, else in the current folder; VENDETTA_MODS_LOG=<file> / none
+        std::filesystem::path problemLogPath()
+        {
+            if (const char *chosen = std::getenv("VENDETTA_MODS_LOG"); chosen && *chosen)
+                return std::string(chosen) == "none" ? std::filesystem::path() : std::filesystem::path(chosen);
+            const std::filesystem::path &settings = ps2_host_settings::get().file;
+            std::error_code error;
+            const std::filesystem::path folder = settings.empty() ? std::filesystem::current_path(error) : settings.parent_path();
+            return error ? std::filesystem::path() : folder / "mods.log";
+        }
+
+        std::string clock(const char *format)
+        {
+            const std::time_t now = std::time(nullptr);
+            std::tm local{};
+#if defined(_WIN32)
+            localtime_s(&local, &now);
+#else
+            localtime_r(&now, &local);
+#endif
+            char text[32];
+            std::strftime(text, sizeof(text), format, &local);
+            return text;
+        }
+
+        void startProblemLogLocked()
+        {
+            if (g_problemStarted)
+                return;
+            g_problemStarted = true;
+            const std::filesystem::path path = problemLogPath();
+            if (path.empty())
+                return;
+            g_problemFile.open(path, std::ios::binary | std::ios::trunc);
+            if (g_problemFile)
+                g_problemFile << "Mod problems, game started " << clock("%Y-%m-%d %H:%M:%S")
+                              << " (nothing below this line: no problems)\r\n" << std::flush;
+        }
+    }
+
+    void startProblemLog()
+    {
+        std::lock_guard<std::mutex> hold(g_problemLock);
+        startProblemLogLocked();
+    }
+
+    Problem::~Problem()
+    {
+        const std::string text = m_text.str();
+        std::cerr << text << std::endl;
+        std::lock_guard<std::mutex> hold(g_problemLock);
+        startProblemLogLocked();
+        if (!g_problemFile)
+            return;
+        std::string line = text;
+        if (!line.empty() && line[0] == '[')
+            if (const size_t close = line.find("] "); close != std::string::npos)
+                line = line.substr(close + 2);
+        g_problemFile << clock("%H:%M:%S") << ' ' << line << "\r\n" << std::flush;
     }
 }

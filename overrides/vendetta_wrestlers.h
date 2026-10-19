@@ -12,17 +12,21 @@
 //     "height": "6'1\"", "weight": "225lbs",
 //     "size": "normal",                short / normal / tall (the game's 0.95 / 1.0 / 1.05)
 //     "based on": "Briggs",            the game wrestler whose model it wears (and, for now, whose pictures it shows);
-//                                      not needed when it has a model of its own (Briggs' then stands behind it)
-//     "sounds like": "Spider",         whose voice it uses (intro line, win line, grunts); "based on" if left out
-//     "attires": ["attires/1", "attires/2"] }   one to three
+//                                      not used when it has a model of its own: Briggs' always stands behind that (his
+//                                      pictures when the mod brings none, his model if the mod's can't be used)
+//     "sounds like": "Spider" }        whose voice it uses (intro line, win line, grunts); "based on" if left out
 //   fight.json      every value of its fight record (the game's WPAR): "styles", "attack" and "defence" by body area,
 //                   "stats", "computer", "flags", five "combos", the 23 bits never read
 //   moveset.json    all 128 slots: "none", "game move <number> <name>", a mod's move by its name, or
 //                   { "move": ..., "flags": 0-15 }
-// An attire's own folder can hold its own fight.json / moveset.json, and its own model: model.wrs (the game's own
-// format, as adjmk writes it), model.glb or model.gltf, with an optional textures folder (PNG at any size; a texture
-// missing there comes from the model file), else the wrestler's folder's (vendetta_wrestlerdraw.cpp draws it). A wrestler with a missing or wrong value is left
-// out, with the value named. The model, the voice and (for now) the pictures are the game's own files standing in.
+//   render.png, icon.png, logo.png      the select pictures (the big render, the grid icon, the name logo)
+//   attires, attires, attires    its attires, as many as there are folders, in order to the first missing or
+//                   empty one (none: one attire from the files above). An attire folder can hold any of the files above
+//                   and its own model: model.wrs (the game's own format, as adjmk writes it), model.glb or model.gltf,
+//                   with an optional textures folder (PNG at any size; a texture missing there comes from the model
+//                   file); each file found there is used whole for that attire, else the wrestler folder's (so names,
+//                   size, voice, moves and pictures can all differ per attire; vendetta_wrestlerdraw.cpp draws the
+//                   model). A wrestler with a missing or wrong value is left out, with the value named (mods.log).
 //
 // Every new attire becomes a character record from 63 up (59 to 62 are turned into Briggs by the match setup), in the
 // game's tables, which the game's code reads from copies in the store (vendetta_store.h: the luis that find them are
@@ -58,6 +62,11 @@ namespace vendetta_wrestlers
         std::vector<uint32_t> records;   // its attires
     };
     const std::vector<SlotFile> &slotFiles();
+
+    // Every record (attire) of the wrestler called `name` (any case): a game wrestler by the game's own full or short
+    // name (as the game has them, whatever a mod renames), a new one by its folder's name or any attire's names (they
+    // may differ per attire). For a mod's "wrestlers": { "<name>": ... } moveset edits.
+    std::vector<uint32_t> recordsNamed(const std::string &name);
 
     // A new attire's own model file (its folder's, else its wrestler's), or nullptr: it wears its "based on" model.
     struct ModelFile

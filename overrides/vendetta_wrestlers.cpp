@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <set>
 
 namespace vendetta_wrestlers
@@ -95,6 +96,7 @@ namespace vendetta_wrestlers
             std::vector<uint32_t> records;        // its attires
             std::vector<uint32_t> wpar;           // per attire: its fight values ("WPAR", size, 0xE0 bytes) in the store
             std::vector<uint32_t> wwaz;           // ... its moveset ("WWAZ", size, 128 u16 slots) in the store
+            std::set<std::string> names;          // upper case: its folder's name, every attire's short and full name
         };
 
         uint8_t *g_rdram = nullptr;
@@ -103,6 +105,12 @@ namespace vendetta_wrestlers
         std::vector<AttirePictures> g_attirePictures; // by record - 63
         std::vector<ModelFile> g_modelFiles;          // by record - 63 (an empty model: none of its own)
         constexpr const char *kModelNames[] = {"model.wrs", "model.glb", "model.gltf"};
+        // the files that make an attire folder count (or its textures folder)
+        constexpr const char *kAttireFiles[] = {"wrestler.json", "fight.json", "moveset.json", "render.png", "icon.png",
+                                                "logo.png",      "model.wrs",  "model.glb",    "model.gltf"};
+        constexpr size_t kMaxAttireFolders = 9; // looked at, to tell about the ones not used (3 at most for now)
+        std::vector<std::pair<std::string, std::string>> g_gameNames; // the game's records' full and short names, upper
+                                                                       // case, as the game has them (kept at start-up)
         std::vector<uint32_t> g_firstAttires;         // each new wrestler's first attire (record - 63), in grid order
         constexpr int kWantBehind = 6, kWantAhead = 10; // wrestlers either side of a tile drawn whose pictures are read
         uint32_t g_endRecord = kFirstNewRecord;
@@ -384,97 +392,168 @@ namespace vendetta_wrestlers
                     continue;
                 if (!list->isArray())
                 {
-                    std::cerr << "[wrestlers] " << mod.name << ": \"new\": \"wrestlers\" should be a list of folders" << std::endl;
+                    vendetta_mods::problem() << "[wrestlers] " << mod.name << ": \"new\": \"wrestlers\" should be a list of folders" << std::endl;
                     continue;
                 }
                 for (const vendetta_mods::Json &item : list->items)
                 {
                     if (!item.isString())
                         continue;
-                    const std::filesystem::path file = vendetta_mods::modFile(mod, item.text + "/wrestler.json", "wrestler");
-                    std::vector<uint8_t> bytes;
-                    vendetta_mods::Json j;
-                    std::string error;
-                    if (file.empty() || !vendetta_mods::readWhole(file, bytes) ||
-                        !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), j, error) || !j.isObject())
+                    std::error_code ec;
+                    // the attires: attires\1, \2, \3 in order, to the first missing or empty one (empty = no file read
+                    // here); none = one attire from the wrestler folder's files
+                    const auto hasFiles = [&](const std::string &folder)
                     {
-                        std::cerr << "[wrestlers] " << mod.name << ": " << item.text << ": wrestler.json can't be read"
-                                  << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
+                        for (const char *fileName : kAttireFiles)
+                            if (std::filesystem::is_regular_file(mod.folder / (folder + "/" + fileName), ec))
+                                return true;
+                        return std::filesystem::is_directory(mod.folder / (folder + "/textures"), ec);
+                    };
+                    const auto attireFolder = [&](size_t n) { return item.text + "/attires/" + std::to_string(n); };
+                    std::vector<std::string> attireFolders;
+                    for (size_t n = 1; n <= kMaxAttireFolders; ++n)
+                    {
+                        const bool there = std::filesystem::is_directory(mod.folder / attireFolder(n), ec);
+                        if (there && hasFiles(attireFolder(n)) && n <= 3u)
+                        {
+                            attireFolders.push_back(attireFolder(n));
+                            continue;
+                        }
+                        if (there && n <= 3u)
+                        {
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << item.text << ": attires\\" << n
+                                                     << " is empty (no file read here): it and any after it aren't used" << std::endl;
+                            break;
+                        }
+                        for (size_t later = n + (n <= 3u ? 1u : 0u); later <= kMaxAttireFolders; ++later)
+                            if (std::filesystem::is_directory(mod.folder / attireFolder(later), ec))
+                            {
+                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << item.text << ": attires\\" << later
+                                                         << " isn't used: "
+                                                         << (n > 3u ? std::string("3 attires at most for now")
+                                                                    : "attires\\" + std::to_string(n) + (there ? " is empty" : " is missing"))
+                                                         << std::endl;
+                                break;
+                            }
+                        break;
+                    }
+                    if (attireFolders.empty())
+                        attireFolders.push_back(std::string());
+                    const size_t attires = attireFolders.size();
+
+                    // each attire's wrestler.json: its own folder's, whole, else the wrestler folder's
+                    struct Info
+                    {
+                        std::string name, full, height, weight;
+                        float size = 1.0f;
+                        uint32_t looksBase = 0, looksCount = 0, voiceBase = 0, voiceCount = 0;
+                        bool ownModel = false;
+                    };
+                    std::vector<Info> infos(attires);
+                    std::map<std::string, vendetta_mods::Json> jsons; // by file (an attire without its own: the main one)
+                    const auto modelIn = [&](const std::string &folder)
+                    {
+                        for (const char *modelName : kModelNames)
+                            if (std::filesystem::is_regular_file(mod.folder / (folder + "/" + modelName), ec))
+                                return true;
+                        return false;
+                    };
+                    bool anyModel = false;
+                    for (size_t k = 0; k < attires; ++k)
+                        anyModel = anyModel || modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k]));
+                    bool good = true;
+                    std::set<std::string> told; // a file's notes once
+                    for (size_t k = 0; k < attires && good; ++k)
+                    {
+                        const std::string folder =
+                            !attireFolders[k].empty() &&
+                                    std::filesystem::is_regular_file(mod.folder / (attireFolders[k] + "/wrestler.json"), ec)
+                                ? attireFolders[k]
+                                : item.text;
+                        const std::string where = folder + "/wrestler.json";
+                        if (!jsons.count(where))
+                        {
+                            const std::filesystem::path file = vendetta_mods::modFile(mod, where, "wrestler");
+                            std::vector<uint8_t> bytes;
+                            vendetta_mods::Json j;
+                            std::string error;
+                            if (file.empty() || !vendetta_mods::readWhole(file, bytes) ||
+                                !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), j, error) || !j.isObject())
+                            {
+                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << where << " can't be read"
+                                                         << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
+                                good = false;
+                                break;
+                            }
+                            if (j.find("attires"))
+                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << where
+                                                         << ": \"attires\" isn't read: the attires are the folders attires\\1-3"
+                                                         << std::endl;
+                            jsons.emplace(where, std::move(j));
+                        }
+                        const vendetta_mods::Json &j = jsons.at(where);
+                        Info &info = infos[k];
+                        info.name = text(j, "name");
+                        info.full = text(j, "full name", info.name);
+                        info.height = text(j, "height");
+                        info.weight = text(j, "weight");
+                        if (info.name.empty())
+                        {
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << where << ": no \"name\" - left out" << std::endl;
+                            good = false;
+                            break;
+                        }
+                        // a model of its own (the attire's folder, else the wrestler's): Briggs' model always stands
+                        // behind it, whatever "based on" says (only for the game's own work: its bones posed, its
+                        // shadow; and the pictures when the mod brings none, and the whole model if the mod's can't be
+                        // used). An attire without one, beside attires with one, also gets Briggs'.
+                        info.ownModel = modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k]));
+                        const std::string named = text(j, "based on", "");
+                        const std::string basedOn = info.ownModel || (anyModel && named.empty()) ? std::string("Briggs") : named;
+                        if (info.ownModel && !named.empty() && upper(named) != "BRIGGS" && told.insert(where + "#based").second)
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name << ": \"based on\": \"" << named
+                                                     << "\" isn't used: with a model of its own, Briggs' model stands behind it"
+                                                     << std::endl;
+                        if (!gameWrestler(basedOn, info.looksBase, info.looksCount))
+                        {
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name
+                                                     << ": \"based on\" must name a game wrestler (\"" << basedOn << "\" isn't one) - left out"
+                                                     << std::endl;
+                            good = false;
+                            break;
+                        }
+                        const std::string soundsLike = text(j, "sounds like", basedOn);
+                        if (!gameWrestler(soundsLike, info.voiceBase, info.voiceCount))
+                        {
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name
+                                                     << ": \"sounds like\" must name a game wrestler (\"" << soundsLike << "\" isn't one) - left out"
+                                                     << std::endl;
+                            good = false;
+                            break;
+                        }
+                        const std::string sizeText = upper(text(j, "size", "normal"));
+                        if (sizeText == "SHORT")
+                            info.size = 0.95f;
+                        else if (sizeText == "TALL")
+                            info.size = 1.05f;
+                        else if (sizeText != "NORMAL" && told.insert(where + "#size").second)
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name
+                                                     << ": \"size\" is short, normal or tall - normal used" << std::endl;
+                    }
+                    if (!good)
                         continue;
-                    }
-                    const std::string name = text(j, "name");
-                    const std::string full = text(j, "full name", name);
-                    if (name.empty())
-                    {
-                        std::cerr << "[wrestlers] " << mod.name << ": " << item.text << ": no \"name\" - left out" << std::endl;
-                        continue;
-                    }
-                    uint32_t looksBase = 0, looksCount = 0, voiceBase = 0, voiceCount = 0;
-                    // a model of its own in its folder or an attire's: then "based on" may be left out (Briggs' model
-                    // stands behind it, only for the game's own work: its bones posed, its shadow)
-                    bool ownModel = false;
-                    {
-                        std::vector<std::string> folders{item.text};
-                        if (const vendetta_mods::Json *a = j.find("attires"); a && a->isArray())
-                            for (const vendetta_mods::Json &f : a->items)
-                                if (f.isString())
-                                    folders.push_back(item.text + "/" + f.text);
-                        std::error_code ec;
-                        for (const std::string &folder : folders)
-                            for (const char *modelName : kModelNames)
-                                ownModel = ownModel || std::filesystem::is_regular_file(mod.folder / (folder + "/" + modelName), ec);
-                    }
-                    const std::string basedOn = text(j, "based on", ownModel ? "Briggs" : "");
-                    if (!gameWrestler(basedOn, looksBase, looksCount))
-                    {
-                        std::cerr << "[wrestlers] " << mod.name << ": " << name << ": \"based on\" must name a game wrestler (\""
-                                  << basedOn << "\" isn't one) - left out" << std::endl;
-                        continue;
-                    }
-                    const std::string soundsLike = text(j, "sounds like", basedOn);
-                    if (!gameWrestler(soundsLike, voiceBase, voiceCount))
-                    {
-                        std::cerr << "[wrestlers] " << mod.name << ": " << name << ": \"sounds like\" must name a game wrestler (\""
-                                  << soundsLike << "\" isn't one) - left out" << std::endl;
-                        continue;
-                    }
-                    float size = 1.0f;
-                    const std::string sizeText = upper(text(j, "size", "normal"));
-                    if (sizeText == "SHORT")
-                        size = 0.95f;
-                    else if (sizeText == "TALL")
-                        size = 1.05f;
-                    else if (sizeText != "NORMAL")
-                        std::cerr << "[wrestlers] " << mod.name << ": " << name << ": \"size\" is short, normal or tall - normal used"
-                                  << std::endl;
-                    size_t attires = 1u;
-                    if (const vendetta_mods::Json *a = j.find("attires"); a && a->isArray() && !a->items.empty())
-                        attires = a->items.size();
-                    if (attires > 3u)
-                    {
-                        std::cerr << "[wrestlers] " << mod.name << ": " << name << ": Choose Fighter offers up to 3 attires - the first 3 used"
-                                  << std::endl;
-                        attires = 3u;
-                    }
+                    const std::string name = infos[0].name, full = infos[0].full;
 
                     // each attire's fight values and moveset: its own folder's fight.json / moveset.json, else the wrestler's
-                    const vendetta_mods::Json *attireList = j.find("attires");
                     std::vector<std::array<uint8_t, kWparSize>> fights(attires);
                     std::vector<std::array<uint16_t, 128>> movesets(attires);
                     std::vector<std::filesystem::path> movesetFiles(attires);
-                    std::vector<std::string> attireFolders(attires);
-                    bool good = true;
-                    std::set<std::filesystem::path> told; // a file shared by the attires: its problems once
+                    std::set<std::filesystem::path> toldFiles; // a file shared by the attires: its problems once
                     for (size_t k = 0; k < attires; ++k)
                     {
-                        const std::string attireFolder =
-                            attireList && attireList->isArray() && k < attireList->items.size() && attireList->items[k].isString()
-                                ? item.text + "/" + attireList->items[k].text
-                                : std::string();
-                        attireFolders[k] = attireFolder;
+                        const std::string &attireFolder = attireFolders[k];
                         for (const std::string fileName : {"fight.json", "moveset.json"})
                         {
-                            std::error_code ec;
                             const bool own = !attireFolder.empty() &&
                                              std::filesystem::is_regular_file(mod.folder / (attireFolder + "/" + fileName), ec);
                             const std::filesystem::path path =
@@ -491,33 +570,35 @@ namespace vendetta_wrestlers
                                 readMoveset(data, movesets[k], problems);
                                 movesetFiles[k] = path;
                             }
-                            if (told.insert(path).second)
+                            if (toldFiles.insert(path).second)
                                 for (const std::string &problem : problems)
-                                    std::cerr << "[wrestlers] " << mod.name << ": " << name << ": "
+                                    std::cerr << "[wrestlers] " << mod.name << ": " << infos[k].name << ": "
                                               << (path.empty() ? fileName : path.filename().string()) << ": " << problem << std::endl;
                             good = good && problems.empty();
                         }
                     }
                     if (!good)
                     {
-                        std::cerr << "[wrestlers] " << mod.name << ": " << name << " left out (every value must be in its files)" << std::endl;
+                        vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << name << " left out (every value must be in its files)" << std::endl;
                         continue;
                     }
                     Wrestler w;
                     w.modName = mod.name;
                     w.name = name;
-                    const uint32_t fullText = guestText(full), shortText = guestText(name);
-                    const uint32_t heightText = guestText(text(j, "height")), weightText = guestText(text(j, "weight"));
+                    w.names.insert(upper(item.text.substr(item.text.find_last_of("/\\") + 1)));
                     for (uint32_t k = 0; k < attires; ++k)
                     {
+                        const Info &info = infos[k];
+                        w.names.insert(upper(info.name));
+                        w.names.insert(upper(info.full));
                         const uint32_t record = g_endRecord++;
-                        const uint32_t looks = looksBase + std::min(k, looksCount - 1u);
+                        const uint32_t looks = info.looksBase + std::min(k, info.looksCount - 1u);
                         const uint32_t entry = vendetta_store::kCharacterTable + kRecordSize * record;
                         std::memcpy(guest(entry), guest(kGameCharacters + kRecordSize * looks), kRecordSize);
-                        write32(entry + 0x00u, fullText);
-                        write32(entry + 0x04u, shortText);
-                        write32(entry + 0x08u, heightText);
-                        write32(entry + 0x0Cu, weightText);
+                        write32(entry + 0x00u, guestText(info.full));
+                        write32(entry + 0x04u, guestText(info.name));
+                        write32(entry + 0x08u, guestText(info.height));
+                        write32(entry + 0x0Cu, guestText(info.weight));
                         write32(entry + 0x18u, kFirstLogoIndex + record - kFirstNewRecord);
                         // its pictures: the attire's folder first, then the wrestler's
                         AttirePictures pictures;
@@ -556,8 +637,7 @@ namespace vendetta_wrestlers
                         {
                             ModelFile model;
                             model.modName = mod.name;
-                            model.wrestler = name;
-                            std::error_code ec;
+                            model.wrestler = info.name;
                             for (const std::string &folder : {attireFolders[k], item.text})
                             {
                                 if (folder.empty())
@@ -573,13 +653,17 @@ namespace vendetta_wrestlers
                                     model.textures = mod.folder / (folder + "/textures");
                             }
                             if (!model.model.empty())
-                                std::cerr << "[wrestlers] " << mod.name << ": " << name << " (record " << record << "): its own model "
+                                std::cerr << "[wrestlers] " << mod.name << ": " << info.name << " (record " << record << "): its own model "
                                           << model.model.filename().string() << std::endl;
+                            else if (anyModel)
+                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name << ": attire " << k + 1
+                                                         << " has no model of its own (another attire has): Briggs' model shows"
+                                                         << std::endl;
                             g_modelFiles.push_back(model);
                         }
-                        float sizeValue = size;
+                        float sizeValue = info.size;
                         std::memcpy(guest(vendetta_store::kSizeClasses + 4u * record), &sizeValue, 4);
-                        write32(vendetta_store::kVoiceMap + 4u * record, read32(kGameVoices + 4u * voiceBase));
+                        write32(vendetta_store::kVoiceMap + 4u * record, read32(kGameVoices + 4u * info.voiceBase));
                         w.records.push_back(record);
                         // the fight values and the moveset, each after the tag and size the game's own blocks have
                         const uint32_t wpar = vendetta_store::allocate(vendetta_store::Area::Boot, 8u + kWparSize, "new wrestlers' fight values");
@@ -598,12 +682,14 @@ namespace vendetta_wrestlers
                         }
                         w.wpar.push_back(wpar);
                         w.wwaz.push_back(wwaz);
-                        g_slotFiles.push_back({mod.name, name, movesetFiles[k], {record}});
+                        g_slotFiles.push_back({mod.name, info.name, movesetFiles[k], {record}});
                     }
                     g_newAttires.push_back(static_cast<uint32_t>(attires));
-                    g_firstAttires.push_back(w.records.front() - kFirstNewRecord);                    std::cerr << "[wrestlers] " << mod.name << ": " << full << " (" << name << "), records " << w.records.front()
-                              << "-" << w.records.back() << ", looks like " << guestString(read32(kGameCharacters + kRecordSize * looksBase))
-                              << ", sounds like " << guestString(read32(kGameCharacters + kRecordSize * voiceBase)) << std::endl;
+                    g_firstAttires.push_back(w.records.front() - kFirstNewRecord);
+                    std::cerr << "[wrestlers] " << mod.name << ": " << full << " (" << name << "), records " << w.records.front()
+                              << "-" << w.records.back() << " (" << attires << " attire" << (attires == 1 ? "" : "s")
+                              << "), looks like " << guestString(read32(kGameCharacters + kRecordSize * infos[0].looksBase))
+                              << ", sounds like " << guestString(read32(kGameCharacters + kRecordSize * infos[0].voiceBase)) << std::endl;
                     g_wrestlers.push_back(std::move(w));
                 }
             }
@@ -619,6 +705,10 @@ namespace vendetta_wrestlers
             std::memcpy(guest(vendetta_store::kSelectGrid), guest(kGameGrid), 8u * kGameSlots);
             std::memcpy(guest(vendetta_store::kSizeClasses), guest(kGameSizes), 4u * kGameRecords);
             std::memcpy(guest(vendetta_store::kVoiceMap), guest(kGameVoices), 4u * kGameRecords);
+            g_gameNames.clear();
+            for (uint32_t record = 0; record < kGameRecords; ++record)
+                g_gameNames.emplace_back(upper(guestString(read32(kGameCharacters + kRecordSize * record))),
+                                         upper(guestString(read32(kGameCharacters + kRecordSize * record + 4u))));
             readWrestlers();
             uint32_t slot = kGameSlots;
             for (const Wrestler &w : g_wrestlers)
@@ -663,7 +753,7 @@ namespace vendetta_wrestlers
                 return;
             if (read32(md + 8u) == 0u)
             {
-                std::cerr << "[wrestlers] a match began before the move data was read (ra 0x" << std::hex << ra << std::dec
+                vendetta_mods::problem() << "[wrestlers] a match began before the move data was read (ra 0x" << std::hex << ra << std::dec
                           << ")" << std::endl;
                 return;
             }
@@ -945,6 +1035,19 @@ namespace vendetta_wrestlers
 
     const std::vector<SlotFile> &slotFiles() { return g_slotFiles; }
 
+    std::vector<uint32_t> recordsNamed(const std::string &name)
+    {
+        const std::string want = upper(name);
+        std::vector<uint32_t> records;
+        for (uint32_t record = 0; record < g_gameNames.size(); ++record)
+            if (g_gameNames[record].first == want || g_gameNames[record].second == want)
+                records.push_back(record);
+        for (const Wrestler &w : g_wrestlers)
+            if (w.names.count(want))
+                records.insert(records.end(), w.records.begin(), w.records.end());
+        return records;
+    }
+
     void install(PS2Runtime &runtime)
     {
         g_rdram = runtime.memory().getRDRAM();
@@ -957,7 +1060,7 @@ namespace vendetta_wrestlers
         if (!g_originalLogo || !g_originalLoadMatch || !g_originalMatchInit || !g_originalFindPicture ||
             !g_originalTextMeasure || !g_originalTextDraw)
         {
-            std::cerr << "[wrestlers] the game's routines were not found" << std::endl;
+            vendetta_mods::problem() << "[wrestlers] the game's routines were not found" << std::endl;
             return;
         }
         // the copies are read by the patched game code whether or not a mod adds a wrestler

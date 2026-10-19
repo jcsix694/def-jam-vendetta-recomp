@@ -30,6 +30,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -106,4 +107,28 @@ namespace vendetta_mods
     // A file a mod.json names ("animations/x.bin", relative to the mod's folder), as a path; empty if it leaves the
     // mod's folder or doesn't exist (with a message).
     std::filesystem::path modFile(const Mod &mod, const std::string &relative, const char *what);
+
+    // A problem with a mod, for the player: problem() << "[wrestlers] " << ... << std::endl; prints it on stderr as
+    // before and adds it as a line of mods.log (the time, then the text without its "[tag] "), so a player can see what
+    // was left out or used instead. mods.log sits beside settings.toml (the current folder without one;
+    // VENDETTA_MODS_LOG=<file> elsewhere, =none: no file) and starts fresh at each game start, so it only holds that
+    // session's problems.
+    class Problem
+    {
+    public:
+        Problem() = default;
+        Problem(const Problem &) = delete;
+        ~Problem();
+        template <class T> Problem &operator<<(const T &value)
+        {
+            m_text << value;
+            return *this;
+        }
+        Problem &operator<<(std::ostream &(*)(std::ostream &)) { return *this; } // std::endl: the line ends anyway
+
+    private:
+        std::ostringstream m_text;
+    };
+    inline Problem problem() { return {}; }
+    void startProblemLog(); // mods.log emptied (the first look at the mods does it)
 }
