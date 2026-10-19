@@ -32,6 +32,9 @@
 // behind's: every game model's is the same); a shadow or a Low Poly body in the mod's file is ignored. The skin: the
 // mod file's own (decoded from its upload packet), or textures/skin.png at any size, as a host image bound to the
 // skin's address (GS register 0x71) around the mod's triangles. A file that can't be used leaves the game's model.
+// A skin with pixels not solid (PNG transparency): the body's call draws only the solid pixels (alpha test), and the
+// triangles touching the others are drawn again, blended and sorted far to near, in the see-through pass's slot: fully
+// clear = a hole, partly clear = see-through.
 //
 // VENDETTA_WRESTLERDRAW=1      our draw (sampling the skin the game uploaded)
 // VENDETTA_WRESTLERDRAW=ab[:N] the game's draw and ours in turn, N seconds each (default 2): pictures compared
@@ -51,6 +54,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -95,7 +99,7 @@ namespace vendetta_wrestlerdraw
 
         struct Stats
         {
-            uint64_t parts = 0, gameParts = 0, batches = 0, triangles = 0, skipped = 0, unreadable = 0;
+            uint64_t parts = 0, gameParts = 0, batches = 0, triangles = 0, skipped = 0, unreadable = 0, seeThrough = 0;
         } g_stats;
         Clock::time_point g_lastStats = Clock::now();
 
@@ -247,6 +251,40 @@ namespace vendetta_wrestlerdraw
             bool flagged = true;
         };
 
+        // A mod model's triangle that touches its skin's partly clear pixels: drawn again, blended, in the see-through
+        // pass (the game's FUN_001b2088 slot), sorted far to near
+        struct SoftTri
+        {
+            Out v[3];
+        };
+        constexpr uint32_t kSoftGrid = 64; // the skin's not-solid pixels marked on a 64 x 64 grid over its area
+
+        bool touchesSoft(const Out &a, const Out &b, const Out &c, const std::vector<uint8_t> &grid)
+        {
+            float u0 = 2.0f, u1 = -1.0f, v0 = 2.0f, v1 = -1.0f;
+            for (const Out *o : {&a, &b, &c})
+            {
+                const float u = o->s / o->q, v = o->t / o->q; // ST = (u, v, 1) x Q
+                u0 = std::min(u0, u);
+                u1 = std::max(u1, u);
+                v0 = std::min(v0, v);
+                v1 = std::max(v1, v);
+            }
+            // the skin repeats (CLAMP_2 0): cells taken modulo the grid; a triangle spanning the whole skin, or odd, is
+            // drawn again to be safe
+            const float g = static_cast<float>(kSoftGrid);
+            if (!(u1 - u0 < 1.0f && v1 - v0 < 1.0f))
+                return true;
+            const int64_t x0 = static_cast<int64_t>(std::floor(u0 * g)), x1 = static_cast<int64_t>(std::floor(u1 * g));
+            const int64_t y0 = static_cast<int64_t>(std::floor(v0 * g)), y1 = static_cast<int64_t>(std::floor(v1 * g));
+            const int64_t n = kSoftGrid;
+            for (int64_t y = y0; y <= y1; ++y)
+                for (int64_t x = x0; x <= x1; ++x)
+                    if (grid[static_cast<size_t>(((y % n + n) % n) * n + ((x % n + n) % n))])
+                        return true;
+            return false;
+        }
+
         // MULA, MADDA, MADDA, MADD: each lane rounded at every step (toward zero)
         void xform(const float m[16], const float v[4], float r[4])
         {
@@ -321,9 +359,28 @@ namespace vendetta_wrestlerdraw
             packet.lastTag = SIZE_MAX;
         }
 
+        // TEST_2 while a wrestler draws (z test greater-or-equal, no alpha test), and for a mod skin with pixels not
+        // solid the same with the alpha test on: only solid pixels write colour and z; the rest are drawn blended in the
+        // see-through pass. "Solid" = alpha >= 120 of the GS's 128: a solid texel comes back as 127 (the skin is an 8-bit
+        // UNORM image on the graphics card, 128 / 255 read back truncated) and the lit vertex alpha can be 127 too.
+        // TEST_2 / ALPHA_2 in the see-through pass, as the game's own see-through parts have them: alpha >= 1,
+        // (Cs - Cd) As + Cd
+        constexpr uint32_t kSolidAlpha = 120u;
+        constexpr uint64_t kWrestlerTest = 0x50000u;
+        constexpr uint64_t kCutoutTest = kWrestlerTest | 1u | (5u << 1) | (uint64_t(kSolidAlpha) << 4);
+        constexpr uint64_t kSeeThroughTest = 0x5001Bu;
+        // VENDETTA_SEETHROUGH=0 (a test): holes only, as before soft see-through: a pixel under half solid is cut, the
+        // rest solid, nothing drawn again
+        const bool g_softOff = [] { const char *v = std::getenv("VENDETTA_SEETHROUGH"); return v && v[0] == '0'; }();
+        const uint64_t g_cutoutTest = g_softOff ? (kWrestlerTest | 1u | (5u << 1) | (64u << 4)) : kCutoutTest;
+        constexpr uint64_t kSeeThroughAlpha = 0x44u;
+
         // The part drawn from its stream (the rows already written). `image`: a host image bound to TEX0's address
-        // around its triangles (a mod's skin), 0 for none. False: not readable (the caller lets the game draw it).
-        bool drawPart(const uint8_t *p, uint32_t image = 0u)
+        // around its triangles (a mod's skin), 0 for none; `cutout`: the alpha test on around them; `soft`: the
+        // triangles touching `grid`'s marked cells kept for the see-through pass. False: not readable (the caller lets
+        // the game draw it).
+        bool drawPart(const uint8_t *p, uint32_t image = 0u, bool cutout = false, std::vector<SoftTri> *soft = nullptr,
+                      const std::vector<uint8_t> *grid = nullptr)
         {
             const uint8_t *stream = p + (word(p) & ~3u);
             const uint32_t bytes = word(p + 4);
@@ -347,6 +404,8 @@ namespace vendetta_wrestlerdraw
             const uint32_t tbp = word(tex0) & 0x3FFFu;
             if (image)
                 packet.ad(0x71u, uint64_t(tbp) | (uint64_t(image) << 32)); // GS register 0x71: our image at this address
+            if (cutout)
+                packet.ad(0x48u, g_cutoutTest); // TEST_2
             std::vector<Out> outs;
             for (const Batch &b : batches)
             {
@@ -425,6 +484,7 @@ namespace vendetta_wrestlerdraw
                     lo = (lo & ~0x7FFFull & ~0x8000ull) | count;
                     packet.tag(lo, uint64_t(word(stripTag + 8)) | (uint64_t(word(stripTag + 12)) << 32));
                     bool f1 = false, f2 = false;
+                    const Out *o1 = nullptr, *o2 = nullptr;
                     for (uint32_t j = 0; j < count; ++j)
                     {
                         const Out *o = vertexAt(word(idx + 4u * (k + j)));
@@ -433,9 +493,15 @@ namespace vendetta_wrestlerdraw
                         const bool adc = j >= 2u && (f1 || f2 || o->flagged);
                         vertexQwords(packet, *o, adc);
                         if (j >= 2u)
+                        {
                             ++(adc ? g_stats.skipped : g_stats.triangles);
+                            if (soft && !adc && touchesSoft(*o1, *o2, *o, *grid))
+                                soft->push_back(SoftTri{{*o1, *o2, *o}});
+                        }
                         f1 = f2;
                         f2 = o->flagged;
+                        o1 = o2;
+                        o2 = o;
                     }
                     k += count;
                 }
@@ -455,6 +521,8 @@ namespace vendetta_wrestlerdraw
                     vertexQwords(packet, *v[1], false);
                     vertexQwords(packet, *v[2], adc);
                     ++(adc ? g_stats.skipped : g_stats.triangles);
+                    if (soft && !adc && touchesSoft(*v[0], *v[1], *v[2], *grid))
+                        soft->push_back(SoftTri{{*v[0], *v[1], *v[2]}});
                 }
                 ++g_stats.batches;
                 if (packet.q.size() * 8u >= kPacketBytes)
@@ -462,6 +530,8 @@ namespace vendetta_wrestlerdraw
             }
             if (image)
                 packet.ad(0x71u, uint64_t(tbp)); // unbound: the game's own draws at this address are untouched
+            if (cutout)
+                packet.ad(0x48u, kWrestlerTest);
             send(packet);
             ++g_stats.parts;
             return true;
@@ -525,7 +595,8 @@ namespace vendetta_wrestlerdraw
             g_lastStats = now;
             std::cerr << "[wrestlers] 5 s: " << g_stats.parts << " parts drawn by us (" << g_stats.batches << " batches, "
                       << g_stats.triangles << " triangles, " << g_stats.skipped << " left out), " << g_stats.gameParts
-                      << " by the game, " << g_stats.unreadable << " unreadable" << std::endl;
+                      << " by the game, " << g_stats.unreadable << " unreadable, " << g_stats.seeThrough
+                      << " drawn again see-through" << std::endl;
             g_stats = {};
         }
 
@@ -631,6 +702,8 @@ namespace vendetta_wrestlerdraw
             int32_t part[32];
             bool ok = false;
             uint32_t image = 0;
+            bool cutout = false;           // its skin has pixels not solid: the alpha test on, those drawn see-through
+            std::vector<uint8_t> softGrid; // where they are (kSoftGrid x kSoftGrid over the skin)
             const uint8_t *at(int slot) const { return part[slot] >= 0 ? file.data() + part[slot] : nullptr; }
             uint8_t *at(int slot) { return part[slot] >= 0 ? file.data() + part[slot] : nullptr; }
         };
@@ -641,6 +714,56 @@ namespace vendetta_wrestlerdraw
         // VENDETTA_MODMODEL_GAMEDRAW=1 (a test, the reference picture): a mod's WRS copied whole into the game's model
         // buffer (the PS2 way; it must fit 614,400 bytes), so the game draws it itself; our draw leaves it alone
         bool g_modGameDraw = false;
+
+        // Per fighter: its mod model's triangles for the see-through pass, kept from the body's call
+        struct SeeThroughList
+        {
+            std::vector<SoftTri> tris;
+            uint32_t tex0Reg = 0x07u, image = 0;
+            uint64_t tex0 = 0;
+            bool pending = false, noPass = false;
+        };
+        SeeThroughList g_seeThrough[4];
+
+        // The kept triangles sorted far to near (Z grows nearer) and drawn blended, as the game's own see-through parts:
+        // ALPHA (Cs - Cd) As + Cd, TEST alpha >= 1 with the z test, z written; TEST = `testAfter` after (the context of
+        // the skin's TEX0: TEX0_1 0x06 / TEX0_2 0x07)
+        void drawSeeThrough(SeeThroughList &list, uint64_t testAfter)
+        {
+            if (list.tris.empty())
+                return;
+            std::stable_sort(list.tris.begin(), list.tris.end(), [](const SoftTri &a, const SoftTri &b) {
+                return uint64_t(a.v[0].z) + a.v[1].z + a.v[2].z < uint64_t(b.v[0].z) + b.v[1].z + b.v[2].z;
+            });
+            const uint32_t context = list.tex0Reg == 0x06u ? 0u : 1u;
+            Packet packet;
+            packet.ad(list.tex0Reg, list.tex0);
+            const uint32_t tbp = static_cast<uint32_t>(list.tex0) & 0x3FFFu;
+            if (list.image)
+                packet.ad(0x71u, uint64_t(tbp) | (uint64_t(list.image) << 32));
+            packet.ad(0x42u + context, kSeeThroughAlpha);
+            packet.ad(0x47u + context, kSeeThroughTest);
+            for (size_t i = 0; i < list.tris.size();)
+            {
+                // a triangle list: PRIM 0x25B (IIP, TME, ABE, context 2), PACKED, ST / RGBAQ / XYZF2 (as the wrestler
+                // kernel's own tags: our z is already shifted for XYZF2), NLOOP 3 a triangle
+                const size_t n = std::min<size_t>(list.tris.size() - i, 0x2000u);
+                packet.tag(uint64_t(3u * n) | (1ull << 46) | (uint64_t(0x25Bu & ~(context ? 0u : 0x200u)) << 47) |
+                               (3ull << 60),
+                           0x412ull);
+                for (size_t k = 0; k < n; ++k, ++i)
+                    for (const Out &o : list.tris[i].v)
+                        vertexQwords(packet, o, false);
+                if (packet.q.size() * 8u >= kPacketBytes)
+                    send(packet);
+            }
+            packet.ad(0x47u + context, testAfter);
+            if (list.image)
+                packet.ad(0x71u, uint64_t(tbp)); // unbound
+            send(packet);
+            g_stats.seeThrough += list.tris.size();
+            list.tris.clear();
+        }
 
         GSGpuRenderer *gpu() { return g_runtime ? g_runtime->gs().gpuRendererForSettings() : nullptr; }
 
@@ -706,6 +829,41 @@ namespace vendetta_wrestlerdraw
                                       (1ull << 34) | (uint64_t(dbp[1]) << 37);
                 if (!scratch.decode(tex0, rgba, w, h))
                     return false;
+            }
+            // Pixels not solid (alpha < kSolidAlpha) marked on the grid (their triangles drawn again see-through); the
+            // colour hidden behind fully clear ones (often white) taken from the nearest pixel with any colour, so the
+            // bilinear read at a hole's edge doesn't mix it in as a fringe
+            {
+                m.softGrid.assign(kSoftGrid * kSoftGrid, 0);
+                std::vector<uint32_t> queue;
+                std::vector<uint8_t> filled(rgba.size(), 0);
+                for (uint32_t i = 0; i < rgba.size(); ++i)
+                {
+                    const uint32_t alpha = rgba[i] >> 24;
+                    if (alpha < kSolidAlpha)
+                    {
+                        m.cutout = true;
+                        m.softGrid[(i / w) * kSoftGrid / h * kSoftGrid + (i % w) * kSoftGrid / w] = 1;
+                    }
+                    if (alpha > 0u)
+                    {
+                        filled[i] = 1;
+                        queue.push_back(i);
+                    }
+                }
+                if (queue.size() < rgba.size() && !queue.empty())
+                    for (size_t q = 0; q < queue.size(); ++q)
+                    {
+                        const uint32_t i = queue[q], x = i % w, y = i / w;
+                        const uint32_t next[4] = {x > 0 ? i - 1 : i, x + 1 < w ? i + 1 : i, y > 0 ? i - w : i, y + 1 < h ? i + w : i};
+                        for (uint32_t n : next)
+                            if (!filled[n])
+                            {
+                                filled[n] = 1;
+                                rgba[n] = (rgba[n] & 0xFF000000u) | (rgba[i] & 0x00FFFFFFu);
+                                queue.push_back(n);
+                            }
+                    }
             }
             // VENDETTA_MODSKIN_DUMP=<file>: the skin as it is made (u32 width, u32 height, then RGBA8, the GS's alpha)
             if (const char *dump = std::getenv("VENDETTA_MODSKIN_DUMP"); dump && *dump)
@@ -879,11 +1037,18 @@ namespace vendetta_wrestlerdraw
             g_originalPose(rdram, ctx, runtime);
         }
 
-        // FUN_001b2088(fighter): the model behind a mod model has no see-through parts on screen
+        // FUN_001b2088(fighter): the model behind a mod model has no see-through parts on screen; the mod model's own
+        // (its triangles touching partly clear skin) are drawn here instead, High Poly or not
         void seeThroughHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
-            if (modelOf(rdram, getRegU32(ctx, 4)))
+            const uint32_t fighter = getRegU32(ctx, 4);
+            if (modelOf(rdram, fighter))
             {
+                SeeThroughList &list = g_seeThrough[fighter & 3u];
+                list.noPass = false;
+                if (list.pending)
+                    drawSeeThrough(list, kSeeThroughTest);
+                list.pending = false;
                 ctx->pc = getRegU32(ctx, 31);
                 return;
             }
@@ -899,6 +1064,16 @@ namespace vendetta_wrestlerdraw
             const uint8_t *body = mem(rdram, getRegU32(ctx, 4)); // the posed body: BODY or BODY2 (the same skeleton)
             const uint8_t *light = mem(rdram, getRegU32(ctx, 5)), *colours = mem(rdram, getRegU32(ctx, 6));
             const uint8_t *tex0 = body + (word(body) & ~3u) + 0x30u;
+            // the see-through pass's list: still full from the last picture = this scene has no see-through pass (only
+            // the match picture calls FUN_001b2088): drawn straight after the solid parts from then on
+            SeeThroughList &list = g_seeThrough[fighter & 3u];
+            if (list.pending)
+                list.noPass = true;
+            list.pending = false;
+            list.tris.clear();
+            list.tex0Reg = word(tex0 + 8) & 0xFFu;
+            list.tex0 = uint64_t(word(tex0)) | (uint64_t(word(tex0 + 4)) << 32);
+            list.image = m.image;
             const struct { int slot; } order[] = {{kBody}, {kLeftHand}, {kRightHand}, {kFace}};
             for (const auto &o : order)
             {
@@ -916,7 +1091,14 @@ namespace vendetta_wrestlerdraw
                 uint8_t *stream = part + (word(part) & ~3u);
                 std::memcpy(stream + 0x30u, tex0, 16); // the skin's address (the slot the game uploaded to)
                 writeRows(posed, part, light, colours, stream);
-                drawPart(part, m.image);
+                drawPart(part, m.image, m.cutout, m.cutout && !g_softOff ? &list.tris : nullptr, &m.softGrid);
+            }
+            if (!list.tris.empty())
+            {
+                if (list.noPass)
+                    drawSeeThrough(list, kWrestlerTest);
+                else
+                    list.pending = true;
             }
         }
 
