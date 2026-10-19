@@ -8087,14 +8087,15 @@ index 564d873..78877f4 100644
                      if (std::filesystem::exists(oldHostPath, ec) && !ec &&
                          std::filesystem::exists(newHostPath.parent_path(), ec) && !ec)
 diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
-index b50a4cf..11fe646 100644
+index b50a4cf..5a4768d 100644
 --- a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
-@@ -1,5 +1,12 @@
+@@ -1,5 +1,13 @@
 +#include <utility>
 +#include <vector>
 +#include <string>
 +#include <chrono>
++#include <mutex>
  #include "Common.h"
 +#include <cstdlib>
  #include "Pad.h"
@@ -8103,7 +8104,7 @@ index b50a4cf..11fe646 100644
  
  namespace ps2_stubs
  {
-@@ -7,6 +14,7 @@ namespace ps2_stubs
+@@ -7,6 +15,7 @@ namespace ps2_stubs
      {
          constexpr uint8_t kPadModeDigital = 0x41;
          constexpr uint8_t kPadModeDualShock = 0x73;
@@ -8111,7 +8112,7 @@ index b50a4cf..11fe646 100644
          constexpr uint8_t kPadAnalogCenter = 0x80;
          constexpr int32_t kPadTypeDigital = 4;
          constexpr int32_t kPadTypeDualShock = 7;
-@@ -14,7 +22,7 @@ namespace ps2_stubs
+@@ -14,7 +23,7 @@ namespace ps2_stubs
          constexpr int32_t kPadStateExecCmd = 5;
          constexpr int32_t kPadStateStable = 6;
          constexpr size_t kPadPortCount = 2;
@@ -8120,7 +8121,7 @@ index b50a4cf..11fe646 100644
  
          constexpr uint16_t kPadBtnSelect = 1u << 0;
          constexpr uint16_t kPadBtnL3 = 1u << 1;
-@@ -58,13 +66,15 @@ namespace ps2_stubs
+@@ -58,13 +67,15 @@ namespace ps2_stubs
              uint8_t lastData[32]{};
              uint32_t readCount = 0u;
              uint32_t lastReadDataAddr = 0u;
@@ -8137,7 +8138,7 @@ index b50a4cf..11fe646 100644
          int g_padReadLogCount = 0;
  
          uint8_t axisToByte(float axis)
-@@ -94,14 +104,16 @@ namespace ps2_stubs
+@@ -94,14 +105,16 @@ namespace ps2_stubs
              return -1;
          }
  
@@ -8156,7 +8157,7 @@ index b50a4cf..11fe646 100644
              if (gamepad < 0)
              {
                  return;
-@@ -194,9 +206,12 @@ namespace ps2_stubs
+@@ -194,9 +207,12 @@ namespace ps2_stubs
  
          void resetPadStateLocked()
          {
@@ -8171,7 +8172,7 @@ index b50a4cf..11fe646 100644
              }
          }
  
-@@ -206,11 +221,11 @@ namespace ps2_stubs
+@@ -206,11 +222,11 @@ namespace ps2_stubs
              {
                  return nullptr;
              }
@@ -8185,7 +8186,7 @@ index b50a4cf..11fe646 100644
          }
  
          void initializePadPortLocked(PadPortState &portState, uint32_t dmaAddr)
-@@ -245,7 +260,9 @@ namespace ps2_stubs
+@@ -245,7 +261,9 @@ namespace ps2_stubs
          void fillPadStatus(uint8_t *data, const PadInputState &state, const PadPortState &portState)
          {
              std::memset(data, 0, 32);
@@ -8196,7 +8197,7 @@ index b50a4cf..11fe646 100644
              data[2] = static_cast<uint8_t>(state.buttons & 0xFFu);
              data[3] = static_cast<uint8_t>((state.buttons >> 8) & 0xFFu);
              data[4] = state.rx;
-@@ -260,12 +277,84 @@ namespace ps2_stubs
+@@ -260,12 +278,97 @@ namespace ps2_stubs
              data[13] = pressureValue(state, portState, kPadBtnCircle);
              data[14] = pressureValue(state, portState, kPadBtnCross);
              data[15] = pressureValue(state, portState, kPadBtnSquare);
@@ -8215,7 +8216,11 @@ index b50a4cf..11fe646 100644
 +        // UP DOWN LEFT RIGHT L1 R1 L2 R2 L3 R3. With VENDETTA_PADS=<n> the first n pads count as plugged in.
 +        // VENDETTA_NO_HOST_INPUT=1 (test runs: tools\run_test.ps1 sets it): the real keyboard / controllers are not read,
 +        // so nothing typed elsewhere while the game window has focus reaches the game (Enter = START skipped the intro
-+        // in test runs); a pad script still drives port 0.
++        // in test runs); a pad script still drives port 0. The script's clock can be held by game-specific test code
++        // (padScriptHold), so presses after a part of unknown length (a fight played by the computer) land the same way.
++        std::mutex g_padScriptClockMutex;
++        bool g_padScriptHeld = false;
++
 +        bool hostInputIgnored()
 +        {
 +            static const bool ignored = []()
@@ -8274,8 +8279,17 @@ index b50a4cf..11fe646 100644
 +            }();
 +            if (presses.empty())
 +                return;
-+            static const auto origin = std::chrono::steady_clock::now();
-+            const double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - origin).count();
++            double now = 0.0;
++            {
++                std::lock_guard<std::mutex> lock(g_padScriptClockMutex);
++                static auto last = std::chrono::steady_clock::now();
++                static double clock = 0.0;
++                const auto time = std::chrono::steady_clock::now();
++                if (!g_padScriptHeld)
++                    clock += std::chrono::duration<double>(time - last).count();
++                last = time;
++                now = clock;
++            }
 +            for (const Press &press : presses)
 +                if (press.pad == pad && now >= press.at && now < press.at + 0.2)
 +                    state.buttons = static_cast<uint16_t>(state.buttons & ~press.mask);
@@ -8284,7 +8298,7 @@ index b50a4cf..11fe646 100644
          bool readPadPortData(int port, int slot, PS2Runtime *runtime, uint8_t *outData, uint32_t dataAddr)
          {
              if (!outData)
-@@ -308,13 +397,17 @@ namespace ps2_stubs
+@@ -308,13 +411,17 @@ namespace ps2_stubs
                      state.ly = backendData[7];
                      usedBackend = true;
                  }
@@ -8305,7 +8319,7 @@ index b50a4cf..11fe646 100644
              fillPadStatus(outData, state, portState);
  
              {
-@@ -344,6 +437,7 @@ namespace ps2_stubs
+@@ -344,6 +451,7 @@ namespace ps2_stubs
      {
          (void)rdram;
          (void)runtime;
@@ -8313,7 +8327,7 @@ index b50a4cf..11fe646 100644
          {
              std::lock_guard<std::mutex> lock(g_padStateMutex);
              resetPadStateLocked();
-@@ -446,19 +540,35 @@ namespace ps2_stubs
+@@ -446,19 +554,35 @@ namespace ps2_stubs
      {
          (void)rdram;
          (void)runtime;
@@ -8354,7 +8368,7 @@ index b50a4cf..11fe646 100644
          {
              if (portState->transientState != 0u)
              {
-@@ -470,6 +580,17 @@ namespace ps2_stubs
+@@ -470,6 +594,17 @@ namespace ps2_stubs
                  state = kPadStateStable;
              }
          }
@@ -8372,7 +8386,7 @@ index b50a4cf..11fe646 100644
          setReturnS32(ctx, state);
      }
  
-@@ -589,9 +710,11 @@ namespace ps2_stubs
+@@ -589,9 +724,11 @@ namespace ps2_stubs
          }
  
          portState->open = false;
@@ -8384,7 +8398,7 @@ index b50a4cf..11fe646 100644
          setReturnS32(ctx, 1);
      }
  
-@@ -610,6 +733,7 @@ namespace ps2_stubs
+@@ -610,6 +747,7 @@ namespace ps2_stubs
          }
  
          portState->open = true;
@@ -8392,7 +8406,7 @@ index b50a4cf..11fe646 100644
          portState->analogMode = false;     // real pads open DIGITAL
          portState->pressureEnabled = false;
          portState->buttonMask = 0xFFFFu;
-@@ -637,12 +761,23 @@ namespace ps2_stubs
+@@ -637,12 +775,23 @@ namespace ps2_stubs
          }
  
          ps2TraceGuestRangeWrite(rdram, dataAddr, 32u, "scePadRead", ctx);
@@ -8417,7 +8431,7 @@ index b50a4cf..11fe646 100644
          PS2_IF_AGRESSIVE_LOGS({
              if (g_padReadLogCount < 48)
              {
-@@ -685,17 +820,62 @@ namespace ps2_stubs
+@@ -685,17 +834,62 @@ namespace ps2_stubs
          setReturnS32(ctx, 0);
      }
  
@@ -8482,7 +8496,7 @@ index b50a4cf..11fe646 100644
          setReturnS32(ctx, 1);
      }
  
-@@ -818,7 +998,7 @@ namespace ps2_stubs
+@@ -818,7 +1012,7 @@ namespace ps2_stubs
              {
                  for (size_t slot = 0; slot < kPadDebugSlotCount; ++slot)
                  {
@@ -8491,11 +8505,31 @@ index b50a4cf..11fe646 100644
                      PadDebugPortSnapshot &dst = snapshot.ports[port][slot];
                      dst.open = src.open;
                      dst.analogMode = src.analogMode;
+@@ -860,4 +1054,10 @@ namespace ps2_stubs
+         g_padOverrideEnabled = false;
+         g_padOverrideState = PadInputState{};
+     }
++
++    void padScriptHold(bool held)
++    {
++        std::lock_guard<std::mutex> lock(g_padScriptClockMutex);
++        g_padScriptHeld = held;
++    }
+ }
 diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h
-index c4de234..df7055d 100644
+index c4de234..5325126 100644
 --- a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h
 +++ b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h
-@@ -39,7 +39,7 @@ namespace ps2_stubs
+@@ -7,6 +7,8 @@
+ 
+ namespace ps2_stubs
+ {
++    // VENDETTA_PADSCRIPT's clock held (true) or running (false): for game-specific test code
++    void padScriptHold(bool held);
+     void PadSyncCallback(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+     void scePadEnd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+     void scePadEnterPressMode(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+@@ -39,7 +41,7 @@ namespace ps2_stubs
      void scePadStateIntToStr(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
  
      static constexpr size_t kPadDebugPortCount = 2u;

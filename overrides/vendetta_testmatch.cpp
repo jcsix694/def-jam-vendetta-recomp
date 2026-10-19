@@ -16,7 +16,8 @@
 // VENDETTA_TESTWIN=1 (a test, with or without the file, in any match, Story's included): while a match runs, every
 // human fighter (in the match, +0x5BC bit 1, and not the computer's, bit 0, when the fight starts) is played by the
 // computer with its momentum held full (it goes for its Blazin' move: a knockout) and every other fighter's health is
-// held at 3 % of its full, so the human side wins in moments: a test run reaches the screens after a won fight (a story fight's summary,
+// held at 3 % of its full, so the human side wins in moments; VENDETTA_PADSCRIPT's clock stands still while the fight
+// runs, so the script's presses after it land the same way however long it took: a test run reaches the screens after a won fight (a story fight's summary,
 // The Ladder, "You've unlocked ...").
 // "record" = a character record (0-62, or a record a mod adds), "attire" = added to it (the menus give the grid slot's
 // first record + the attire); "control" = human / cpu / dummy (a computer player that never presses anything: no
@@ -57,6 +58,11 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+
+namespace ps2_stubs
+{
+    void padScriptHold(bool held); // VENDETTA_PADSCRIPT's clock held or running (the runtime's pad code)
+}
 
 namespace vendetta_testmatch
 {
@@ -386,12 +392,15 @@ namespace vendetta_testmatch
         const uint32_t phase = Ps2FastRead32(rdram, kPhase);
         if (phase < 1u || phase > 3u)
         {
+            if (g_winKnown)
+                ps2_stubs::padScriptHold(false);
             g_winKnown = false;
             return;
         }
         if (!g_winKnown)
         {
             g_winKnown = true;
+            ps2_stubs::padScriptHold(true);
             g_winHumans = 0;
             for (uint32_t p = 0; p < 4u; ++p)
                 if ((Ps2FastRead8(rdram, kFighters + kFighterSize * p + 0x5BC) & 3u) == 2u)
