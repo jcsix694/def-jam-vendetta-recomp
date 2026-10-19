@@ -141,6 +141,10 @@ namespace vendetta_wrestlers
         constexpr uint32_t kUnlockTable = 0x27D610u; // 3 unlock flag indexes per base record: its attires (-1 = none)
         constexpr uint32_t kStoryRows = 0x27ED00u, kStoryRowSize = 0x38u, kStoryRowCount = 60u; // by unlock index
         constexpr uint32_t kHeroBuild = 0x13E958u; // FUN_0013e958(fighter): a story hero's build from his stats
+        // FUN_00140bf0(out, profile, base): a signed-in profile's hero stats / 3, six ints at `out` (one block of 0x18 a
+        // player from kHeroBonus), for a story hero's slot in Battle and Survival
+        constexpr uint32_t kHeroUpgrades = 0x140BF0u, kHeroBonus = 0x2362A8u, kFrontEnd = 0x29E468u;
+        constexpr uint32_t kIsArtist = 0x151808u; // FUN_00151808(record): records 37-48 = a locked tile's red silhouette
         constexpr const char *kStats[] = {"power", "speed", "grapple", "defense", "stamina", "charisma"};
         std::vector<uint32_t> g_firstAttires;         // each new wrestler's first attire (record - 63), in grid order
         constexpr int kWantBehind = 6, kWantAhead = 10; // wrestlers either side of a tile drawn whose pictures are read
@@ -149,7 +153,8 @@ namespace vendetta_wrestlers
         std::vector<uint32_t> g_newAttires;       // per slot from 44: its attires (0 = the filler of an odd count)
         bool g_moveDataReady = false;
         Fn g_originalLogo = nullptr, g_originalLoadMatch = nullptr, g_originalMatchInit = nullptr;
-        Fn g_originalFindPicture = nullptr, g_originalHeroBuild = nullptr;
+        Fn g_originalFindPicture = nullptr, g_originalHeroBuild = nullptr, g_originalHeroUpgrades = nullptr;
+        Fn g_originalIsArtist = nullptr;
         Fn g_originalTextMeasure = nullptr, g_originalTextDraw = nullptr;
         float g_bannerShrink = 1.0f, g_bannerScaleY = 1.0f; // the line being drawn: its shrink and its y scale before it
 
@@ -978,6 +983,11 @@ namespace vendetta_wrestlers
                             }
                             if (!logo.empty())
                                 pictures.logo = vendetta_pictures::add(vendetta_mods::modFile(mod, logo, "picture"), 128u, 64u, 4u);
+                            // attire 1's render and logo read from the start too (Choose Fighter opens with the cursor
+                            // on Briggs: his replacement's picture is ready at the first draw, as the icons are)
+                            for (uint32_t id : {pictures.render, pictures.logo})
+                                if (id && n == 1u)
+                                    vendetta_pictures::want(id);
                             g_attirePictures.push_back(pictures);
                             identity = identity || !render.empty() || !icon.empty();
                             if (!render.empty() || !icon.empty() || !logo.empty())
@@ -1400,19 +1410,61 @@ namespace vendetta_wrestlers
             g_originalFindPicture(rdram, ctx, runtime);
         }
 
+        // A story hero's attire replaced with fight values or moves of its own (the hero rules below are skipped for it;
+        // one that brings only names, pictures or a model keeps them, as the game's)
+        bool ownHeroData(uint32_t record)
+        {
+            const auto rep = g_replaced.find(record);
+            return record < 12u && rep != g_replaced.end() && (rep->second.wpar || rep->second.wwaz);
+        }
+
         // FUN_0013e958(fighter): a story hero (records 0 to 11) fights with the moves and fight values of the build his
-        // stats reach, whatever attire he wears; a replaced hero attire fights with its own
+        // stats reach, whatever attire he wears; a replaced hero attire with its own fights with its own
         void heroBuild(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t fighter = getRegU32(ctx, 4);
             const uint32_t record = read32(fighter + 0x34u);
-            if (record < 12u && g_replaced.count(record))
+            if (ownHeroData(record))
             {
                 write32(fighter + 0x38u, record);
                 returnToCaller(ctx);
                 return;
             }
             g_originalHeroBuild(rdram, ctx, runtime);
+        }
+
+        // ... and no profile upgrades for a replaced hero attire (the player's attire: the front end's +0x44[p], p from
+        // the block written)
+        void heroUpgrades(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t out = getRegU32(ctx, 4), base = getRegU32(ctx, 6);
+            const uint32_t player = (out - kHeroBonus) / 0x18u;
+            const bool known = out >= kHeroBonus && (out - kHeroBonus) % 0x18u == 0u && player < 4u;
+            const uint32_t record = known ? base + read32(kFrontEnd + 0x44u + 4u * player) : ~0u;
+            if (std::getenv("VENDETTA_WRESTLERLOG"))
+                std::cerr << "[wrestlers] hero upgrades: out 0x" << std::hex << out << std::dec << " base " << base
+                          << (known ? " player " + std::to_string(player) + " record " + std::to_string(record) : std::string(" (not a player's block)"))
+                          << (known && ownHeroData(record) ? ": a replaced attire with its own fight values, none added" : "")
+                          << std::endl;
+            if (known && ownHeroData(record))
+            {
+                for (uint32_t k = 0; k < 6u; ++k)
+                    write32(out + 4u * k, 0u);
+                returnToCaller(ctx);
+                return;
+            }
+            g_originalHeroUpgrades(rdram, ctx, runtime);
+        }
+
+        // FUN_00151808(record): a moved slot's base (a new record) asks for its game record, so a locked artist given
+        // added attires keeps his red silhouette on Choose Fighter
+        void isArtist(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t record = getRegU32(ctx, 4);
+            for (const Moved &m : g_moved)
+                if (m.first == record)
+                    SET_GPR_U32(ctx, 4, m.base);
+            g_originalIsArtist(rdram, ctx, runtime);
         }
 
         void loadMatch(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1566,8 +1618,16 @@ namespace vendetta_wrestlers
             wantAround(0);
         }
         g_originalHeroBuild = runtime.lookupFunction(kHeroBuild);
-        if (g_originalHeroBuild && !g_replaced.empty() && g_replaced.begin()->first < 12u)
+        g_originalHeroUpgrades = runtime.lookupFunction(kHeroUpgrades);
+        if (g_originalHeroBuild && g_originalHeroUpgrades &&
+            std::any_of(g_replaced.begin(), g_replaced.end(), [](const auto &r) { return ownHeroData(r.first); }))
+        {
             runtime.replaceFunction(kHeroBuild, heroBuild);
+            runtime.replaceFunction(kHeroUpgrades, heroUpgrades);
+        }
+        g_originalIsArtist = runtime.lookupFunction(kIsArtist);
+        if (g_originalIsArtist && !g_moved.empty())
+            runtime.replaceFunction(kIsArtist, isArtist);
         runtime.replaceFunction(kLoadMatch, loadMatch);
         runtime.replaceFunction(kMatchInit, matchInit);
         runtime.replaceFunction(kTextMeasure, textMeasure);
