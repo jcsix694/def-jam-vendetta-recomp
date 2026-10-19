@@ -28,6 +28,15 @@
 //                   size, voice, moves and pictures can all differ per attire; vendetta_wrestlerdraw.cpp draws the
 //                   model). A wrestler with a missing or wrong value is left out, with the value named (mods.log).
 //
+// A mod can also replace a game wrestler's attires: "replace": { "wrestlers": { "Briggs": "wrestlers/Stone Cold" } }.
+// The same kind of folder; attires\N replaces the game wrestler's attire N (any of his own attires, in any mix; the
+// folder itself, with no attire folders, is attire 1), and each file found there (else in the folder) replaces that
+// part: wrestler.json (names, height, weight, size, sounds like, "story comment"; a value left out stays the game's),
+// fight.json (also the story's copy of the stats), moveset.json, render / icon / logo (a new identity without a logo
+// shows none), the model. What it doesn't bring, and every attire it doesn't replace, stays the game's own; the locks
+// stay the game's. One mod per attire (the first in the load order). Adding attires a game wrestler doesn't have is
+// not done yet.
+//
 // Every new attire becomes a character record from 63 up (59 to 62 are turned into Briggs by the match setup), in the
 // game's tables, which the game's code reads from copies in the store (vendetta_store.h: the luis that find them are
 // patched, config/patches.toml): the character table, Choose Fighter's grid (its slots after the game's 44; its size at
@@ -67,6 +76,9 @@ namespace vendetta_wrestlers
     // name (as the game has them, whatever a mod renames), a new one by its folder's name or any attire's names (they
     // may differ per attire). For a mod's "wrestlers": { "<name>": ... } moveset edits.
     std::vector<uint32_t> recordsNamed(const std::string &name);
+
+    // A game record's full name as the game had it (upper case; kept at start-up, whatever a mod replaces), or "".
+    std::string gameFullName(uint32_t record);
 
     // A new attire's own model file (its folder's, else its wrestler's), or nullptr: it wears its "based on" model.
     struct ModelFile

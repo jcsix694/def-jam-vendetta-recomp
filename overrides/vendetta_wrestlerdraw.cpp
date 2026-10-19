@@ -1243,7 +1243,7 @@ namespace vendetta_wrestlerdraw
         const std::string v = value ? value : "";
         // a mod wrestler with its own model: our draw for it whatever the switch
         bool modModels = false;
-        for (uint32_t record = vendetta_wrestlers::kFirstNewRecord; record < vendetta_wrestlers::endRecord(); ++record)
+        for (uint32_t record = 0; record < vendetta_wrestlers::endRecord(); ++record) // new and replaced attires
             modModels = modModels || vendetta_wrestlers::modelFile(record) != nullptr;
         if ((v.empty() || v == "0") && !modModels)
             return;

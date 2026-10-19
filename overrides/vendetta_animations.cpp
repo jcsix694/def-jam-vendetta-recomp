@@ -221,7 +221,7 @@ namespace vendetta_animations
             why = "the move data holds " + std::to_string(read32(kWaza + 8u)) + " moves, not 999";
         else if (read32(kWaza + kFzuiStride) != kFzuiSize || read32(kWaza + kFzuiBank1) - 0x100000u >= 0x1F00000u)
             why = "the clip timing records aren't laid out as in the original game";
-        else if (upper(guestString(read32(kCharacters))) != "BRIGGS" || read32(kWaza + 4u) != 25u)
+        else if (vendetta_wrestlers::gameFullName(0) != "BRIGGS" || read32(kWaza + 4u) != 25u) // (as the game had it)
             why = "the character table or the move records aren't where the original game keeps them";
         else if (guestString(read32(kNames1)).empty() || guestString(read32(kNames0)).empty())
             why = "the clip name tables are not where the original game keeps them";
