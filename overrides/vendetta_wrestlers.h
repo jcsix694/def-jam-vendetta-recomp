@@ -34,8 +34,9 @@
 // part: wrestler.json (names, height, weight, size, sounds like, "story comment"; a value left out stays the game's),
 // fight.json (also the story's copy of the stats), moveset.json, render / icon / logo (a new identity without a logo
 // shows none), the model. What it doesn't bring, and every attire it doesn't replace, stays the game's own; the locks
-// stay the game's. One mod per attire (the first in the load order). Adding attires a game wrestler doesn't have is
-// not done yet.
+// stay the game's. One mod per attire (the first in the load order). Attires he doesn't have follow on from his own
+// (DMX's attires\2, then 3): his Choose Fighter slot then points at new records (copies of his own attires, then the
+// added ones; Story and Survival keep his own records), the added ones offered once his own are all unlocked.
 //
 // Every new attire becomes a character record from 63 up (59 to 62 are turned into Briggs by the match setup), in the
 // game's tables, which the game's code reads from copies in the store (vendetta_store.h: the luis that find them are
@@ -79,6 +80,10 @@ namespace vendetta_wrestlers
 
     // A game record's full name as the game had it (upper case; kept at start-up, whatever a mod replaces), or "".
     std::string gameFullName(uint32_t record);
+
+    // The base record Choose Fighter uses for a game wrestler (his own, or the first of his new records when a mod adds
+    // attires he doesn't have): for a test match naming him by his game record.
+    uint32_t choiceBase(uint32_t record);
 
     // A new attire's own model file (its folder's, else its wrestler's), or nullptr: it wears its "based on" model.
     struct ModelFile

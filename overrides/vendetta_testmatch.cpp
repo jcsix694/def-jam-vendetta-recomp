@@ -41,6 +41,7 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_mods.h"
+#include "vendetta_wrestlers.h"
 
 #include <algorithm>
 #include <array>
@@ -265,7 +266,8 @@ namespace vendetta_testmatch
         Ps2FastWrite32(rdram, fe + 0x30, 6u);
         for (int p = 0; p < 4; ++p)
         {
-            Ps2FastWrite32(rdram, fe + 0x34 + 4u * p, p < count ? uint32_t(g_setup.fighters[p].record) : 0xFFFFFFFFu);
+            Ps2FastWrite32(rdram, fe + 0x34 + 4u * p,
+                           p < count ? vendetta_wrestlers::choiceBase(uint32_t(g_setup.fighters[p].record)) : 0xFFFFFFFFu);
             Ps2FastWrite32(rdram, fe + 0x44 + 4u * p, p < count ? uint32_t(g_setup.fighters[p].attire) : 0u);
             Ps2FastWrite32(rdram, fe + 0x770 + 0x4Cu * p, 0u); // no profile: nothing is saved
         }
