@@ -12,6 +12,12 @@
 //     "keep health": [ true, true ], "loop": true, "skip movies": true }
 // "match": "1-on-1" (two fighters) or "4-way" (four, all against all: the block as Battle's Free For All leaves it,
 // +0x10 = 1, +0x14 = +0x18 = 4, the pads 0 / 4 / 5 / 6).
+//
+// VENDETTA_TESTWIN=1 (a test, with or without the file, in any match, Story's included): while a match runs, every
+// human fighter (in the match, +0x5BC bit 1, and not the computer's, bit 0, when the fight starts) is played by the
+// computer with its momentum held full (it goes for its Blazin' move: a knockout) and every other fighter's health is
+// held at 3 % of its full, so the human side wins in moments: a test run reaches the screens after a won fight (a story fight's summary,
+// The Ladder, "You've unlocked ...").
 // "record" = a character record (0-62, or a record a mod adds), "attire" = added to it (the menus give the grid slot's
 // first record + the attire); "control" = human / cpu / dummy (a computer player that never presses anything: no
 // attacks, blocks or reversals); "level" = the computer's skill 0-2; "arena" = the stage 0-11 as Choose Stage numbers
@@ -93,6 +99,9 @@ namespace vendetta_testmatch
     };
 
     Setup g_setup;
+    bool g_testWin = false;     // VENDETTA_TESTWIN
+    uint32_t g_winHumans = 0;   // ... the human fighters of the fight going on (bits)
+    bool g_winKnown = false;
     bool g_armed = false;       // the title's first picture not reached yet
     bool g_started = false;
     int g_repeatAction = 0;     // the brain action that leads to the slot (0 = none)
@@ -371,9 +380,51 @@ namespace vendetta_testmatch
 
     // ---- the match: health, momentum, the loop
 
+    // VENDETTA_TESTWIN: the human side played by the computer, the others held at a sliver of health (phases 1-3: the fight)
+    void testWin(uint8_t *rdram)
+    {
+        const uint32_t phase = Ps2FastRead32(rdram, kPhase);
+        if (phase < 1u || phase > 3u)
+        {
+            g_winKnown = false;
+            return;
+        }
+        if (!g_winKnown)
+        {
+            g_winKnown = true;
+            g_winHumans = 0;
+            for (uint32_t p = 0; p < 4u; ++p)
+                if ((Ps2FastRead8(rdram, kFighters + kFighterSize * p + 0x5BC) & 3u) == 2u)
+                    g_winHumans |= 1u << p;
+        }
+        for (uint32_t p = 0; p < 4u; ++p)
+        {
+            const uint32_t f = kFighters + kFighterSize * p;
+            const uint8_t control = Ps2FastRead8(rdram, f + 0x5BC);
+            if (!(control & 2u))
+                continue;
+            if (g_winHumans & (1u << p))
+            {
+                Ps2FastWrite8(rdram, f + 0x5BC, uint8_t(control | 1u));
+                writeF(rdram, f + 0x3B8, 100.0f); // momentum full: the Blazin' move
+            }
+            else
+            {
+                const float full = readF(rdram, f + 0x3AC), sliver = full * 0.03f;
+                if (full > 0.0f && readF(rdram, f + 0x3A8) > sliver)
+                {
+                    writeF(rdram, f + 0x3A8, sliver);
+                    writeF(rdram, f + 0x3B0, sliver);
+                }
+            }
+        }
+    }
+
     void matchLogic(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         g_originalMatchLogic(rdram, ctx, runtime);
+        if (g_testWin)
+            testWin(rdram);
         if (!g_started)
             return;
         for (uint32_t p = 0; p < uint32_t(g_setup.count); ++p)
@@ -428,9 +479,16 @@ namespace vendetta_testmatch
 
     void install(PS2Runtime &runtime)
     {
+        const char *win = std::getenv("VENDETTA_TESTWIN");
+        g_testWin = win && win[0] == '1';
         const std::string file = askedFile();
         if (file.empty() || !readSetup(file, g_setup))
+        {
+            if (g_testWin && hook(runtime, kMatchLogic, g_originalMatchLogic, matchLogic, "FUN_0011a600"))
+                std::cerr << "[testmatch] VENDETTA_TESTWIN: the human side played by the computer at full momentum, the others at 3 % health"
+                          << std::endl;
             return;
+        }
         if (!hook(runtime, kMoviePlayer, g_originalMovie, movie, "FUN_001bb3b8") ||
             !hook(runtime, kTitle, g_originalTitle, title, "FUN_00141bd0") ||
             !hook(runtime, kCpuBrain, g_originalBrain, brain, "FUN_00107470") ||
