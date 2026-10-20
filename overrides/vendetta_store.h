@@ -52,6 +52,7 @@ namespace vendetta_store
                                                       // {?, WPAR, ?, WWAZ} (2 MB); the boot reads it straight here
     constexpr uint32_t kSizeClasses = 0x02744910u;    // was 0x234910: one float per record (512 KB)
     constexpr uint32_t kVoiceMap = 0x027C99B8u;       // was 0x2599B8: a record's voice row (512 KB)
+    constexpr uint32_t kVoiceTable = 0x0284F938u;     // was 0x25F938: the voice rows, 0x34 bytes each (room for 8,192)
 
     // Host pointer for a guest address the store handed out.
     uint8_t *host(uint32_t guestAddress);

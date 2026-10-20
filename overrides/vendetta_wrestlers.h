@@ -15,8 +15,16 @@
 //                                      it shows); not used when it has a model of its own: Briggs' always stands
 //                                      behind that (his pictures when the mod brings none, his model if the mod's
 //                                      can't be used)
-//                  "sounds like": "Spider" },   whose voice it uses (intro line, win line, grunts); "based on" if
+//                  "sounds like": "Spider",   whose voice it uses (intro line, win line, grunts); "based on" if
 //                                      left out
+//                  "voice": { ... } },   or a voice of its own instead, made from parts: "intro line" and
+//                                      "win line" each a game wrestler's (his line), "none", or a recording of his
+//                                      own (a WAV, its path from this wrestler.json's folder: "voice/intro.wav",
+//                                      played from PC memory: vendetta_voicelines.h), "grunts" one of
+//                                      Asian Male, Black Male 1, Black Male 2, Latino Male, White Male, Black
+//                                      Woman, Deja, Penny, Carla, "gender" man / woman, and "special-move sound"
+//                                      (none, kick, punch, cork, chest, boob, ass) and "shout type" (1-3), these
+//                                      two none and by the gender when left out: a new row of the voice table
 //     "fight":   { every value of its fight record (the game's WPAR): "styles", "attack" and "defence" by body area,
 //                  "stats", "computer", "flags", five "combos", the 23 bits never read },
 //     "moveset": { all 128 slots: "none", "game move <number> <name>", a mod's move by its name, or
@@ -48,8 +56,8 @@
 // Every new attire becomes a character record from 63 up (59 to 62 are turned into Briggs by the match setup), in the
 // game's tables, which the game's code reads from copies in the store (vendetta_store.h: the luis that find them are
 // patched, config/patches.toml): the character table, Choose Fighter's grid (its slots after the game's 44; its size at
-// 0x400, the last scroll position at 0x404), the size classes, the voice map, and the move data (which the boot reads
-// straight into the store).
+// 0x400, the last scroll position at 0x404), the size classes, the voice map, the voice table (its own voices' rows
+// after the game's 44), and the move data (which the boot reads straight into the store).
 #pragma once
 
 #include <cstdint>

@@ -20,6 +20,7 @@
 #include "vendetta_mods.h"
 #include "vendetta_pictures.h"
 #include "vendetta_store.h"
+#include "vendetta_voicelines.h"
 
 #include <algorithm>
 #include <array>
@@ -39,6 +40,7 @@ namespace vendetta_wrestlers
 
         constexpr uint32_t kGameCharacters = 0x27E100u, kGameGrid = 0x239EF0u;
         constexpr uint32_t kGameSizes = 0x234910u, kGameVoices = 0x2599B8u;
+        constexpr uint32_t kGameVoiceTable = 0x25F938u, kVoiceRowSize = 0x34u, kGameVoiceRows = 44u, kVoiceRowRoom = 8192u;
         constexpr uint32_t kGameRecords = 63u;     // character records; 59-62 are the empty "Character A-D"
         constexpr uint32_t kMovesetRecords = 59u;  // records with moves in the move data
         constexpr uint32_t kGameSlots = 44u;
@@ -149,6 +151,7 @@ namespace vendetta_wrestlers
         std::vector<uint32_t> g_firstAttires;         // each new wrestler's first attire (record - 63), in grid order
         constexpr int kWantBehind = 6, kWantAhead = 10; // wrestlers either side of a tile drawn whose pictures are read
         uint32_t g_endRecord = kFirstNewRecord;
+        uint32_t g_voiceRows = kGameVoiceRows; // the voice table's rows in use (the mods' own voices after the game's 44)
         uint32_t g_slots = kGameSlots;            // Choose Fighter's slots (even)
         std::vector<uint32_t> g_newAttires;       // per slot from 44: its attires (0 = the filler of an odd count)
         bool g_moveDataReady = false;
@@ -315,7 +318,7 @@ namespace vendetta_wrestlers
                     if (key != "profile" && key != "fight" && key != "moveset")
                         vendetta_mods::problem() << m_label << where << ": \"" << key << "\" isn't read"
                                                  << (key == "name" || key == "full name" || key == "height" || key == "weight" ||
-                                                             key == "size" || key == "based on" || key == "sounds like" ||
+                                                             key == "size" || key == "based on" || key == "sounds like" || key == "voice" ||
                                                              key == "story comment"
                                                          ? " here: it goes in \"profile\""
                                                          : " (wrestler.json holds \"profile\", \"fight\" and \"moveset\")")
@@ -345,6 +348,116 @@ namespace vendetta_wrestlers
         };
 
         bool isNumber(const vendetta_mods::Json *v) { return v && v->type == vendetta_mods::Json::Type::Number; }
+
+        // The grunt sets (the 9 banks at 0x2610B4, 1-based in a voice row's +0x14) by the names a mod gives them, and by
+        // their files' names; the special-move sounds (+0x1C, 0x26118C).
+        constexpr const char *kGrunts[] = {"Asian Male", "Black Male 1", "Black Woman", "Deja", "Penny", "Carla",
+                                           "Latino Male", "Black Male 2", "White Male"};
+        constexpr const char *kGruntFiles[] = {"GRASIAN", "GRBBLACK", "GRBGIRL", "GRGIRL1", "GRGIRL2", "GRGIRL3",
+                                               "GRLATINO", "GRSBLACK", "GRWHITE"};
+        constexpr const char *kSpecialSounds[] = {"none", "kick", "punch", "cork", "chest", "boob", "ass"};
+
+        // A wrestler's own voice: wrestler.json's "profile" "voice" { "intro line", "win line", "grunts", "gender",
+        // "special-move sound", "shout type" } made a new row of the voice table (its copy in the store; 0x34 bytes: +0
+        // its number, +4 / +8 Flex's and the crowd's bits (0: no line names him), +0xC the shout type 1-3, +0x10 1 man /
+        // 0 woman, +0x14 the grunt set 1-9, +0x18 never read, +0x1C the special-move sound 0-6, +0x20 / +0x2A the intro /
+        // win line's bank name, "*" = none). A line names a game wrestler (his line) or "none"; "special-move sound" is
+        // none and "shout type" follows the gender (2 a man, 1 a woman) when left out. Returns the row, or -1 with the
+        // problems named (the caller keeps another voice).
+        int32_t voiceRow(const vendetta_mods::Json &voice, const std::string &label, const std::filesystem::path &folder)
+        {
+            if (!voice.isObject())
+            {
+                vendetta_mods::problem() << label << ": \"voice\" should be { ... }" << std::endl;
+                return -1;
+            }
+            if (g_voiceRows >= kVoiceRowRoom)
+            {
+                vendetta_mods::problem() << label << ": no room for another voice" << std::endl;
+                return -1;
+            }
+            std::array<uint8_t, kVoiceRowSize> row{};
+            bool good = true;
+            const auto put32 = [&row](uint32_t at, uint32_t value) { std::memcpy(row.data() + at, &value, 4); };
+            const auto line = [&](const char *key, uint32_t at)
+            {
+                const std::string who = text(voice, key, "none");
+                row[at] = '*';
+                if (upper(who) == "NONE")
+                    return;
+                uint32_t first = 0, attires = 0;
+                if (who.find('/') != std::string::npos || who.find('\\') != std::string::npos || who.find('.') != std::string::npos)
+                {
+                    // his own recording (a path from this wrestler.json's folder): a bank name of ours, played from PC
+                    // memory (vendetta_voicelines.h); a file that can't be used leaves the line none, the problem named
+                    const std::string name = vendetta_voicelines::add(g_voiceRows, at == 0x20u, folder / who, label);
+                    if (!name.empty())
+                    {
+                        std::memset(row.data() + at, 0, 10u);
+                        std::memcpy(row.data() + at, name.data(), std::min<size_t>(name.size(), 9u));
+                    }
+                }
+                else if (gameWrestler(who, first, attires))
+                    std::memcpy(row.data() + at,
+                                guest(vendetta_store::kVoiceTable + kVoiceRowSize * read32(vendetta_store::kVoiceMap + 4u * first) + at), 10u);
+                else
+                {
+                    vendetta_mods::problem() << label << ": \"" << key << "\" names a game wrestler or \"none\" (\"" << who
+                                             << "\" isn't one)" << std::endl;
+                    good = false;
+                }
+            };
+            line("intro line", 0x20u);
+            line("win line", 0x2Au);
+            const std::string gender = upper(text(voice, "gender"));
+            if (gender != "MAN" && gender != "WOMAN")
+            {
+                vendetta_mods::problem() << label << ": \"voice\": \"gender\" is man or woman" << std::endl;
+                good = false;
+            }
+            const bool man = gender == "MAN";
+            const std::string grunts = upper(text(voice, "grunts"));
+            uint32_t grunt = 0;
+            for (uint32_t i = 0; i < 9u; ++i)
+                if (grunts == upper(kGrunts[i]) || grunts == kGruntFiles[i])
+                    grunt = i + 1u;
+            if (grunt == 0u)
+            {
+                vendetta_mods::problem() << label << ": \"voice\": \"grunts\" is one of Asian Male, Black Male 1, Black Male 2, "
+                                                    "Latino Male, White Male, Black Woman, Deja, Penny, Carla" << std::endl;
+                good = false;
+            }
+            const std::string special = text(voice, "special-move sound", "none");
+            uint32_t sound = ~0u;
+            for (uint32_t i = 0; i < 7u; ++i)
+                if (upper(special) == upper(kSpecialSounds[i]))
+                    sound = i;
+            if (sound == ~0u)
+            {
+                vendetta_mods::problem() << label << ": \"voice\": \"special-move sound\" is none, kick, punch, cork, chest, boob or ass"
+                                         << " - none used" << std::endl;
+                sound = 0u;
+            }
+            uint32_t shout = man ? 2u : 1u;
+            if (const vendetta_mods::Json *s = voice.find("shout type"))
+            {
+                if (isNumber(s) && s->number >= 1 && s->number <= 3 && s->number == std::floor(s->number))
+                    shout = static_cast<uint32_t>(s->number);
+                else
+                    vendetta_mods::problem() << label << ": \"voice\": \"shout type\" is 1, 2 or 3 - "
+                                             << shout << " used (by the gender)" << std::endl;
+            }
+            if (!good)
+                return -1;
+            const uint32_t number = g_voiceRows++;
+            put32(0x00u, number);
+            put32(0x0Cu, shout);
+            put32(0x10u, man ? 1u : 0u);
+            put32(0x14u, grunt);
+            put32(0x1Cu, sound);
+            std::memcpy(guest(vendetta_store::kVoiceTable + kVoiceRowSize * number), row.data(), kVoiceRowSize);
+            return static_cast<int32_t>(number);
+        }
 
         // wrestler.json's "fight": every value of a wrestler's fight record (WPAR, unpacked by FUN_0011ccb8), each by name, none left
         // out. A missing or wrong value is named in `problems` (the wrestler is then left out).
@@ -581,6 +694,7 @@ namespace vendetta_wrestlers
                         std::string name, full, height, weight;
                         float size = 1.0f;
                         uint32_t looksBase = 0, looksCount = 0, voiceBase = 0, voiceCount = 0;
+                        int32_t voiceRow = -1; // his own voice's row ("voice"), else a game wrestler's ("sounds like")
                         bool ownModel = false;
                     };
                     std::vector<Info> infos(attires);
@@ -597,6 +711,7 @@ namespace vendetta_wrestlers
                         anyModel = anyModel || modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k]));
                     bool good = true;
                     std::set<std::string> told; // a file's notes once
+                    std::map<const vendetta_mods::Json *, int32_t> voiceRows; // the voices made, by "voice" block
                     for (size_t k = 0; k < attires && good; ++k)
                     {
                         std::string where;
@@ -643,7 +758,23 @@ namespace vendetta_wrestlers
                             break;
                         }
                         const std::string soundsLike = text(j, "sounds like", basedOn);
-                        if (!gameWrestler(soundsLike, info.voiceBase, info.voiceCount))
+                        if (const vendetta_mods::Json *voice = j.find("voice"))
+                        {
+                            // one row per "voice" block (the attires sharing a profile share the row)
+                            if (const auto made = voiceRows.find(voice); made != voiceRows.end())
+                                info.voiceRow = made->second;
+                            else
+                                voiceRows[voice] = info.voiceRow = voiceRow(*voice, "[wrestlers] " + mod.name + ": " + info.name,
+                                                                            (mod.folder / where).parent_path());
+                            if (info.voiceRow < 0)
+                            {
+                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name
+                                                         << ": his \"voice\" can't be made - left out" << std::endl;
+                                good = false;
+                                break;
+                            }
+                        }
+                        else if (!gameWrestler(soundsLike, info.voiceBase, info.voiceCount))
                         {
                             vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name
                                                      << ": \"sounds like\" must name a game wrestler (\"" << soundsLike << "\" isn't one) - left out"
@@ -780,7 +911,8 @@ namespace vendetta_wrestlers
                         }
                         float sizeValue = info.size;
                         std::memcpy(guest(vendetta_store::kSizeClasses + 4u * record), &sizeValue, 4);
-                        write32(vendetta_store::kVoiceMap + 4u * record, read32(kGameVoices + 4u * info.voiceBase));
+                        write32(vendetta_store::kVoiceMap + 4u * record,
+                                info.voiceRow >= 0 ? static_cast<uint32_t>(info.voiceRow) : read32(kGameVoices + 4u * info.voiceBase));
                         w.records.push_back(record);
                         // the fight values and the moveset, each after the tag and size the game's own blocks have
                         const uint32_t wpar = vendetta_store::allocate(vendetta_store::Area::Boot, 8u + kWparSize, "new wrestlers' fight values");
@@ -806,7 +938,9 @@ namespace vendetta_wrestlers
                     std::cerr << "[wrestlers] " << mod.name << ": " << full << " (" << name << "), records " << w.records.front()
                               << "-" << w.records.back() << " (" << attires << " attire" << (attires == 1 ? "" : "s")
                               << "), looks like " << guestString(read32(kGameCharacters + kRecordSize * infos[0].looksBase))
-                              << ", sounds like " << guestString(read32(kGameCharacters + kRecordSize * infos[0].voiceBase)) << std::endl;
+                              << (infos[0].voiceRow >= 0 ? ", his own voice (row " + std::to_string(infos[0].voiceRow) + ")"
+                                                         : ", sounds like " + guestString(read32(kGameCharacters + kRecordSize * infos[0].voiceBase)))
+                              << std::endl;
                     g_wrestlers.push_back(std::move(w));
                 }
             }
@@ -973,7 +1107,14 @@ namespace vendetta_wrestlers
                                         vendetta_mods::problem() << here << ": \"size\" is short, normal or tall - normal used" << std::endl;
                                     std::memcpy(guest(vendetta_store::kSizeClasses + 4u * record), &size, 4);
                                 }
-                                if (const std::string soundsLike = text(j, "sounds like"); !soundsLike.empty())
+                                if (const vendetta_mods::Json *voice = j.find("voice"))
+                                {
+                                    if (const int32_t made = voiceRow(*voice, here, (mod.folder / where).parent_path()); made >= 0)
+                                        write32(vendetta_store::kVoiceMap + 4u * record, static_cast<uint32_t>(made));
+                                    else
+                                        vendetta_mods::problem() << here << ": his \"voice\" can't be made - the game's voice stays" << std::endl;
+                                }
+                                else if (const std::string soundsLike = text(j, "sounds like"); !soundsLike.empty())
                                 {
                                     uint32_t voiceBase = 0, voiceCount = 0;
                                     if (gameWrestler(soundsLike, voiceBase, voiceCount))
@@ -1203,6 +1344,8 @@ namespace vendetta_wrestlers
             std::memcpy(guest(vendetta_store::kSelectGrid), guest(kGameGrid), 8u * kGameSlots);
             std::memcpy(guest(vendetta_store::kSizeClasses), guest(kGameSizes), 4u * kGameRecords);
             std::memcpy(guest(vendetta_store::kVoiceMap), guest(kGameVoices), 4u * kGameRecords);
+            std::memcpy(guest(vendetta_store::kVoiceTable), guest(kGameVoiceTable), kVoiceRowSize * kGameVoiceRows);
+            g_voiceRows = kGameVoiceRows;
             g_gameNames.clear();
             for (uint32_t record = 0; record < kGameRecords; ++record)
                 g_gameNames.emplace_back(upper(guestString(read32(kGameCharacters + kRecordSize * record))),
@@ -1233,6 +1376,7 @@ namespace vendetta_wrestlers
                 std::memset(guest(kGameGrid), 0xFF, 8u * kGameSlots);
                 std::memset(guest(kGameSizes), 0xFF, 4u * kMovesetRecords);
                 std::memset(guest(kGameVoices), 0xFF, 4u * kGameRecords);
+                std::memset(guest(kGameVoiceTable), 0xFF, kVoiceRowSize * kGameVoiceRows);
             }
             write32(kGridSizeWord, g_slots);
             write32(kLastScrollWord, g_slots - kWindow);
@@ -1565,9 +1709,38 @@ namespace vendetta_wrestlers
             g_originalLoadMatch(rdram, ctx, runtime);
         }
 
+        // A match with a mod's own voice in it: each fighter's voice row as the game's sound setup will read it (the
+        // moved voice table), one line.
+        void logVoices()
+        {
+            std::string line;
+            bool own = false;
+            for (uint32_t p = 0; p < 4u; ++p)
+            {
+                const int32_t record = static_cast<int32_t>(read32(0x236208u + 4u * p));
+                if (record < 0)
+                    continue;
+                const uint32_t row = read32(vendetta_store::kVoiceMap + 4u * static_cast<uint32_t>(record));
+                own = own || row >= kGameVoiceRows;
+                const uint32_t at = vendetta_store::kVoiceTable + kVoiceRowSize * row;
+                const auto name = [&](uint32_t field)
+                {
+                    std::string s(reinterpret_cast<const char *>(guest(at + field)), 10u);
+                    return s.substr(0, s.find('\0'));
+                };
+                const uint32_t grunt = read32(at + 0x14u);
+                line += (line.empty() ? "" : ", ") + guestString(read32(vendetta_store::kCharacterTable + kRecordSize * static_cast<uint32_t>(record) + 4u)) +
+                        " row " + std::to_string(row) + " (intro " + name(0x20u) + ", win " + name(0x2Au) + ", grunts " +
+                        (grunt >= 1u && grunt <= 9u ? kGrunts[grunt - 1u] : "?") + (read32(at + 0x10u) ? ", man)" : ", woman)");
+            }
+            if (own)
+                std::cerr << "[wrestlers] the match's voices: " << line << std::endl;
+        }
+
         void matchInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             completeMoveData(getRegU32(ctx, 31));
+            logVoices();
             g_originalMatchInit(rdram, ctx, runtime);
         }
 

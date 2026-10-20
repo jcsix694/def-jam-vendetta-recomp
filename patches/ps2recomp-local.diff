@@ -1,12 +1,13 @@
 diff --git a/ps2xIOP/CMakeLists.txt b/ps2xIOP/CMakeLists.txt
-index f8d3e44..e707569 100644
+index f8d3e44..e92d833 100644
 --- a/ps2xIOP/CMakeLists.txt
 +++ b/ps2xIOP/CMakeLists.txt
-@@ -12,6 +12,7 @@ add_library(ps2_iop STATIC
+@@ -12,6 +12,8 @@ add_library(ps2_iop STATIC
      src/emulator/core/iop_cpu.cpp
      src/emulator/core/iop_kernel.cpp
      src/emulator/core/iop_memory.cpp
 +    src/emulator/core/spu2.cpp
++    src/emulator/core/spu2_host_samples.cpp
      src/emulator/services/iop_module_loader.cpp
      src/emulator/services/iop_rpc.cpp
      src/emulator/imports/iop_cdvd.cpp
@@ -98,6 +99,43 @@ index 68fec81..90e6e9c 100644
          void onSifTransfer(const SifTransfer &transfer);
  
          // Physical IOP RAM access shared by the emulator, SIF DMA, and HLE services. Addresses are IOP addresses.
+diff --git a/ps2xIOP/include/ps2x/iop/spu2_host_samples.h b/ps2xIOP/include/ps2x/iop/spu2_host_samples.h
+new file mode 100644
+index 0000000..b31b947
+--- /dev/null
++++ b/ps2xIOP/include/ps2x/iop/spu2_host_samples.h
+@@ -0,0 +1,31 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++#include <memory>
++#include <vector>
++
++// Host samples: a recording in PC memory that a sound chip (SPU2) voice plays in place of a stand-in sample in sound
++// memory, so a game can play sounds of any length and quality without the 2 MB of sound memory. The game is given an
++// ordinary sample to load and play (the stand-in: silence as long as the recording, at a low rate, whose first
++// PS-ADPCM block is the marker below); the voice runs on the stand-in exactly as the hardware would (its blocks, end
++// flags, NAX, ENDX, key on / off, envelope, volumes, outputs), and only the sample it outputs is taken from the
++// recording, at the voice's pitch as a speed. Registered by a game's overrides (any thread), read by the sound chip.
++namespace ps2x::iop
++{
++    struct HostSample
++    {
++        std::vector<int16_t> pcm; // mono
++        uint32_t rate = 48000;    // the recording's sample rate
++        uint32_t standinPitch = 0x1000; // the pitch at which the stand-in plays at its own rate: the recording's speed 1.0
++    };
++
++    // The stand-in's first block: header 0x000C (shift 12, filter 0, flags 0), then "PXHS" and the number (u32, little
++    // endian) in the 14 data bytes, the rest 0. Decoded as sound it is at most +-8 / 32768: silence.
++    std::array<uint8_t, 16> hostSampleMarker(uint32_t id);
++
++    // id 0 is never used. A null sample drops the number; a voice already playing it keeps its own reference.
++    void setHostSample(uint32_t id, std::shared_ptr<const HostSample> sample);
++    void clearHostSamples();
++    [[nodiscard]] std::shared_ptr<const HostSample> hostSample(uint32_t id);
++}
 diff --git a/ps2xIOP/src/emulator/core/iop_kernel.cpp b/ps2xIOP/src/emulator/core/iop_kernel.cpp
 index 4832d8f..19e0be8 100644
 --- a/ps2xIOP/src/emulator/core/iop_kernel.cpp
@@ -495,10 +533,10 @@ index a932a5d..0296a8e 100644
  }
 diff --git a/ps2xIOP/src/emulator/core/spu2.cpp b/ps2xIOP/src/emulator/core/spu2.cpp
 new file mode 100644
-index 0000000..2ae4c24
+index 0000000..effc6de
 --- /dev/null
 +++ b/ps2xIOP/src/emulator/core/spu2.cpp
-@@ -0,0 +1,732 @@
+@@ -0,0 +1,772 @@
 +#include "spu2.h"
 +#include "spu2_gaussian.h"
 +
@@ -748,7 +786,12 @@ index 0000000..2ae4c24
 +            voice.loopWritten = false;
 +            voice.playedSamples = 0u;
 +            voice.peak = 0;
++            voice.host = hostSampleAt(voice.nextAddress);
++            voice.hostPosition = 0.0;
 +            core.endFlags &= ~(1u << index);
++            if (voiceLogEnabled() && voice.host)
++                std::fprintf(stderr, "[spu] core %d voice %d plays a host sample (%zu samples at %u Hz)\n", coreIndex, index,
++                             voice.host->pcm.size(), voice.host->rate);
 +            if (voiceLogEnabled())
 +                std::fprintf(stderr, "[spu] at sample %llu core %d voice %d key on: start 0x%05X loop 0x%05X%s pitch 0x%04X adsr 0x%04X/0x%04X vol 0x%04X/0x%04X\n",
 +                             static_cast<unsigned long long>(m_nextSampleCycle / kIopCyclesPerSample),
@@ -845,6 +888,38 @@ index 0000000..2ae4c24
 +        return out;
 +    }
 +
++    // A block at the address that is a host sample's marker (ps2x/iop/spu2_host_samples.h) whose number is registered:
++    // that sample, else none.
++    std::shared_ptr<const HostSample> Spu2::hostSampleAt(uint32_t address) const
++    {
++        if (m_ram[address & kAddressMask] != 0x000Cu || m_ram[(address + 1u) & kAddressMask] != 0x5850u ||
++            m_ram[(address + 2u) & kAddressMask] != 0x5348u)
++            return nullptr;
++        const uint32_t id = static_cast<uint32_t>(m_ram[(address + 3u) & kAddressMask]) |
++                            (static_cast<uint32_t>(m_ram[(address + 4u) & kAddressMask]) << 16u);
++        return id != 0u ? hostSample(id) : nullptr;
++    }
++
++    // A host voice's output: the recording at the voice's pitch taken as a speed (the stand-in's own pitch = 1.0),
++    // read with straight lines between its samples; silence after its end (the stand-in, as long as the recording,
++    // ends the voice itself).
++    int32_t Spu2::nextHostSample(Voice &voice, uint32_t pitch)
++    {
++        const HostSample &host = *voice.host;
++        const size_t at = static_cast<size_t>(voice.hostPosition);
++        int32_t out = 0;
++        if (at + 1u < host.pcm.size())
++        {
++            const double fraction = voice.hostPosition - static_cast<double>(at);
++            out = static_cast<int32_t>(host.pcm[at] + (host.pcm[at + 1u] - host.pcm[at]) * fraction);
++        }
++        else if (at < host.pcm.size())
++            out = host.pcm[at];
++        voice.hostPosition += static_cast<double>(pitch) / static_cast<double>(std::max<uint32_t>(host.standinPitch, 1u)) *
++                              static_cast<double>(host.rate) / 48000.0;
++        return out;
++    }
++
 +    // ADSR: attack to the top, decay to the sustain level, sustain (rising or falling) until key off, release to 0
 +    void Spu2::stepEnvelope(int coreIndex, int index, Voice &voice)
 +    {
@@ -938,8 +1013,11 @@ index 0000000..2ae4c24
 +                pitch = static_cast<uint32_t>(std::max(0, (static_cast<int32_t>(pitch) * (0x8000 + previousOutput)) >> 15));
 +            pitch = std::min<uint32_t>(pitch, 0x3FFFu);
 +            int32_t sample = nextSample(core, index, voice, pitch);
++            if (voice.host)
++                sample = voice.phase == Phase::Off ? 0 : nextHostSample(voice, pitch);
 +            if (voice.phase == Phase::Off)
 +            {
++                voice.host.reset();
 +                if (voiceLogEnabled())
 +                    std::fprintf(stderr, "[spu] core %d voice %d ended (sample end) after %.1f ms, peak %d\n", coreIndex, index,
 +                                 voice.playedSamples / 48.0, voice.peak);
@@ -1233,15 +1311,18 @@ index 0000000..2ae4c24
 +}
 diff --git a/ps2xIOP/src/emulator/core/spu2.h b/ps2xIOP/src/emulator/core/spu2.h
 new file mode 100644
-index 0000000..0d562d3
+index 0000000..86f5209
 --- /dev/null
 +++ b/ps2xIOP/src/emulator/core/spu2.h
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,135 @@
 +#pragma once
++
++#include "ps2x/iop/spu2_host_samples.h"
 +
 +#include <array>
 +#include <cstddef>
 +#include <cstdint>
++#include <memory>
 +#include <vector>
 +
 +namespace ps2x::iop::detail
@@ -1322,6 +1403,8 @@ index 0000000..0d562d3
 +            int32_t peak = 0;
 +            Volume left;
 +            Volume right;
++            std::shared_ptr<const HostSample> host; // keyed on at a host sample's marker: its output comes from here
++            double hostPosition = 0.0;
 +        };
 +
 +        struct Core
@@ -1354,6 +1437,8 @@ index 0000000..0d562d3
 +        void keyOff(int core, uint32_t mask);
 +        void decodeBlock(Voice &voice);
 +        int32_t nextSample(Core &core, int index, Voice &voice, uint32_t pitch);
++        [[nodiscard]] std::shared_ptr<const HostSample> hostSampleAt(uint32_t address) const;
++        static int32_t nextHostSample(Voice &voice, uint32_t pitch);
 +        void stepEnvelope(int core, int index, Voice &voice);
 +        void mixCore(int core, int32_t extLeft, int32_t extRight);
 +        void reverb(int core, int32_t wetLeft, int32_t wetRight, int32_t &outLeft, int32_t &outRight);
@@ -1639,6 +1724,53 @@ index 0000000..35a294b
 +        {-0x0001, 0x1347, 0x59B2, 0x1288},
 +        {-0x0001, 0x1307, 0x59B3, 0x12C7},
 +    }};
++}
+diff --git a/ps2xIOP/src/emulator/core/spu2_host_samples.cpp b/ps2xIOP/src/emulator/core/spu2_host_samples.cpp
+new file mode 100644
+index 0000000..87f67a6
+--- /dev/null
++++ b/ps2xIOP/src/emulator/core/spu2_host_samples.cpp
+@@ -0,0 +1,41 @@
++#include "ps2x/iop/spu2_host_samples.h"
++
++#include <mutex>
++#include <unordered_map>
++
++namespace ps2x::iop
++{
++    namespace
++    {
++        std::mutex g_lock;
++        std::unordered_map<uint32_t, std::shared_ptr<const HostSample>> g_samples;
++    }
++
++    std::array<uint8_t, 16> hostSampleMarker(uint32_t id)
++    {
++        return {0x0C, 0x00, 'P', 'X', 'H', 'S', static_cast<uint8_t>(id), static_cast<uint8_t>(id >> 8u),
++                static_cast<uint8_t>(id >> 16u), static_cast<uint8_t>(id >> 24u), 0, 0, 0, 0, 0, 0};
++    }
++
++    void setHostSample(uint32_t id, std::shared_ptr<const HostSample> sample)
++    {
++        std::lock_guard<std::mutex> lock(g_lock);
++        if (sample)
++            g_samples[id] = std::move(sample);
++        else
++            g_samples.erase(id);
++    }
++
++    void clearHostSamples()
++    {
++        std::lock_guard<std::mutex> lock(g_lock);
++        g_samples.clear();
++    }
++
++    std::shared_ptr<const HostSample> hostSample(uint32_t id)
++    {
++        std::lock_guard<std::mutex> lock(g_lock);
++        const auto it = g_samples.find(id);
++        return it == g_samples.end() ? nullptr : it->second;
++    }
 +}
 diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
 index e5f63a9..8be3ae6 100644

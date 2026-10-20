@@ -114,6 +114,18 @@ instructions = [
   { address = "0x00126770", value = "0x3c030274" }, # lui $v1, 0x23 -> 0x274 (FUN_001264b0)
   # the voice map: 0x2599B8 -> 0x027C99B8 (lui 0x26 -> 0x27D)
   { address = "0x001b0a14", value = "0x3c03027d" }, # lui $v1, 0x26 -> 0x27D (FUN_001b0958)
+  # the voice table: 0x25F938 -> 0x0284F938 (lui 0x26 -> 0x285)
+  { address = "0x001c0d38", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c0968)
+  { address = "0x001c1130", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c10e8)
+  { address = "0x001c1198", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c10e8)
+  { address = "0x001c1688", value = "0x3c030285" }, # lui $v1, 0x26 (Delay Slot) -> 0x285 (FUN_001c15b8)
+  { address = "0x001c1698", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c15b8)
+  { address = "0x001c1870", value = "0x3c050285" }, # lui $a1, 0x26 -> 0x285 (FUN_001c17f8)
+  { address = "0x001c1a74", value = "0x3c020285" }, # lui $v0, 0x26 -> 0x285 (FUN_001c19f0)
+  { address = "0x001c2b98", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c2b08)
+  { address = "0x001c38b0", value = "0x3c020285" }, # lui $v0, 0x26 -> 0x285 (FUN_001c3750)
+  { address = "0x001c5724", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c56d8)
+  { address = "0x001c5890", value = "0x3c030285" }, # lui $v1, 0x26 -> 0x285 (FUN_001c5840)
   # Choose Fighter FUN_0014fbd8: the grid size from 0x00000400 and the last scroll position (size - 22) from
   # 0x00000404, written by overrides/vendetta_wrestlers.cpp (low memory the game never uses)
   { address = "0x001506d8", value = "0x8c020400" }, # lw $v0, 0x400($zero): the grid size (was addiu 44): a search for a record [was addiu $v0, $zero, 0x2C]
