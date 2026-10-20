@@ -4,8 +4,9 @@
              x:Class="VendettaSettings.Views.PlayView"
              x:DataType="vm:MainViewModel"
              DragDrop.AllowDrop="True">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="26,22" Spacing="18">
+    <Grid Margin="26,22" RowDefinitions="Auto,*" RowSpacing="18">
+        <!-- the heading and the notices (a hidden notice takes no room) -->
+        <StackPanel Spacing="18">
             <TextBlock Classes="h1" Text="Play" />
 
             <!-- a newer version on GitHub -->
@@ -53,12 +54,20 @@
                 </Grid>
             </Border>
 
-            <Grid ColumnDefinitions="400,*" ColumnSpacing="28">
-                <!-- what to play: the original game and the projects -->
-                <StackPanel>
-                    <TextBlock Classes="cap" Text="WHAT TO PLAY" />
-                    <Border Classes="capline" Margin="0,8,0,8" />
-                    <ListBox Classes="choices" ItemsSource="{Binding Projects.Choices}" SelectedItem="{Binding Projects.Selected}">
+        </StackPanel>
+
+            <Grid Grid.Row="1" ColumnDefinitions="400,*" ColumnSpacing="28">
+                <!-- what to play: the original game and the projects; New project and Import above the list -->
+                <Grid RowDefinitions="Auto,Auto,*">
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock Classes="cap" Text="WHAT TO PLAY" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Classes="outline small" BorderBrush="{StaticResource VAccent}" Content="+ New project"
+                                Command="{Binding Projects.NewCommand}" />
+                        <Button Grid.Column="2" Classes="outline small" Content="Import…" Click="OnImport" ToolTip.Tip="A project someone shared: its zip" />
+                    </Grid>
+                    <Border Grid.Row="1" Classes="capline" Margin="0,8,0,8" />
+                    <ListBox Grid.Row="2" Classes="choices" ItemsSource="{Binding Projects.Choices}" SelectedItem="{Binding Projects.Selected}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:PlayChoice">
                                 <Grid ColumnDefinitions="64,*" ColumnSpacing="12">
@@ -73,30 +82,37 @@
                                     </Border>
                                     <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Name}" FontSize="14.5" FontWeight="SemiBold" Foreground="#f0f0f2" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding Line}" FontSize="12.5" Classes="muted" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock FontSize="12.5" TextTrimming="CharacterEllipsis">
+                                            <Run Text="{Binding Line}" Foreground="{StaticResource VHint}" />
+                                            <Run Text="{Binding ProblemsText}" Foreground="{StaticResource VWarn}" FontWeight="SemiBold" />
+                                        </TextBlock>
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <WrapPanel Margin="0,10,0,0" ItemSpacing="8" LineSpacing="8">
-                        <Button Classes="outline" BorderBrush="{StaticResource VAccent}" Command="{Binding Projects.NewCommand}">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Text="+" FontSize="16" Margin="0,-2,0,0" VerticalAlignment="Center" />
-                                <TextBlock Text="New project" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button Classes="outline" Content="Import…" Click="OnImport" ToolTip.Tip="A project someone shared: its zip" />
-                        <Button Classes="outline" Content="Copy" Command="{Binding Projects.CopyCommand}" IsEnabled="{Binding Projects.IsProject}" />
-                        <Button Classes="outline" Content="Rename" Command="{Binding Projects.RenameCommand}" IsEnabled="{Binding Projects.IsProject}" />
-                        <Button Classes="outline danger" Content="Delete" Command="{Binding Projects.DeleteCommand}" IsEnabled="{Binding Projects.IsProject}" />
-                    </WrapPanel>
-                </StackPanel>
+                </Grid>
 
-                <!-- the one picked -->
-                <StackPanel Grid.Column="1">
-                    <TextBlock Classes="cap" Text="{Binding Projects.Heading}" />
-                    <Border Classes="capline" Margin="0,8,0,8" />
+                <!-- the one picked: Copy, Rename and Delete act on it -->
+                <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" MinHeight="28">
+                        <TextBlock Classes="cap" Text="{Binding Projects.Heading}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" IsVisible="{Binding Projects.IsProject}">
+                            <Button Classes="outline small" Content="Copy" Command="{Binding Projects.CopyCommand}" />
+                            <Button Classes="outline small" Content="Rename" Command="{Binding Projects.RenameCommand}" />
+                            <Button Classes="outline small danger" Content="Delete" Command="{Binding Projects.DeleteCommand}" />
+                        </StackPanel>
+                    </Grid>
+                    <Border Grid.Row="1" Classes="capline" Margin="0,8,0,8" />
+                    <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                    <Border Classes="problems" Margin="0,0,0,12" IsVisible="{Binding Projects.HasProblems}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="{Binding Projects.ProblemsHeading}" FontWeight="SemiBold" Foreground="#ffe2b0" />
+                            <TextBlock Text="{Binding Projects.ProblemsLine}" TextWrapping="Wrap" FontSize="13" Foreground="#e6cf9f" LineHeight="19" />
+                            <Button Classes="outline small" Content="Fix them" Command="{Binding ShowModsCommand}" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </Border>
                     <Grid ColumnDefinitions="130,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
                         <TextBlock Classes="key" Text="Mods" />
                         <StackPanel Grid.Column="1" Spacing="4">
@@ -115,8 +131,8 @@
                                 <TextBlock Classes="hint" Text="In load order: a later mod wins." />
                             </StackPanel>
                             <StackPanel Spacing="4" IsVisible="{Binding Projects.NoMods}">
-                                <TextBlock Classes="mono" Text="None ticked yet" />
-                                <TextBlock Classes="hint" Text="Tick mods for this project on the Mods page." />
+                                <TextBlock Classes="mono" Text="None yet" />
+                                <TextBlock Classes="hint" Text="Install mods into this project on the Mods page." />
                             </StackPanel>
                         </StackPanel>
                         <TextBlock Grid.Row="1" Classes="key" Text="Save data" />
@@ -148,8 +164,9 @@
                         <TextBlock Grid.Row="2" Classes="key" Text="Players" />
                         <TextBlock Grid.Row="2" Grid.Column="1" Classes="mono" Text="{Binding Settings.SummaryPlayers}" />
                     </Grid>
-                </StackPanel>
+                    </StackPanel>
+                    </ScrollViewer>
+                </Grid>
             </Grid>
-        </StackPanel>
-    </ScrollViewer>
+    </Grid>
 </UserControl>

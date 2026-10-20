@@ -782,6 +782,7 @@ namespace vendetta_wrestlers
                     if (base == kMovesetRecords)
                     {
                         vendetta_mods::problem() << label << ": the game has no wrestler called that - skipped" << std::endl;
+                        vendetta_mods::blocking(mod.name + " replaces " + gameName + ", who isn't in the game.");
                         continue;
                     }
                     uint32_t count = 0;
@@ -822,6 +823,8 @@ namespace vendetta_wrestlers
                         {
                             vendetta_mods::problem() << here << " is skipped: " << was->second.modName
                                                      << " already replaces it (earlier in the load order)" << std::endl;
+                            vendetta_mods::blocking(was->second.modName + " and " + mod.name + " both replace " + gameName +
+                                                    (n > 1u ? "'s attire " + std::to_string(n) : std::string()) + ".");
                             return false;
                         }
                         const auto find = [&](const char *fileName) -> std::string

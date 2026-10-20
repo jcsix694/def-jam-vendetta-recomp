@@ -3,8 +3,9 @@ using System.Text.Json.Nodes;
 
 namespace VendettaSettings.Services;
 
-/// <summary>A project: <c>projects\&lt;name&gt;\project.json</c> (the mods ticked in it, in load order, from the library
-/// <c>mods\</c>), an optional picture beside it and its own memory cards (<c>saves\mc0</c>, <c>saves\mc1</c>). The game
+/// <summary>A project: <c>projects\&lt;name&gt;\project.json</c> (the mods on in it, in load order), its own mods
+/// (<c>mods\</c>, each installed into it: <see cref="ProjectMods"/>), an optional picture beside it and its own memory
+/// cards (<c>saves\mc0</c>, <c>saves\mc1</c>). The game
 /// plays one when started with <c>--project "&lt;name&gt;"</c>; <c>--project ""</c> is the original game (no mods, the
 /// saves in <c>game\mc0</c>).</summary>
 public sealed class Project
@@ -92,7 +93,7 @@ public static class Projects
         return null;
     }
 
-    /// <summary>A new project with no mods ticked. <paramref name="copySaveFrom"/>: null = an empty memory card, "" = the
+    /// <summary>A new project with no mods. <paramref name="copySaveFrom"/>: null = an empty memory card, "" = the
     /// original game's save, else that project's. Returns what went wrong, or null.</summary>
     public static string? Create(GameFolder folder, string name, string? copySaveFrom, string? picture)
     {
@@ -128,7 +129,7 @@ public static class Projects
         }
     }
 
-    /// <summary>A copy of a project: its ticked mods, picture and saves (the mods themselves stay in the library).</summary>
+    /// <summary>A copy of a project: its mods (copies of its copies), list, picture and saves.</summary>
     public static string? Copy(GameFolder folder, string from, string name)
     {
         if (CheckName(folder, name) is { } bad)
@@ -173,7 +174,7 @@ public static class Projects
         }
     }
 
-    /// <summary>The project and its saves; the mods stay in the library.</summary>
+    /// <summary>The project, its mods and its saves.</summary>
     public static string? Delete(GameFolder folder, string name)
     {
         try
@@ -187,7 +188,7 @@ public static class Projects
         }
     }
 
-    /// <summary>project.json's "mods": the ticked mods in load order (the other keys kept as they are).</summary>
+    /// <summary>project.json's "mods": the mods that are on, in load order (the other keys kept as they are).</summary>
     public static void SetMods(GameFolder folder, string name, IReadOnlyList<string> mods)
     {
         var path = Path.Combine(FolderOf(folder, name), "project.json");
@@ -229,31 +230,5 @@ public static class Projects
             File.Copy(file, Path.Combine(to, Path.GetFileName(file)), overwrite: true);
         foreach (var dir in Directory.GetDirectories(from))
             CopyDir(dir, Path.Combine(to, Path.GetFileName(dir)));
-    }
-
-    /// <summary>The installed mods' names, lower case: each folder in mods\ and the "name" its mod.json gives.</summary>
-    public static HashSet<string> InstalledMods(GameFolder folder)
-    {
-        var names = new HashSet<string>();
-        var root = Path.Combine(folder.Data, "mods");
-        if (!Directory.Exists(root))
-            return names;
-        foreach (var dir in Directory.GetDirectories(root))
-        {
-            var manifest = Path.Combine(dir, "mod.json");
-            if (!File.Exists(manifest))
-                continue;
-            names.Add(Path.GetFileName(dir).ToLowerInvariant());
-            try
-            {
-                if (JsonNode.Parse(File.ReadAllText(manifest))?["name"] is JsonValue v && v.TryGetValue<string>(out var n))
-                    names.Add(n.ToLowerInvariant());
-            }
-            catch
-            {
-                // a mod.json the game can't read either: it says so when it starts
-            }
-        }
-        return names;
     }
 }

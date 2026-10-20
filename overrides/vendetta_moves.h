@@ -34,6 +34,10 @@ namespace vendetta_moves
 {
     void prepare(uint8_t *rdram);
 
+    // Every listed move.json read for its name, its animations checked (once; prepare() does it too, the check at start
+    // first).
+    void indexNames();
+
     bool isMove(const std::string &name);
 
     // The folders of the new moves a name gives (read-only after prepare(), so the read-ahead thread may use it).

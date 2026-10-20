@@ -266,6 +266,24 @@ namespace vendetta_mods
             return text;
         }
 
+        std::map<std::string, std::string> g_namesById; // every readable mod in the folder, on or off
+
+        // a mod without an "id": its folder's name in lower case, every run of other characters one '-'
+        std::string idFrom(const std::string &folderName)
+        {
+            std::string id;
+            for (const char c : lower(folderName))
+            {
+                if (std::isalnum(static_cast<unsigned char>(c)) || c == '.')
+                    id.push_back(c);
+                else if (!id.empty() && id.back() != '-')
+                    id.push_back('-');
+            }
+            while (!id.empty() && id.back() == '-')
+                id.pop_back();
+            return id;
+        }
+
         std::vector<Mod> findMods()
         {
             std::vector<Mod> mods;
@@ -275,8 +293,8 @@ namespace vendetta_mods
                 std::cerr << "[mods] off (VENDETTA_MODS=0)" << std::endl;
                 return mods;
             }
-            // VENDETTA_MODS_DIR=<folder>: every mod in another folder, no project (test runs); otherwise the project's
-            // ticked mods from the library mods\, and the original game has none
+            // VENDETTA_MODS_DIR=<folder>: every mod in another folder, no project (test runs); otherwise the mods
+            // installed in the project's own mods\ that it has on, and the original game has none
             const char *dir = std::getenv("VENDETTA_MODS_DIR");
             const bool testFolder = dir && *dir;
             const Project *project = testFolder ? nullptr : currentProject();
@@ -285,8 +303,7 @@ namespace vendetta_mods
                 std::cerr << "[mods] the original game: no mods (a project plays them)" << std::endl;
                 return mods;
             }
-            const std::filesystem::path root = testFolder ? std::filesystem::path(dir)
-                                                          : PS2Runtime::getIoPaths().elfDirectory.parent_path() / "mods";
+            const std::filesystem::path root = testFolder ? std::filesystem::path(dir) : project->folder / "mods";
             if (testFolder)
                 std::cerr << "[mods] folder " << root.string() << " (VENDETTA_MODS_DIR)" << std::endl;
             std::error_code ec;
@@ -316,10 +333,16 @@ namespace vendetta_mods
                 {
                     problem() << "[mods] " << mod.folderName << ": mod.json can't be read: "
                               << (error.empty() ? "it isn't a JSON object" : error) << " - skipped" << std::endl;
+                    if (project && std::any_of(project->mods.begin(), project->mods.end(), [&](const std::string &on)
+                                               { return lower(on) == lower(mod.folderName); }))
+                        blocking(mod.folderName + "'s mod.json can't be read.");
                     continue;
                 }
                 const Json *name = mod.manifest.find("name");
                 mod.name = name && name->isString() && !name->text.empty() ? name->text : mod.folderName;
+                const Json *id = mod.manifest.find("id");
+                mod.id = id && id->isString() && !id->text.empty() ? lower(id->text) : idFrom(mod.folderName);
+                g_namesById.emplace(mod.id, mod.name);
                 found.push_back(std::move(mod));
             }
             std::sort(found.begin(), found.end(), [](const Mod &a, const Mod &b)
@@ -328,7 +351,7 @@ namespace vendetta_mods
             std::vector<Mod> ordered;
             if (project)
             {
-                // the project's ticked mods, in its order (later wins)
+                // the mods the project has on, in its order (later wins); the others in its folder are off
                 for (const std::string &want : project->mods)
                 {
                     auto it = std::find_if(found.begin(), found.end(), [&](const Mod &m)
@@ -336,7 +359,8 @@ namespace vendetta_mods
                     if (it == found.end())
                     {
                         problem() << "[mods] " << project->name << ": \"" << want
-                                  << "\" is ticked but isn't installed in mods\\ - skipped" << std::endl;
+                                  << "\" is on but isn't in the project's mods folder - skipped" << std::endl;
+                        blocking(want + " is on but isn't installed in this project.");
                         continue;
                     }
                     ordered.push_back(std::move(*it));
@@ -376,10 +400,12 @@ namespace vendetta_mods
 
             // "needs": a mod whose needs are missing is skipped; a needed mod loads first
             auto provides = [](const Mod &m, const std::string &want)
-            { return lower(m.folderName) == lower(want) || lower(m.name) == lower(want); };
-            std::vector<Mod> usable;
-            for (Mod &mod : ordered)
+            { return lower(m.id) == lower(want) || lower(m.folderName) == lower(want) || lower(m.name) == lower(want); };
+            // (decided for every mod first, then moved: a need is looked for among all the mods on, earlier ones too)
+            std::vector<char> keep(ordered.size(), 1);
+            for (size_t i = 0; i < ordered.size(); ++i)
             {
+                const Mod &mod = ordered[i];
                 bool ok = true;
                 if (const Json *needs = mod.manifest.find("needs"); needs && needs->isArray())
                     for (const Json &need : needs->items)
@@ -391,14 +417,23 @@ namespace vendetta_mods
                         if (!present)
                         {
                             problem() << "[mods] " << mod.name << " needs \"" << need.text << "\", which "
-                                      << (project ? "isn't ticked in the project" : "isn't in that folder") << " - skipped"
+                                      << (project ? "isn't on in the project" : "isn't in that folder") << " - skipped"
                                       << std::endl;
+                            // by its name when it is in the folder (installed but off)
+                            std::string needName = need.text;
+                            for (const Mod &other : found)
+                                if (provides(other, need.text))
+                                    needName = other.name;
+                            blocking(mod.name + " needs " + needName + ".");
                             ok = false;
                         }
                     }
-                if (ok)
-                    usable.push_back(std::move(mod));
+                keep[i] = ok ? 1 : 0;
             }
+            std::vector<Mod> usable;
+            for (size_t i = 0; i < ordered.size(); ++i)
+                if (keep[i])
+                    usable.push_back(std::move(ordered[i]));
             // place each mod after everything it needs (stable otherwise; a cycle keeps the order it has)
             for (size_t pass = 0; pass < usable.size(); ++pass)
             {
@@ -428,9 +463,15 @@ namespace vendetta_mods
                 if (!moved)
                     break;
             }
+            std::set<std::string> ids;
             for (const Mod &mod : usable)
+            {
                 std::cerr << "[mods] loading " << mod.name << (mod.name != mod.folderName ? " (" + mod.folderName + ")" : "")
-                          << std::endl;
+                          << ", id " << mod.id << std::endl;
+                if (!ids.insert(mod.id).second)
+                    problem() << "[mods] " << mod.name << ": its id \"" << mod.id
+                              << "\" is another loaded mod's too - \"" << mod.id << "/...\" finds the first" << std::endl;
+            }
             return usable;
         }
     }
@@ -499,7 +540,7 @@ namespace vendetta_mods
                         if (m.isString() && !m.text.empty())
                             project->mods.push_back(m.text);
             }
-            std::cerr << "[projects] playing " << name << ": " << project->mods.size() << " mod(s) ticked" << std::endl;
+            std::cerr << "[projects] playing " << name << ": " << project->mods.size() << " mod(s) on" << std::endl;
             return project;
         }
     }
@@ -676,6 +717,41 @@ namespace vendetta_mods
         return path;
     }
 
+    const Mod *splitId(const std::string &text, std::string &rest)
+    {
+        const size_t slash = text.find('/');
+        if (slash == std::string::npos || slash == 0)
+            return nullptr;
+        const std::string id = lower(text.substr(0, slash));
+        for (const Mod &mod : loadedMods())
+            if (mod.id == id)
+            {
+                rest = text.substr(slash + 1);
+                return &mod;
+            }
+        return nullptr;
+    }
+
+    std::string nameOfId(const std::string &id)
+    {
+        loadedMods();
+        const auto found = g_namesById.find(lower(id));
+        return found == g_namesById.end() ? id : found->second;
+    }
+
+    std::filesystem::path fileNamed(const std::filesystem::path &folder, const std::string &relative)
+    {
+        std::string rest;
+        const Mod *other = splitId(relative, rest);
+        if (!other)
+            return (folder / std::filesystem::path(relative)).lexically_normal(); // the mod's own, as before ids
+        const std::filesystem::path path = (other->folder / std::filesystem::path(rest)).lexically_normal();
+        const std::string root = other->folder.lexically_normal().string();
+        if (path.string().compare(0, root.size(), root) != 0)
+            return {}; // another mod's file stays inside that mod
+        return path;
+    }
+
     namespace
     {
         std::mutex g_problemLock;
@@ -726,6 +802,26 @@ namespace vendetta_mods
     {
         std::lock_guard<std::mutex> hold(g_problemLock);
         startProblemLogLocked();
+    }
+
+    namespace
+    {
+        std::mutex g_blockingLock;
+        std::vector<std::string> g_blocking;
+    }
+
+    void blocking(const std::string &text)
+    {
+        problem() << "[check] " << text << std::endl;
+        std::lock_guard<std::mutex> hold(g_blockingLock);
+        if (std::find(g_blocking.begin(), g_blocking.end(), text) == g_blocking.end())
+            g_blocking.push_back(text);
+    }
+
+    std::vector<std::string> blockingProblems()
+    {
+        std::lock_guard<std::mutex> hold(g_blockingLock);
+        return g_blocking;
     }
 
     Problem::~Problem()

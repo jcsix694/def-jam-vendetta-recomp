@@ -32,13 +32,17 @@ public partial class MainViewModel : ObservableObject
         Updates = new UpdateViewModel(folder, () => Settings.CheckUpdates, () => Exit());
         InSetup = folder.NeedsSetup;
         Projects = new ProjectsViewModel(folder, readOnly, () => GameRunning, text => Message = text);
-        Projects.PickedChanged += OnStatusChanged;
-        // a tick on the Mods page shows on the Play page's line at once
+        Projects.PickedChanged += () =>
+        {
+            OnPropertyChanged(nameof(CanPlay));
+            OnStatusChanged();
+        };
+        // a change on the Mods page shows on the Play page's line at once
         Mods = new ModsViewModel(folder, readOnly, text => Message = text, () => Projects.Reload(Projects.Key));
         Projects.ModsChanged += () =>
         {
             if (IsMods)
-                Mods.Open(Projects.Key); // an import put mods in the library
+                Mods.Open(Projects.Key); // an import made a project with mods
         };
         Updates.PropertyChanged += (_, e) =>
         {
@@ -172,6 +176,8 @@ public partial class MainViewModel : ObservableObject
             if (Message.Length > 0) return Message;
             if (GameRunning) return "The game is running";
             if (Updates.ShowNotice && IsPlay) return "Update available";
+            if (Projects.HasProblems && !IsSettings)
+                return (Projects.ProblemCount == 1 ? "1 problem · " : $"{Projects.ProblemCount} problems · ") + Projects.SelectedName;
             if (IsSettings) return Settings.Status.Length > 0 ? Settings.Status : "Saved as you change them";
             return CanPlay ? "Ready to play · " + Projects.SelectedName : "The game isn't built yet";
         }
@@ -181,11 +187,11 @@ public partial class MainViewModel : ObservableObject
     public bool StatusWarn =>
         InSetup ? !Setup.Done && !Setup.HasError
         : InUpdate ? Updates.IsWorking
-        : Message.Length > 0 || GameRunning || (Updates.ShowNotice && IsPlay);
+        : Message.Length > 0 || GameRunning || (Updates.ShowNotice && IsPlay) || (Projects.HasProblems && !IsSettings);
     public bool StatusBad =>
         InSetup ? Setup.HasError
         : InUpdate ? Updates.IsFailed
-        : !CanPlay && !GameRunning && Message.Length == 0 && !IsSettings;
+        : !CanPlay && !GameRunning && Message.Length == 0 && !IsSettings && !Projects.HasProblems;
 
     private void OnStatusChanged()
     {
@@ -200,7 +206,9 @@ public partial class MainViewModel : ObservableObject
     public bool HasGame => Folder.HasGame;
     public string DiscTitle => Folder.HasGame ? "Def Jam Vendetta · PS2 · USA" : "Not set up yet";
     // during the setup PLAY waits for the build to finish
-    public bool CanPlay => Folder.HasGame && Folder.GameExe != null && !GameRunning && (!InSetup || Setup.Done) && !Updates.IsWorking;
+    // a project whose mods have problems waits until they are fixed (the game wouldn't start it either)
+    public bool CanPlay => Folder.HasGame && Folder.GameExe != null && !GameRunning && (!InSetup || Setup.Done) && !Updates.IsWorking &&
+                           (InSetup || !Projects.HasProblems);
     public string GameExeName => Folder.GameExe is { } exe ? Path.GetFileName(exe) : "not built yet";
     public string FolderPath => Folder.Root;
 
@@ -215,7 +223,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ShowMods()
     {
-        Mods.Open(Projects.Key); // the library read again, the ticks for the Play page's pick
+        Mods.Open(Projects.Key); // the Play page's pick and its mods
         PageIndex = 3;
     }
 
@@ -284,6 +292,8 @@ public partial class MainViewModel : ObservableObject
             case "mods": Mods.ShowSample("", Projects.Key); PageIndex = 3; return;
             case "mods-install": Mods.ShowSample("install", Projects.Key); PageIndex = 3; return;
             case "mods-remove": Mods.ShowSample("remove", Projects.Key); PageIndex = 3; return;
+            case "mods-where": Mods.ShowSample("where", Projects.Key); PageIndex = 3; return;
+            case "mods-pick": Mods.ShowSample("pick", Projects.Key); PageIndex = 3; return;
             case "about": PageIndex = 2; break;
             case "display": ShowSettingsTab(0); break;
             case "graphics": ShowSettingsTab(1); break;

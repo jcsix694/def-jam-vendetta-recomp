@@ -15,9 +15,10 @@
 //     "wrestlers": { "Briggs": "wrestlers/Briggs.json" }                  moveset slots: { "84": "Jericho Entrance" }
 //   }
 //
-// Projects: mods\ is the library of every installed mod; a project (projects\<name>\project.json) lists the mods ticked
-// in it, in load order ("mods": ["<mod folder or name>", ...]), and keeps its own memory cards (projects\<name>\saves\mc0
-// and mc1). The game plays a project when started with --project "<name>" (or VENDETTA_PROJECT=<name>, which
+// Projects: every mod is installed into a project, its own copy in projects\<name>\mods\<mod folder>\ (the same mod in two
+// projects = two copies, each its own); project.json lists the ones that are on, in load order ("mods": ["<mod folder or
+// name>", ...]; one in the folder but not listed is off), and the project keeps its own memory cards
+// (projects\<name>\saves\mc0 and mc1). The game plays a project when started with --project "<name>" (or VENDETTA_PROJECT=<name>, which
 // settings.toml's [play] project fills); without one it is the original game: no mods, its own saves (game\mc0).
 // Load order: the project's list (a later one wins when two change the same thing), and a mod always after the mods it
 // needs. A mod whose needs are missing, or that isn't installed, is skipped with a message.
@@ -66,13 +67,25 @@ namespace vendetta_mods
 
     struct Mod
     {
-        std::string folderName;            // the folder under mods\ (what order.txt and "needs" name)
+        std::string folderName;            // the mod's folder (what project.json, order.txt and "needs" name)
         std::string name;                  // mod.json's "name" (else the folder's)
+        std::string id;                    // mod.json's "id" (else made from the folder's name: lower case, '-' between words)
         std::filesystem::path folder;
         Json manifest;
     };
 
-    // The project being played (projects\<name>\): its name, folder, the mods ticked in it (as project.json names them, in
+    // Ids: a mod names another mod's thing as "<id>/<name>" (a moveset slot: "jcsix.hbk-moves/Sweet Chin Music"; a move's
+    // animation: "mocap.kicks/animations/Spin Kick.bin", a path inside that mod); a plain name is the mod's own (or, as
+    // before ids, any loaded mod's). The game's own things keep their names ("game move 56 CEMENT HANDS").
+    // splitId: if `text` starts with a loaded mod's id and '/', that mod (and `rest` = what follows); else null.
+    const Mod *splitId(const std::string &text, std::string &rest);
+    // The name of the mod with this id among every mod in the folder (on or off), else the id itself: for messages.
+    std::string nameOfId(const std::string &id);
+    // A file a mod's file names: "<id>/<path>" = that path inside that mod, else `relative` under `folder`; empty if it
+    // leaves the mod's folder.
+    std::filesystem::path fileNamed(const std::filesystem::path &folder, const std::string &relative);
+
+    // The project being played (projects\<name>\): its name, folder, the mods on in it (as project.json names them, in
     // load order); null = the original game (no project asked for, or its project.json can't be read: then a message).
     struct Project
     {
@@ -131,4 +144,10 @@ namespace vendetta_mods
     };
     inline Problem problem() { return {}; }
     void startProblemLog(); // mods.log emptied (the first look at the mods does it)
+
+    // A problem that stops a project from starting: a short line for the player ("Sting needs Mocap Kicks."), also
+    // written as a problem() line. The game's check at start (vendetta_modcheck.cpp) shows them all and doesn't start the
+    // project; the settings program shows the same list on the project and holds PLAY until they are fixed.
+    void blocking(const std::string &text);
+    std::vector<std::string> blockingProblems();
 }

@@ -4,29 +4,21 @@ using System.Text.Json.Nodes;
 
 namespace VendettaSettings.Services;
 
-/// <summary>A project about to be exported: its ticked mods found in the library, the ones that aren't.</summary>
+/// <summary>A project about to be exported: the mods installed in it, the ones its list names that aren't there.</summary>
 public sealed class ExportPlan
 {
     public required Project Project { get; init; }
     public required IReadOnlyList<ModInfo> Mods { get; init; }
-    /// <summary>Ticked in the project but not in the library: left out.</summary>
+    /// <summary>On in the project but not installed in it: nothing to put in.</summary>
     public required IReadOnlyList<string> Missing { get; init; }
     /// <summary>The mods' files, before packing.</summary>
     public required long ModBytes { get; init; }
 }
 
-/// <summary>What happens to one of a shared project's mods on import.</summary>
-public enum ImportFate { New, Same, Differs }
-
+/// <summary>One of a shared project's mods (its copy in the temporary folder).</summary>
 public sealed class ImportMod
 {
-    /// <summary>Theirs, unpacked (its Folder is in the temporary folder).</summary>
-    public required ModPackage Package { get; init; }
-    public required ImportFate Fate { get; init; }
-    public ModInfo Theirs => Package.Mod;
-    public ModInfo? Mine => Package.Replaces;
-    /// <summary>For <see cref="ImportFate.Differs"/>: install theirs over mine (false = keep mine).</summary>
-    public bool UseTheirs { get; set; } = true;
+    public required ModInfo Mod { get; init; }
 }
 
 /// <summary>A shared project read from its zip and unpacked into a temporary folder, not imported yet.</summary>
@@ -36,21 +28,21 @@ public sealed class ImportPlan
     public required string TempFolder { get; init; }
     /// <summary>The name it was shared under (made safe for a folder).</summary>
     public required string Name { get; init; }
-    /// <summary>Its ticked mods in load order: each one it carries.</summary>
+    /// <summary>The mods it carries.</summary>
     public required IReadOnlyList<ImportMod> Mods { get; init; }
-    /// <summary>Ticked but not in the zip: those already in the library are used, the others are listed here.</summary>
+    /// <summary>On in it but not in the zip.</summary>
     public required IReadOnlyList<string> Missing { get; init; }
     public required bool HasSaves { get; init; }
 }
 
-/// <summary>Sharing a project: one zip holding <c>project.json</c> (its load order naming the mods' folders), the
-/// picture, a copy of each ticked mod (<c>mods\&lt;folder&gt;\</c>) and, if asked, its memory cards (<c>saves\mc0</c>,
-/// <c>saves\mc1</c>). Importing puts the mods in the library (one the library has already, the same files, is used as it
-/// is; another version is replaced or kept, the player's choice) and makes the project.</summary>
+/// <summary>Sharing a project: one zip holding <c>project.json</c> (the mods that are on, in load order), the picture,
+/// its mods (<c>mods\&lt;folder&gt;\</c>, each the project's own copy, with where its wrestlers go) and, if asked, its
+/// memory cards (<c>saves\mc0</c>, <c>saves\mc1</c>). Importing makes a new project with those copies: nothing in the
+/// other projects changes.</summary>
 public static class ProjectShare
 {
     public const string ZipSuffix = " (Def Jam Vendetta project)";
-    // names written as they are (an apostrophe stays one, not \u0027): people read project.json by hand
+    // names written as they are (an apostrophe stays one, not '): people read project.json by hand
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static string DefaultFileName(string project) => project + ZipSuffix + ".zip";
@@ -59,19 +51,8 @@ public static class ProjectShare
 
     public static ExportPlan PlanExport(GameFolder folder, Project project)
     {
-        var library = ModLibrary.List(folder);
-        var mods = new List<ModInfo>();
-        var missing = new List<string>();
-        foreach (var name in project.Mods)
-        {
-            if (library.FirstOrDefault(m => m.Is(name)) is { } mod)
-            {
-                if (!mods.Contains(mod))
-                    mods.Add(mod);
-            }
-            else
-                missing.Add(name);
-        }
+        var mods = ProjectMods.List(folder, project.Name);
+        var missing = project.Mods.Where(n => !mods.Any(m => m.Is(n))).ToList();
         return new ExportPlan { Project = project, Mods = mods, Missing = missing, ModBytes = mods.Sum(m => SizeOf(m.Folder)) };
     }
 
@@ -98,10 +79,6 @@ public static class ProjectShare
                 var dir = plan.Project.Folder;
                 var json = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "project.json")))?.AsObject() ?? new JsonObject();
                 json["name"] = plan.Project.Name;
-                var list = new JsonArray();
-                foreach (var m in plan.Mods)
-                    list.Add(m.FolderName);
-                json["mods"] = list;
                 if (plan.Project.Picture is { } picture)
                 {
                     json["picture"] = Path.GetFileName(picture);
@@ -139,8 +116,8 @@ public static class ProjectShare
 
     // --- import ---
 
-    /// <summary>Reads a shared project's zip: unpacked into a temporary folder (<see cref="Discard"/> it when done), each
-    /// mod compared with the library. Returns it, or why it can't be imported.</summary>
+    /// <summary>Reads a shared project's zip: unpacked into a temporary folder (<see cref="Discard"/> it when done).
+    /// Returns it, or why it can't be imported.</summary>
     public static (ImportPlan? Plan, string? Error) OpenImport(GameFolder folder, string source)
     {
         if (!source.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || !File.Exists(source))
@@ -153,12 +130,12 @@ public static class ProjectShare
             {
                 var found = FindProject(zip);
                 if (found == null)
-                    return (null, ModLibrary.FindManifest(zip).Entry != null
+                    return (null, ProjectMods.FindManifest(zip).Entry != null
                         ? "That's a mod, not a project: install it on the Mods page."
                         : "That zip has no project.json, so it isn't a shared project.");
                 top = found;
             }
-            ModLibrary.Unzip(source, top, temp);
+            ProjectMods.Unzip(source, top, temp);
             var json = JsonNode.Parse(File.ReadAllText(Path.Combine(temp, "project.json")))?.AsObject();
             if (json == null)
                 return Fail(temp, "Its project.json can't be read.");
@@ -167,30 +144,13 @@ public static class ProjectShare
                 foreach (var item in list)
                     if (item is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0 && !listed.Contains(text, StringComparer.OrdinalIgnoreCase))
                         listed.Add(text);
-
-            // its mods, in the project's order; one it ticks but doesn't carry is fine when the library has it
-            var carried = new List<ModPackage>();
+            var carried = new List<ImportMod>();
             var modsDir = Path.Combine(temp, "mods");
             if (Directory.Exists(modsDir))
                 foreach (var dir in Directory.GetDirectories(modsDir))
-                    if (ModLibrary.Open(folder, dir).Package is { } package)
-                        carried.Add(package);
-            var library = ModLibrary.List(folder);
-            var mods = new List<ImportMod>();
-            var missing = new List<string>();
-            foreach (var name in listed)
-            {
-                if (carried.FirstOrDefault(p => p.Mod.Is(name)) is { } package)
-                {
-                    if (mods.Any(m => m.Package == package))
-                        continue;
-                    var fate = package.Replaces == null ? ImportFate.New
-                        : SameFiles(package.Mod.Folder, package.Replaces.Folder) ? ImportFate.Same : ImportFate.Differs;
-                    mods.Add(new ImportMod { Package = package, Fate = fate });
-                }
-                else if (!library.Any(m => m.Is(name)))
-                    missing.Add(name);
-            }
+                    if (ProjectMods.Read(dir) is { } mod)
+                        carried.Add(new ImportMod { Mod = mod });
+            var missing = listed.Where(n => !carried.Any(c => c.Mod.Is(n))).ToList();
 
             var shared = json["name"] is JsonValue n && n.TryGetValue<string>(out var given) ? given : "";
             if (shared.Trim().Length == 0)
@@ -205,7 +165,7 @@ public static class ProjectShare
                 Source = source,
                 TempFolder = temp,
                 Name = SafeName(shared),
-                Mods = mods,
+                Mods = carried,
                 Missing = missing,
                 HasSaves = Directory.Exists(saves) && Directory.EnumerateFiles(saves, "*", SearchOption.AllDirectories).Any(),
             }, null);
@@ -247,75 +207,22 @@ public static class ProjectShare
         return safe.Length > 0 ? safe : "Shared project";
     }
 
-    /// <summary>The two folders hold the same files with the same bytes.</summary>
-    public static bool SameFiles(string a, string b)
-    {
-        static List<string> Files(string dir) => Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
-            .Select(f => Path.GetRelativePath(dir, f).ToLowerInvariant()).Order(StringComparer.Ordinal).ToList();
-        var left = Files(a);
-        if (!left.SequenceEqual(Files(b)))
-            return false;
-        foreach (var file in left)
-        {
-            var x = Path.Combine(a, file);
-            var y = Path.Combine(b, file);
-            if (new FileInfo(x).Length != new FileInfo(y).Length)
-                return false;
-            using var fx = File.OpenRead(x);
-            using var fy = File.OpenRead(y);
-            var bx = new byte[81920];
-            var by = new byte[81920];
-            int read;
-            while ((read = fx.Read(bx, 0, bx.Length)) > 0)
-            {
-                fy.ReadExactly(by, 0, read);
-                if (!bx.AsSpan(0, read).SequenceEqual(by.AsSpan(0, read)))
-                    return false;
-            }
-        }
-        return true;
-    }
-
-    /// <summary>Imports it as <paramref name="name"/>: the mods into the library as chosen, then the project (its load
-    /// order naming each mod's folder in the library, its picture, its saves if <paramref name="useSaves"/>, else an
-    /// empty memory card). Returns why not, or null.</summary>
+    /// <summary>Imports it as a new project called <paramref name="name"/>: its mods (their copies), its list, its picture,
+    /// its saves if <paramref name="useSaves"/> (else an empty memory card). Returns why not, or null.</summary>
     public static string? Import(GameFolder folder, ImportPlan plan, string name, bool useSaves)
     {
         if (Projects.CheckName(folder, name) is { } bad)
             return bad;
+        var dir = Projects.FolderOf(folder, name);
         try
         {
             var json = JsonNode.Parse(File.ReadAllText(Path.Combine(plan.TempFolder, "project.json")))?.AsObject() ?? new JsonObject();
-            // where each mod is in the library afterwards, by the name the project ticks it with
-            var placed = new List<(ModInfo Theirs, string Folder)>();
-            foreach (var m in plan.Mods)
-            {
-                if (m.Fate == ImportFate.New || (m.Fate == ImportFate.Differs && m.UseTheirs))
-                {
-                    var (installed, error) = ModLibrary.Install(folder, m.Package);
-                    if (error != null)
-                        return $"{m.Theirs.Name}: {error}";
-                    placed.Add((m.Theirs, installed!));
-                }
-                else
-                    placed.Add((m.Theirs, m.Mine!.FolderName));
-            }
-            var list = new JsonArray();
-            if (json["mods"] is JsonArray ticked)
-                foreach (var item in ticked)
-                    if (item is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0)
-                    {
-                        var at = placed.FirstOrDefault(p => p.Theirs.Is(text)).Folder ?? text;
-                        if (!list.Any(x => x?.GetValue<string>().Equals(at, StringComparison.OrdinalIgnoreCase) == true))
-                            list.Add(at);
-                    }
             json["format"] ??= 1;
             json["name"] = name;
-            json["mods"] = list;
-
-            var dir = Projects.FolderOf(folder, name);
             Directory.CreateDirectory(Path.Combine(dir, "saves", "mc0"));
             Directory.CreateDirectory(Path.Combine(dir, "saves", "mc1"));
+            foreach (var m in plan.Mods)
+                ProjectMods.CopyDir(m.Mod.Folder, Path.Combine(dir, "mods", m.Mod.FolderName));
             if (json["picture"] is JsonValue p && p.TryGetValue<string>(out var picture) && Path.GetFileName(picture) == picture &&
                 Projects.IsPicture(picture) && File.Exists(Path.Combine(plan.TempFolder, picture)))
                 File.Copy(Path.Combine(plan.TempFolder, picture), Path.Combine(dir, picture), overwrite: true);
@@ -323,11 +230,12 @@ public static class ProjectShare
                 json.Remove("picture");
             File.WriteAllText(Path.Combine(dir, "project.json"), json.ToJsonString(Indented) + "\n");
             if (useSaves)
-                CopyDir(Path.Combine(plan.TempFolder, "saves"), Path.Combine(dir, "saves"));
+                ProjectMods.CopyDir(Path.Combine(plan.TempFolder, "saves"), Path.Combine(dir, "saves"));
             return null;
         }
         catch (Exception ex)
         {
+            TryDelete(dir);
             return $"Couldn't import it: {ex.Message}";
         }
     }
@@ -342,16 +250,5 @@ public static class ProjectShare
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
-    }
-
-    private static void CopyDir(string from, string to)
-    {
-        if (!Directory.Exists(from))
-            return;
-        Directory.CreateDirectory(to);
-        foreach (var file in Directory.GetFiles(from))
-            File.Copy(file, Path.Combine(to, Path.GetFileName(file)), overwrite: true);
-        foreach (var dir in Directory.GetDirectories(from))
-            CopyDir(dir, Path.Combine(to, Path.GetFileName(dir)));
     }
 }

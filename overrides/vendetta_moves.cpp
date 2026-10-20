@@ -756,10 +756,13 @@ namespace vendetta_moves
             {
                 Animation a;
                 a.role = role.name;
-                a.file = (folder / fileName).lexically_normal();
+                a.file = vendetta_mods::fileNamed(folder, fileName); // "<id>/<path>" = a file in another mod
                 const std::string here = m_where;
-                files.push_back(a.file);
-                if (!vendetta_mods::readWhole(a.file, a.bytes))
+                if (a.file.empty())
+                    fail("\"animations\": \"" + fileName + "\" leaves that mod's folder");
+                else
+                    files.push_back(a.file);
+                if (a.file.empty() || !vendetta_mods::readWhole(a.file, a.bytes))
                     fail("\"animations\": \"" + fileName + "\" can't be read (missing?)");
                 uint32_t last = 0;
                 if (a.bytes.size() >= 3u)
@@ -1082,11 +1085,13 @@ namespace vendetta_moves
         struct Known
         {
             std::string mod;
+            std::string id; // the mod's
             std::filesystem::path folder;
             std::string name; // move.json's "name", else the folder's
         };
         std::vector<Known> g_known; // in load order
-        std::unordered_map<std::string, std::vector<size_t>> g_knownByName; // upper-case name and folder name -> g_known, in order
+        // upper-case name and folder name, each also as "<mod id>/<name>" -> g_known, in order
+        std::unordered_map<std::string, std::vector<size_t>> g_knownByName;
 
         std::string upper(std::string s)
         {
@@ -1153,19 +1158,44 @@ namespace vendetta_moves
                         continue;
                     }
                     const Json *name = j.find("name");
-                    g_known.push_back({mod.name, moveJson.parent_path(),
+                    g_known.push_back({mod.name, mod.id, moveJson.parent_path(),
                                        name && name->isString() && !name->text.empty() ? name->text
                                                                                        : moveJson.parent_path().filename().string()});
+                    // its animations must be there (its own, or another mod's by "<id>/<path>"): else the project
+                    // doesn't start
+                    if (const Json *anims = j.find("animations"); anims && anims->isObject())
+                        for (const auto &[role, value] : anims->members)
+                        {
+                            if (!value.isString())
+                                continue;
+                            const std::filesystem::path file = vendetta_mods::fileNamed(moveJson.parent_path(), value.text);
+                            std::error_code ec;
+                            if (!file.empty() && std::filesystem::is_regular_file(file, ec))
+                                continue;
+                            // said simply: whose animation it is, not the path
+                            const std::string move = mod.name + "'s move " + g_known.back().name;
+                            std::string rest;
+                            const size_t slash = value.text.find('/');
+                            if (const vendetta_mods::Mod *other = vendetta_mods::splitId(value.text, rest); other && other != &mod)
+                                vendetta_mods::blocking(move + " needs an animation " + other->name + " no longer has.");
+                            else if (const std::string prefix = slash == std::string::npos ? std::string() : value.text.substr(0, slash);
+                                     !other && !prefix.empty() &&
+                                     (vendetta_mods::nameOfId(prefix) != prefix || prefix.find('.') != std::string::npos))
+                                vendetta_mods::blocking(move + " needs " + vendetta_mods::nameOfId(prefix) + "."); // an id: another mod's
+                            else
+                                vendetta_mods::blocking(move + " is missing one of its animations.");
+                        }
                 }
             }
             for (size_t i = 0; i < g_known.size(); ++i)
-            {
-                std::vector<size_t> &byName = g_knownByName[upper(g_known[i].name)];
-                byName.push_back(i);
-                std::vector<size_t> &byFolder = g_knownByName[upper(g_known[i].folder.filename().string())];
-                if (byFolder.empty() || byFolder.back() != i)
-                    byFolder.push_back(i);
-            }
+                for (const std::string &prefix : {std::string(), g_known[i].id + "/"})
+                {
+                    std::vector<size_t> &byName = g_knownByName[upper(prefix + g_known[i].name)];
+                    byName.push_back(i);
+                    std::vector<size_t> &byFolder = g_knownByName[upper(prefix + g_known[i].folder.filename().string())];
+                    if (byFolder.empty() || byFolder.back() != i)
+                        byFolder.push_back(i);
+                }
             if (!g_known.empty())
                 std::cerr << "[moves] " << g_known.size() << " new move(s) in the mods (their names read in "
                           << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()
@@ -1664,8 +1694,17 @@ namespace vendetta_moves
         buildTypes();
         buildEndings();
         moveCheck();
-        indexModMoves();
+        indexNames();
         prepareTables();
+    }
+
+    void indexNames()
+    {
+        static bool done = false;
+        if (done)
+            return;
+        done = true;
+        indexModMoves();
     }
 
     bool isMove(const std::string &name) { return knownNamed(name) != nullptr; }
@@ -1803,10 +1842,19 @@ namespace vendetta_moves
 
     int recordOf(const std::string &name)
     {
+        const std::string want = upper(name);
         for (const auto &[mod, mv] : g_top)
-            if (g_record.count(mv) &&
-                (upper(mv->name) == upper(name) || upper(mv->folder.filename().string()) == upper(name)))
-                return static_cast<int>(g_record.at(mv));
+        {
+            if (!g_record.count(mv))
+                continue;
+            std::string id; // the mod's id, for "<id>/<name>"
+            for (const Known &k : g_known)
+                if (k.folder == mv->folder)
+                    id = k.id;
+            for (const std::string &key : {mv->name, mv->folder.filename().string()})
+                if (upper(key) == want || (!id.empty() && upper(id + "/" + key) == want))
+                    return static_cast<int>(g_record.at(mv));
+        }
         return -1;
     }
 }

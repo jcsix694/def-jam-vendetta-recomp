@@ -88,69 +88,123 @@ internal static class Shot
         Console.WriteLine($"play arguments for the original game: {folder.PlayArguments("")}");
     }
 
-    /// <summary>Dev only (--selftest-mods &lt;a mod's zip&gt;, with VENDETTA_ROOT = a scratch copy of the folder holding a
-    /// project): the Mods page as a player uses it, with the project's list printed after each step.</summary>
-    public static void SelfTestMods(string zip)
+    /// <summary>Dev only (--selftest-mods &lt;a mod's zip or folder&gt; [&lt;another&gt; ...], with VENDETTA_ROOT = a scratch copy
+    /// of the folder holding a project): the Mods page as a player uses it on the first project (install into it, where the
+    /// wrestlers go, on / off with needs, the problems and their fixes, an update that breaks something, remove), with the
+    /// project's list and problems printed after each step.</summary>
+    public static void SelfTestMods(string[] mods)
     {
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VENDETTA_ROOT")))
         {
             Console.WriteLine("--selftest-mods installs and removes mods: set VENDETTA_ROOT to a scratch copy of the folder first");
             return;
         }
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
         var folder = GameFolder.Find();
         var project = Projects.List(folder).FirstOrDefault()?.Name ?? "";
         var m = new ModsViewModel(folder, readOnly: false, text => Console.WriteLine("  says: " + text), () => { });
         m.Open(project);
         void Show(string what)
         {
-            Console.WriteLine($"{what}: {m.LibraryHeading}");
+            Console.WriteLine($"{what}: {m.ListHeading}");
             foreach (var g in m.Groups)
-                Console.WriteLine($"  {g.Title} {g.Counts}: " + string.Join(", ", g.Rows.Select(r => (r.IsOn ? "[x] " : "[ ] ") + r.Name)));
+                Console.WriteLine($"  {g.Title} {g.Counts}: " + string.Join(", ", g.Rows.Select(r => (r.IsOn ? "[x] " : "[ ] ") + r.Name +
+                    (r.HasPlaces ? $" ({r.PlacesText})" : "") + (r.HasProblem ? " !" : ""))));
             Console.WriteLine($"  {project}'s project.json mods: " + string.Join(" | ", Projects.List(folder).First(p => p.Name == project).Mods));
             if (m.HasNote)
-                Console.WriteLine($"  note: {m.Note}{(m.AskUntick ? "  [Untick both] [Keep it ticked]" : "")}");
+                Console.WriteLine($"  note: {m.Note}{(m.AskOff ? "  [Turn both off] [Keep it on]" : "")}");
+            if (m.HasProblems)
+            {
+                Console.WriteLine($"  {m.ProblemsHeading}:");
+                foreach (var p in m.Problems)
+                    Console.WriteLine($"    {p.Text}  " + string.Join(" ", p.Fixes.Select(f => $"[{f.Label}]")));
+            }
         }
-        ModRow Row(string name) => m.Groups.SelectMany(g => g.Rows).First(r => r.Name == name);
+        ModRow? Row(string name) => m.Groups.SelectMany(g => g.Rows).FirstOrDefault(r => r.Name == name);
         Show("start");
-        foreach (var g in m.Groups.SelectMany(g => g.Rows))
-            Console.WriteLine($"  {g.Name}: category {g.Mod.Category}; changes {g.Changes}; needs {string.Join(", ", g.Mod.Needs)}");
-        Row("Needs SCM").Toggle.Execute(null);
-        Show("ticked Needs SCM");
-        Row("Sweet Chin Music test").Toggle.Execute(null);
-        Show("unticked Sweet Chin Music (needed)");
-        m.KeepTickedCommand.Execute(null);
-        Show("kept");
-        m.Order[0].Down.Execute(null);
-        Show("the first moved down");
-        Row("Sweet Chin Music test").Toggle.Execute(null);
-        m.UntickBothCommand.Execute(null);
-        Show("unticked both");
-        m.Search = "readd";
-        Show("searched 'readd'");
-        m.Search = "";
-        m.Category = "Animations";
-        Show("category Animations");
-        m.Category = "All";
-        m.Pick(zip);
-        Console.WriteLine($"install dialog: {m.InstallTitle} | version {m.InstallVersion} | {m.InstallCategory} | {m.InstallChanges} | needs {m.InstallNeeds} | replaces: {m.InstallReplacesText} | {m.TickTooText}: {m.TickToo}");
-        m.ConfirmDialogCommand.Execute(null);
-        Show("installed");
-        Console.WriteLine($"  picked: {m.PickedHeading} | {m.PickedDescription} | used by {m.PickedUsedBy}");
-        m.AskRemoveCommand.Execute(null);
-        Console.WriteLine($"remove dialog: {m.RemoveTitle} | {m.RemoveText} {string.Join(", ", m.RemoveUsers)}");
-        m.ConfirmDialogCommand.Execute(null);
-        Show("removed");
-        Console.WriteLine("  mods folder: " + string.Join(", ", Directory.GetDirectories(ModLibrary.RootOf(folder)).Select(Path.GetFileName)));
+        foreach (var path in mods)
+        {
+            m.Pick(path);
+            if (!m.IsInstall)
+                continue;
+            Console.WriteLine($"install dialog: {m.InstallTitle} | version {m.InstallVersion} | in it {m.InstallContents}" +
+                              (m.InstallHasWrestlers ? $" | {m.InstallPlacesHeading}: " + (m.InstallPlacesInline
+                                  ? string.Join(", ", m.PlaceRows.Select(r => $"{r.Name} = {r.Selected?.Label}"))
+                                  : m.InstallPlacesSummary) : "") +
+                              (m.InstallHasNeeds ? " | needs " + string.Join(", ", m.InstallNeedLines) : "") +
+                              (m.InstallNeedsMissing ? $" | warning: {m.InstallMissingText}" : "") +
+                              (m.InstallReplaces ? $" | {m.InstallReplacesText}" : "") +
+                              (m.InstallBreaksSomething ? " | breaks: " + string.Join(" / ", m.InstallBreaks) : "") +
+                              $" | button {m.InstallConfirmText}");
+            m.ConfirmDialogCommand.Execute(null);
+            Show($"installed {Path.GetFileName(path)}");
+        }
+        // where a pack's wrestlers go: the window, a taken spot, a change, Done
+        if (m.Groups.SelectMany(g => g.Rows).FirstOrDefault(r => r.Mod.Wrestlers.Count > 1) is { } pack)
+        {
+            pack.Pick.Execute(null);
+            Console.WriteLine($"picked {m.PickedHeading}: {m.PickedPlacesHeading}: " + string.Join(", ", m.PickedPlaces.Select(p => $"{p.Name} {p.Place}")));
+            m.ChangePlacesCommand.Execute(null);
+            Console.WriteLine($"where dialog: {m.WhereTitle} | {m.WhereSummary}");
+            foreach (var r in m.PlaceRows)
+                Console.WriteLine($"  {r.Name} = {r.Selected?.Label}; greyed: " + string.Join(", ", r.Options.Where(o => !o.IsEnabled).Select(o => o.Label)));
+            var first = m.PlaceRows[0];
+            first.Selected = first.Options[0];
+            Console.WriteLine($"  {first.Name} made a new wrestler: {m.WhereSummary}");
+            m.WhereSearch = first.Name[..2];
+            Console.WriteLine($"  searched '{m.WhereSearch}': " + string.Join(", ", m.WhereRows.Select(r => r.Name)));
+            m.ConfirmDialogCommand.Execute(null);
+            Show("places changed");
+        }
+        // on / off with needs, and the problems' fixes
+        foreach (var row in m.Groups.SelectMany(g => g.Rows).Where(r => r.Mod.Needs.Count > 0).ToList())
+        {
+            var needed = m.Groups.SelectMany(g => g.Rows).FirstOrDefault(r => row.Mod.Needs.Any(r.Mod.Is));
+            if (needed == null)
+                continue;
+            needed.Toggle.Execute(null);
+            Show($"turned off {needed.Name} (needed by {row.Name})");
+            m.KeepOnCommand.Execute(null);
+            Row(needed.Name)!.Toggle.Execute(null);
+            m.OffBothCommand.Execute(null);
+            Show("both turned off");
+            Row(row.Name)!.Toggle.Execute(null);
+            Show($"turned {row.Name} on (its need comes with it)");
+            break;
+        }
+        while (m.Problems.FirstOrDefault(p => p.Fixes.Any(f => f.IsCommand)) is { } problem)
+        {
+            var fix = problem.Fixes.First(f => f.IsCommand);
+            Console.WriteLine($"fix: {problem.Text} -> [{fix.Label}]");
+            fix.Run!.Execute(null);
+            if (m.IsWhere)
+            {
+                Console.WriteLine($"  where dialog: {m.WhereTitle}");
+                var clash = m.PlaceRows.FirstOrDefault(r => r.Selected is { IsEnabled: false }) ?? m.PlaceRows[0];
+                clash.Selected = clash.Options[0];
+                m.ConfirmDialogCommand.Execute(null);
+            }
+            Show("after the fix");
+        }
+        if (m.Groups.SelectMany(g => g.Rows).FirstOrDefault() is { } last)
+        {
+            last.Pick.Execute(null);
+            m.AskRemoveCommand.Execute(null);
+            Console.WriteLine($"remove dialog: {m.RemoveTitle} | {m.RemoveText}" + (m.RemoveHasWarning ? $" | {m.RemoveWarning}" : ""));
+            m.ConfirmDialogCommand.Execute(null);
+            Show("removed");
+        }
+        Console.WriteLine("  the project's mods folder: " + string.Join(", ", Directory.GetDirectories(ProjectMods.RootOf(folder, project)).Select(Path.GetFileName)));
     }
 
     /// <summary>Dev only (--selftest-share &lt;project&gt;, with VENDETTA_ROOT = a scratch copy of the folder holding that
-    /// project and its mods): export it, import it back (the same mods, another version kept or taken, a mod new to the
-    /// library), and the zips that must be refused.</summary>
+    /// project and its mods): export it, import it back as a new project (its own copies), and the zips that must be
+    /// refused.</summary>
     public static void SelfTestShare(string name)
     {
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VENDETTA_ROOT")))
         {
-            Console.WriteLine("--selftest-share exports, imports and changes mods: set VENDETTA_ROOT to a scratch copy of the folder first");
+            Console.WriteLine("--selftest-share exports and imports projects: set VENDETTA_ROOT to a scratch copy of the folder first");
             return;
         }
         Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -163,16 +217,15 @@ internal static class Shot
         {
             var dir = Projects.FolderOf(folder, key);
             Console.WriteLine($"  {key}\\project.json: " + File.ReadAllText(Path.Combine(dir, "project.json")).ReplaceLineEndings(" ").Replace("  ", ""));
-            Console.WriteLine($"  {key}\\ files: " + string.Join(", ", Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(dir, f))));
+            Console.WriteLine($"  {key}\\mods: " + string.Join(", ", ProjectMods.List(folder, key).Select(m => $"{m.FolderName} (v{(m.Version.Length > 0 ? m.Version : "-")}{(m.Wrestlers.Count > 0 ? ", " + m.PlacesSummary : "")})")));
+            Console.WriteLine($"  {key}\\saves: " + string.Join(", ", Directory.EnumerateFiles(Path.Combine(dir, "saves"), "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(dir, f))));
+            var choice = p.Choices.FirstOrDefault(c => c.Key == key);
+            Console.WriteLine($"  on the Play page: {choice?.Line}{choice?.ProblemsText}");
         }
-        void ShowLibrary() => Console.WriteLine("  library: " + string.Join(", ", ModLibrary.List(folder).Select(m => $"{m.FolderName} (v{(m.Version.Length > 0 ? m.Version : "-")})")));
         void ShowImport()
         {
             Console.WriteLine($"import dialog: {p.DialogTitle} | from {Path.GetFileName(p.ImportFrom)} | name '{p.DialogName}' | {p.ImportNameHint}");
-            Console.WriteLine($"  {p.ImportModsHeading}");
-            foreach (var r in p.ImportMods)
-                Console.WriteLine($"    {r.Name} {r.Version} | {r.Line} | " + (r.IsChoice ? $"[{string.Join(" / ", r.Choices)}] = {r.Choices[r.Choice]}" : r.FateText));
-            if (p.ImportHasNote) Console.WriteLine($"  note: {p.ImportNote}");
+            Console.WriteLine($"  {p.ImportModsHeading}: " + string.Join(", ", p.ImportMods.Select(r => $"{r.Name} {r.Version} ({r.Line})")));
             if (p.ImportHasMissing) Console.WriteLine($"  missing: {p.ImportMissingText}");
             Console.WriteLine($"  saves came with it: {p.ImportHasSaves}, use them: {p.ImportUseSaves}");
         }
@@ -188,8 +241,6 @@ internal static class Shot
             using var zip = System.IO.Compression.ZipFile.OpenRead(p.ExportPath);
             Console.WriteLine($"  zip ({new FileInfo(p.ExportPath).Length} bytes): " + string.Join(", ", zip.Entries.Select(e => e.FullName).Where(n => !n.Contains("/moves/") && !n.Contains("/wrestlers/"))) +
                               $" + {zip.Entries.Count(e => e.FullName.Contains("/moves/") || e.FullName.Contains("/wrestlers/"))} move / wrestler files");
-            using (var r = new StreamReader(zip.GetEntry("project.json")!.Open()))
-                Console.WriteLine("  its project.json: " + r.ReadToEnd().ReplaceLineEndings(" ").Replace("  ", ""));
             return p.ExportPath;
         }
 
@@ -198,69 +249,52 @@ internal static class Shot
         Directory.CreateDirectory(saveDir);
         File.WriteAllText(Path.Combine(saveDir, "test save.bin"), "a pretend save");
         p.Reload(name);
-        ShowLibrary();
+        ShowProject(name);
 
         Console.WriteLine("\n1. export with its saves");
         var zipPath = Export(name, saves: true);
 
-        Console.WriteLine("\n2. export a project ticking a mod that isn't installed");
-        if (p.Choices.Any(c => c.Key == "Missing mod"))
-            Export("Missing mod", saves: false);
-
-        Console.WriteLine("\n3. import it back: the name is taken, the mods are the same as the library's");
+        Console.WriteLine("\n2. import it back: the name is taken, so it gets a new one; its own copies of the mods");
         p.PickImport(zipPath);
         ShowImport();
         var temp = Directory.GetDirectories(Path.GetTempPath(), "Vendetta import *").OrderByDescending(Directory.GetCreationTimeUtc).First();
         p.ConfirmCommand.Execute(null);
         Console.WriteLine($"  picked now: '{p.Key}'; temporary folder gone: {!Directory.Exists(temp)}");
         ShowProject(p.Key);
-        ShowLibrary();
+        var copy = p.Key;
 
-        var mod = ModLibrary.List(folder).First(m => m.Is(Projects.List(folder).First(x => x.Name == name).Mods[0]));
-        var manifest = Path.Combine(mod.Folder, "mod.json");
-        var exported = File.ReadAllText(manifest);
-        var changed = System.Text.Json.Nodes.JsonNode.Parse(exported)!.AsObject();
-        changed["version"] = "2";
-        File.WriteAllText(manifest, changed.ToJsonString());
+        Console.WriteLine("\n3. the copy changed (a mod's version): the first project keeps its own");
+        if (ProjectMods.List(folder, copy).FirstOrDefault() is { } mod)
+        {
+            var manifest = Path.Combine(mod.Folder, "mod.json");
+            var changed = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(manifest))!.AsObject();
+            changed["version"] = "3";
+            File.WriteAllText(manifest, changed.ToJsonString());
+            p.Reload(copy);
+            ShowProject(copy);
+            ShowProject(name);
+        }
 
-        Console.WriteLine("\n4. the library's copy changed to v2: import, keep mine");
+        Console.WriteLine("\n4. import without the saves, under another name");
         p.PickImport(zipPath);
-        ShowImport();
-        p.ImportMods.First(r => r.IsChoice).Choice = 1;
-        Console.WriteLine($"  keep mine picked: note: {p.ImportNote}");
         p.ImportUseSaves = false;
-        p.ConfirmCommand.Execute(null);
-        ShowProject(p.Key);
-        ShowLibrary();
-
-        Console.WriteLine("\n5. import again, update to theirs");
-        p.PickImport(zipPath);
-        p.ConfirmCommand.Execute(null);
-        ShowLibrary();
-        Console.WriteLine($"  the library's mod.json is the shared one again: {File.ReadAllText(manifest) == exported}");
-
-        Console.WriteLine("\n6. the mod removed from the library: import installs it");
-        ModLibrary.Remove(folder, mod);
-        p.Reload(p.Key);
-        ShowLibrary();
-        p.PickImport(zipPath);
-        ShowImport();
         p.DialogName = "Shared " + name;
         p.ConfirmCommand.Execute(null);
         ShowProject(p.Key);
-        ShowLibrary();
 
-        Console.WriteLine("\n7. cancelled: the temporary folder goes");
+        Console.WriteLine("\n5. cancelled: the temporary folder goes");
         p.PickImport(zipPath);
         temp = Directory.GetDirectories(Path.GetTempPath(), "Vendetta import *").OrderByDescending(Directory.GetCreationTimeUtc).First();
         p.CancelCommand.Execute(null);
         Console.WriteLine($"  temporary folder gone: {!Directory.Exists(temp)}");
 
-        Console.WriteLine("\n8. zips that are refused or mistaken");
+        Console.WriteLine("\n6. zips that are refused or mistaken");
         var modZip = Path.Combine(outDir, "a mod.zip");
-        System.IO.Compression.ZipFile.CreateFromDirectory(ModLibrary.List(folder).First().Folder, modZip);
+        if (File.Exists(modZip))
+            File.Delete(modZip);
+        System.IO.Compression.ZipFile.CreateFromDirectory(ProjectMods.List(folder, name).First().Folder, modZip);
         Console.Write("  a mod's zip on Import:"); p.PickImport(modZip);
-        Console.WriteLine("  the shared project's zip on Install a mod: " + ModLibrary.Open(folder, zipPath).Error);
+        Console.WriteLine("  the shared project's zip on Install a mod: " + ProjectMods.Open(folder, name, zipPath).Error);
         var junk = Path.Combine(outDir, "not a project.zip");
         using (var z = System.IO.Compression.ZipFile.Open(junk, System.IO.Compression.ZipArchiveMode.Create))
             z.CreateEntry("readme.txt");

@@ -20,7 +20,7 @@
                 <!-- Export: what goes in the zip -->
                 <StackPanel Spacing="14" IsVisible="{Binding IsExport}">
                     <TextBlock TextWrapping="Wrap" LineHeight="21" Foreground="{StaticResource VText2}"
-                               Text="One zip to share. Whoever imports it gets the project and every mod it ticks, ready to play." />
+                               Text="One zip to share. Whoever imports it gets the project and its mods, ready to play." />
                     <StackPanel Spacing="10">
                         <Grid ColumnDefinitions="26,*">
                             <PathIcon Width="14" Height="12" Foreground="{StaticResource VGood}" VerticalAlignment="Top" Margin="0,3,0,0"
@@ -89,19 +89,16 @@
                                             <Run Text="{Binding Name}" />
                                             <Run Text="{Binding Version}" Foreground="{StaticResource VHint}" FontSize="12.5" />
                                         </TextBlock>
-                                        <TextBlock Classes="hint" Text="{Binding Line}" Classes.warn="{Binding LineWarn}" />
+                                        <TextBlock Classes="hint" Text="{Binding Line}" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" FontSize="12.5" VerticalAlignment="Center" Text="{Binding FateText}"
-                                               IsVisible="{Binding IsFixed}" Classes.good="{Binding FateGood}" Foreground="{StaticResource VText2}" />
-                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}" SelectedIndex="{Binding Choice}"
-                                              IsVisible="{Binding IsChoice}" VerticalAlignment="Center" MinWidth="180" />
+                                    <TextBlock Grid.Column="1" FontSize="12.5" VerticalAlignment="Center" Text="Comes with it"
+                                               Classes="good" Foreground="{StaticResource VText2}" />
                                 </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <TextBlock Classes="hint" IsVisible="{Binding ImportNoMods}"
-                               Text="Nothing is ticked in it: it plays like the original game, with its own save." />
-                    <TextBlock Classes="hint" LineHeight="19" Text="{Binding ImportNote}" IsVisible="{Binding ImportHasNote}" />
+                               Text="It has no mods: it plays like the original game, with its own save." />
                     <Border Classes="note warn" IsVisible="{Binding ImportHasMissing}">
                         <TextBlock Text="{Binding ImportMissingText}" TextWrapping="Wrap" FontSize="13" LineHeight="19" />
                     </Border>
@@ -151,22 +148,21 @@
                     </StackPanel>
                     <TextBlock Classes="hint" Margin="28,0,0,0" Text="A copy: the two saves go their own ways after this." />
                 </StackPanel>
-                <TextBlock Classes="hint" IsVisible="{Binding IsNew}" Text="No mods are ticked yet: tick them on the Mods page." />
+                <TextBlock Classes="hint" IsVisible="{Binding IsNew}" Text="No mods yet: install them on the Mods page." />
 
                 <TextBlock Classes="hint" IsVisible="{Binding IsCopy}"
-                           Text="The copy has the same mods ticked, the same picture and a copy of the saves. The mods themselves stay in your library, once." />
+                           Text="The copy gets its own copy of the mods, the same picture and a copy of the saves." />
                 <TextBlock Classes="hint" IsVisible="{Binding IsRename}"
                            Text="A desktop shortcut made for the old name stops working: make a new one after." />
 
                 <!-- Delete -->
                 <StackPanel Spacing="10" IsVisible="{Binding IsDelete}">
                     <TextBlock TextWrapping="Wrap" LineHeight="21" Foreground="{StaticResource VText2}">
-                        <Run Text="The project and" />
-                        <Run Text="its saves" FontWeight="SemiBold" Foreground="#ffffff" />
-                        <Run Text="(its memory cards) are deleted. This can't be undone." />
+                        <Run Text="The project," />
+                        <Run Text="its mods and its saves" FontWeight="SemiBold" Foreground="#ffffff" />
+                        <Run Text="are deleted. This can't be undone." />
                     </TextBlock>
-                    <TextBlock Classes="hint" LineHeight="19"
-                               Text="Its mods stay installed: they are in your mods library, and other projects may use them." />
+                    <TextBlock Classes="hint" LineHeight="19" Text="Your other projects keep their own." />
                 </StackPanel>
 
                 <TextBlock Classes="bad" TextWrapping="Wrap" Text="{Binding DialogError}"
