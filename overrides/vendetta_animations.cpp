@@ -445,7 +445,7 @@ namespace vendetta_animations
     }
 
     std::vector<std::array<uint8_t, 2u * kSlots>> g_gameMovesets; // every attire's slots as the game has them (a new
-                                                                   // attire's: as its moveset.json gives them at start-up)
+                                                                   // attire's: as its "moveset" gives them at start-up)
     uint32_t g_standIn = 0;                                        // where a spare clip id points
     std::array<uint8_t, kFzuiSize> g_standInTiming{};              // and its timing record
     uint32_t g_poisonClip = 0;                                     // VENDETTA_ANIM_POISON: 64 bytes of 0xFF
@@ -639,7 +639,7 @@ namespace vendetta_animations
         std::string modName;
         std::string wrestler;
         int flags = -1;
-        bool base = false; // from a new wrestler's own moveset.json (edits go on top of it)
+        bool base = false; // from a new or replaced attire's own moveset (edits go on top of it)
     };
 
     // The number in "game move 56 CEMENT HANDS" (the name after it is for people), or -1.
@@ -654,15 +654,16 @@ namespace vendetta_animations
     }
     using SlotChanges = std::map<std::pair<uint32_t, uint32_t>, SlotChange>; // (attire, slot) -> what goes there
 
-    // The match's attires' slots: first each new wrestler's own moveset.json (all its slots: the base), then every mod's
+    // The match's attires' slots: first each new or replaced attire's own moveset (wrestler.json's "moveset": all its
+    // slots, the base), then every mod's
     // "wrestlers": { "<wrestler>": "<file>" } edits on top (only the listed slots change; a later mod's win).
     SlotChanges readSlotChanges(const std::set<uint32_t> &matchAttires)
     {
         SlotChanges changes;
         std::map<std::tuple<std::string, std::string, std::string>, uint32_t> clashes; // (mod, wrestler, earlier mod) -> slots
-        // One slot file for one wrestler: its slots for the attires in this match.
+        // One slot file for one wrestler: its slots for the attires in this match (the whole file, or its member `key`).
         const auto readSlotFile = [&](const std::string &modName, const std::string &wrestler, const std::filesystem::path &file,
-                                      const std::vector<uint32_t> &all, bool base)
+                                      const std::string &key, const std::vector<uint32_t> &all, bool base)
         {
             std::vector<uint32_t> attires;
             for (uint32_t attire : all)
@@ -671,16 +672,19 @@ namespace vendetta_animations
             if (attires.empty())
                 return; // not in this match
             std::vector<uint8_t> bytes;
-            vendetta_mods::Json moveset;
+            vendetta_mods::Json whole;
             std::string error;
-            if (file.empty() || !readFile(file, bytes) ||
-                !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error) || !moveset.isObject())
+            const vendetta_mods::Json *moveset = nullptr;
+            if (!file.empty() && readFile(file, bytes) &&
+                vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), whole, error) && whole.isObject())
+                moveset = key.empty() ? &whole : whole.find(key);
+            if (!moveset || !moveset->isObject())
             {
-                vendetta_mods::problem() << "[mods] " << modName << ": " << wrestler << "'s file can't be read"
-                          << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
+                vendetta_mods::problem() << "[mods] " << modName << ": " << wrestler << "'s " << (key.empty() ? "file" : "\"" + key + "\"")
+                          << " can't be read" << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
                 return;
             }
-            for (const auto &[slotText, value] : moveset.members)
+            for (const auto &[slotText, value] : moveset->members)
             {
                 char *end = nullptr;
                 const long slot = std::strtol(slotText.c_str(), &end, 10);
@@ -708,9 +712,9 @@ namespace vendetta_animations
                 }
             }
         };
-        // the base: each new wrestler's own moveset.json
+        // the base: each new or replaced attire's own moveset
         for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
-            readSlotFile(own.modName, own.wrestler, own.file, own.records, true);
+            readSlotFile(own.modName, own.wrestler, own.file, own.key, own.records, true);
         // the edits on top, in load order
         for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
         {
@@ -733,7 +737,7 @@ namespace vendetta_animations
                 }
                 const std::filesystem::path file =
                     fileValue.isString() ? vendetta_mods::modFile(mod, fileValue.text, "wrestler") : std::filesystem::path();
-                readSlotFile(mod.name, wrestler, file, all, false);
+                readSlotFile(mod.name, wrestler, file, std::string(), all, false);
             }
         }
         for (const auto &[who, slots] : clashes)
@@ -1142,13 +1146,16 @@ namespace vendetta_animations
             }
             for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
             {
-                // a new wrestler's moveset.json: the mod moves it names
-                vendetta_mods::Json moveset;
+                // a new or replaced attire's own moveset: the mod moves it names
+                vendetta_mods::Json whole;
                 std::string error;
                 if (!inMatch(own.records) || !vendetta_mods::readAhead(own.file, bytes) ||
-                    !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error))
+                    !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), whole, error))
                     continue;
-                for (const auto &[slot, value] : moveset.members)
+                const vendetta_mods::Json *moveset = own.key.empty() ? &whole : whole.find(own.key);
+                if (!moveset)
+                    continue;
+                for (const auto &[slot, value] : moveset->members)
                 {
                     const vendetta_mods::Json *move = value.isObject() ? value.find("move") : &value;
                     if (move && move->isString() && named.insert(upper(move->text)).second)

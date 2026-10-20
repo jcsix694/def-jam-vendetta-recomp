@@ -9,7 +9,7 @@ public sealed class WrestlerPlace
 {
     /// <summary>Its folder, as mod.json names it ("wrestlers/Sting").</summary>
     public required string Folder { get; init; }
-    /// <summary>The name shown: its wrestler.json's "name", else its folder's.</summary>
+    /// <summary>The name shown: its wrestler.json's "profile" "name", else its folder's.</summary>
     public required string Name { get; init; }
     /// <summary>"" = a new wrestler, else the game wrestler it replaces (as mod.json gives it).</summary>
     public required string Place { get; init; }
@@ -182,13 +182,13 @@ public static class ProjectMods
         };
     }
 
-    /// <summary>A wrestler folder's wrestler.json "name" (the game shows it), else the folder's own name.</summary>
+    /// <summary>A wrestler folder's wrestler.json "profile" "name" (the game shows it), else the folder's own name.</summary>
     private static string WrestlerName(string modDir, string folder)
     {
         try
         {
             var path = Path.Combine(modDir, folder, "wrestler.json");
-            if (File.Exists(path) && JsonNode.Parse(File.ReadAllText(path))?["name"] is JsonValue v && v.TryGetValue<string>(out var n) && n.Length > 0)
+            if (File.Exists(path) && JsonNode.Parse(File.ReadAllText(path))?["profile"]?["name"] is JsonValue v && v.TryGetValue<string>(out var n) && n.Length > 0)
                 return n;
         }
         catch

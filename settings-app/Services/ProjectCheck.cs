@@ -160,10 +160,16 @@ public static class ProjectCheck
                 animationNames.Add(mod.Id + "/" + stem);
             }
 
-        void CheckSlots(ModInfo mod, string wrestler, string file)
+        // a moveset file's slots (key null), or the slots under `key` in it (a wrestler.json's "moveset")
+        void CheckSlots(ModInfo mod, string wrestler, string file, string? key = null)
         {
             JsonObject? moveset = null;
-            try { moveset = JsonNode.Parse(File.ReadAllText(file))?.AsObject(); } catch { }
+            try
+            {
+                var whole = JsonNode.Parse(File.ReadAllText(file))?.AsObject();
+                moveset = key == null ? whole : whole?[key]?.AsObject();
+            }
+            catch { }
             if (moveset == null)
             {
                 Add(ProblemKind.MoveMissing, $"{wrestler}'s moveset in {mod.Name} can't be read.", mod.FolderName);
@@ -181,7 +187,7 @@ public static class ProjectCheck
             }
         }
 
-        // the wrestlers' own movesets (the folder's and each attire's)
+        // the wrestlers' own movesets (the "moveset" in the folder's wrestler.json and in each attire's)
         var newWrestlerNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var mod in usable)
             foreach (var w in mod.Wrestlers)
@@ -192,9 +198,9 @@ public static class ProjectCheck
                     newWrestlerNames.Add(Path.GetFileName(w.Folder.TrimEnd('/', '\\')));
                     newWrestlerNames.Add(w.Name);
                 }
-                foreach (var file in new[] { Path.Combine(dir, "moveset.json") }.Concat(Enumerable.Range(1, 3).Select(n => Path.Combine(dir, "attires", n.ToString(), "moveset.json"))))
-                    if (File.Exists(file))
-                        CheckSlots(mod, w.Name, file);
+                foreach (var file in new[] { Path.Combine(dir, "wrestler.json") }.Concat(Enumerable.Range(1, 3).Select(n => Path.Combine(dir, "attires", n.ToString(), "wrestler.json"))))
+                    if (File.Exists(file) && HasKey(file, "moveset"))
+                        CheckSlots(mod, w.Name, file, "moveset");
             }
         // the mods' moveset changes for any wrestler
         foreach (var mod in usable)
@@ -212,6 +218,13 @@ public static class ProjectCheck
         return problems;
     }
 
+    // A JSON file whose top level has `key` (a file that can't be read: no)
+    private static bool HasKey(string file, string key)
+    {
+        try { return JsonNode.Parse(File.ReadAllText(file)) is JsonObject o && o.ContainsKey(key); }
+        catch { return false; }
+    }
+
     // "game move <number> <name>" (as the game reads it)
     private static bool IsGameMove(string value)
     {
@@ -226,7 +239,7 @@ public static class ProjectCheck
     /// is attire 1 (as the game reads it).</summary>
     public static List<int> AttireSpots(string dir)
     {
-        string[] files = { "wrestler.json", "fight.json", "moveset.json", "render.png", "icon.png", "logo.png", "model.wrs", "model.glb", "model.gltf" };
+        string[] files = { "wrestler.json", "render.png", "icon.png", "logo.png", "model.wrs", "model.glb", "model.gltf" };
         var spots = new List<int>();
         var any = false;
         for (var n = 1; n <= 9; n++)

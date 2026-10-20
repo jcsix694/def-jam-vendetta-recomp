@@ -79,20 +79,23 @@ namespace vendetta_modcheck
             return names;
         }
 
-        // every slot of one moveset file names something the project has
+        // every slot of one moveset (a whole file, or its member `key`) names something the project has
         void checkSlots(const std::string &modName, const std::string &wrestler, const std::filesystem::path &file,
-                        const std::set<std::string> &animations)
+                        const std::string &key, const std::set<std::string> &animations)
         {
             std::vector<uint8_t> bytes;
-            Json moveset;
+            Json whole;
             std::string error;
-            if (file.empty() || !vendetta_mods::readWhole(file, bytes) ||
-                !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), moveset, error) || !moveset.isObject())
+            const Json *moveset = nullptr;
+            if (!file.empty() && vendetta_mods::readWhole(file, bytes) &&
+                vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), whole, error) && whole.isObject())
+                moveset = key.empty() ? &whole : whole.find(key);
+            if (!moveset || !moveset->isObject())
             {
                 vendetta_mods::blocking(wrestler + "'s moveset in " + modName + " can't be read.");
                 return;
             }
-            for (const auto &[slot, value] : moveset.members)
+            for (const auto &[slot, value] : moveset->members)
             {
                 const Json *move = value.isObject() ? value.find("move") : &value;
                 if (!move || !move->isString())
@@ -113,7 +116,7 @@ namespace vendetta_modcheck
             const std::set<std::string> animations = newAnimationNames();
             // new wrestlers' (and replacements') own movesets
             for (const vendetta_wrestlers::SlotFile &own : vendetta_wrestlers::slotFiles())
-                checkSlots(own.modName, own.wrestler, own.file, animations);
+                checkSlots(own.modName, own.wrestler, own.file, own.key, animations);
             // the mods' moveset changes for any wrestler
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
@@ -129,7 +132,7 @@ namespace vendetta_modcheck
                     }
                     if (!fileValue.isString())
                         continue;
-                    checkSlots(mod.name, wrestler, vendetta_mods::modFile(mod, fileValue.text, "wrestler"), animations);
+                    checkSlots(mod.name, wrestler, vendetta_mods::modFile(mod, fileValue.text, "wrestler"), std::string(), animations);
                 }
             }
         }

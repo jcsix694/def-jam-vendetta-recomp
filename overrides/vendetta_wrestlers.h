@@ -6,37 +6,44 @@
 // its folder, every value written out (nothing is taken from a game wrestler's values while the game runs; starting
 // from one is the mod tool's job):
 //
-//   wrestler.json
-//   { "name": "NOVA",                  the short name (the HUD, the results); "full name" for the intro and the banner
-//     "full name": "JAY NOVA",
-//     "height": "6'1\"", "weight": "225lbs",
-//     "size": "normal",                short / normal / tall (the game's 0.95 / 1.0 / 1.05)
-//     "based on": "Briggs",            the game wrestler whose model it wears (and, for now, whose pictures it shows);
-//                                      not used when it has a model of its own: Briggs' always stands behind that (his
-//                                      pictures when the mod brings none, his model if the mod's can't be used)
-//     "sounds like": "Spider" }        whose voice it uses (intro line, win line, grunts); "based on" if left out
-//   fight.json      every value of its fight record (the game's WPAR): "styles", "attack" and "defence" by body area,
-//                   "stats", "computer", "flags", five "combos", the 23 bits never read
-//   moveset.json    all 128 slots: "none", "game move <number> <name>", a mod's move by its name, or
-//                   { "move": ..., "flags": 0-15 }
+//   wrestler.json   everything about it but the pictures and the model, in three parts:
+//   { "profile": { "name": "NOVA",     the short name (the HUD, the results); "full name" for the intro and the banner
+//                  "full name": "JAY NOVA",
+//                  "height": "6'1\"", "weight": "225lbs",
+//                  "size": "normal",   short / normal / tall (the game's 0.95 / 1.0 / 1.05)
+//                  "based on": "Briggs",   the game wrestler whose model it wears (and, for now, whose pictures
+//                                      it shows); not used when it has a model of its own: Briggs' always stands
+//                                      behind that (his pictures when the mod brings none, his model if the mod's
+//                                      can't be used)
+//                  "sounds like": "Spider" },   whose voice it uses (intro line, win line, grunts); "based on" if
+//                                      left out
+//     "fight":   { every value of its fight record (the game's WPAR): "styles", "attack" and "defence" by body area,
+//                  "stats", "computer", "flags", five "combos", the 23 bits never read },
+//     "moveset": { all 128 slots: "none", "game move <number> <name>", a mod's move by its name, or
+//                  { "move": ..., "flags": 0-15 } } }
 //   render.png, icon.png, logo.png      the select pictures (the big render, the grid icon, the name logo)
-//   attires, attires, attires    its attires, as many as there are folders, in order to the first missing or
-//                   empty one (none: one attire from the files above). An attire folder can hold any of the files above
-//                   and its own model: model.wrs (the game's own format, as adjmk writes it), model.glb or model.gltf,
-//                   with an optional textures folder (PNG at any size; a texture missing there comes from the model
-//                   file); each file found there is used whole for that attire, else the wrestler folder's (so names,
-//                   size, voice, moves and pictures can all differ per attire; vendetta_wrestlerdraw.cpp draws the
-//                   model). A wrestler with a missing or wrong value is left out, with the value named (mods.log).
+//   attires\1, attires\2, attires\3    its attires, as many as there are folders, in order to the first missing
+//                   or empty one (none: one attire from the files above). An attire folder can hold any of the files
+//                   above and its own model: model.wrs (the game's own format, as adjmk writes it), model.glb or
+//                   model.gltf, with an optional textures folder (PNG at any size; a texture missing there comes
+//                   from the model file); each file found there is used for that attire, else the wrestler folder's, and its
+//                   wrestler.json can hold any of the three parts, each used whole, a part it leaves out coming from the
+//                   wrestler folder's (so names, size, voice, moves and pictures can all differ per attire;
+//                   vendetta_wrestlerdraw.cpp draws the model). A wrestler with a missing or wrong value is left
+//                   out, with the value named (mods.log).
 //
 // A mod can also replace a game wrestler's attires: "replace": { "wrestlers": { "Briggs": "wrestlers/Stone Cold" } }.
 // The same kind of folder; attires\N replaces the game wrestler's attire N (any of his own attires, in any mix; the
-// folder itself, with no attire folders, is attire 1), and each file found there (else in the folder) replaces that
-// part: wrestler.json (names, height, weight, size, sounds like, "story comment"; a value left out stays the game's),
-// fight.json (also the story's copy of the stats), moveset.json, render / icon / logo (a new identity without a logo
-// shows none), the model. What it doesn't bring, and every attire it doesn't replace, stays the game's own; the locks
-// stay the game's. One mod per attire (the first in the load order). Attires he doesn't have follow on from his own
-// (DMX's attires\2, then 3): his Choose Fighter slot then points at new records (copies of his own attires, then the
-// added ones; Story and Survival keep his own records), the added ones offered once his own are all unlocked.
+// folder itself, with no attire folders, is attire 1), and each file or wrestler.json part found there (else in the
+// folder) replaces that part: "profile" (names, height, weight, size, sounds like, "story comment"; a value left out
+// stays the game's), "fight" (also the story's copy of the stats), "moveset", render / icon / logo (a new identity
+// without a logo shows none), the model. What it doesn't bring, and every attire it doesn't replace, stays the game's
+// own; the locks stay the game's. One mod per attire (the first in the load order). Attires he doesn't have follow on
+// from his own (DMX's attires\2, then 3): his Choose Fighter slot then points at new records (copies of his own attires,
+// then the added ones; Story and Survival keep his own records), the added ones offered once his own are all unlocked.
+//
+// The three parts were once three files (fight.json and moveset.json beside wrestler.json, its names at the top level);
+// those aren't read, and each one found is named in mods.log with where its contents go.
 //
 // Every new attire becomes a character record from 63 up (59 to 62 are turned into Briggs by the match setup), in the
 // game's tables, which the game's code reads from copies in the store (vendetta_store.h: the luis that find them are
@@ -63,12 +70,13 @@ namespace vendetta_wrestlers
     // One past the last record in use (63 when no mod adds a wrestler).
     uint32_t endRecord();
 
-    // A new attire's moveset.json, for the per-match moves (vendetta_animations.cpp puts its mods' moves in).
+    // A new or replaced attire's moveset, for the per-match moves (vendetta_animations.cpp puts its mods' moves in).
     struct SlotFile
     {
         std::string modName;
         std::string wrestler;            // its short name
-        std::filesystem::path file;
+        std::filesystem::path file;      // the wrestler.json holding it
+        std::string key;                 // the moveset's key in that file ("moveset"; empty: the whole file)
         std::vector<uint32_t> records;   // its attires
     };
     const std::vector<SlotFile> &slotFiles();

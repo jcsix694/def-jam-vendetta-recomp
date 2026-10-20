@@ -106,8 +106,8 @@ namespace vendetta_wrestlers
         std::vector<ModelFile> g_modelFiles;          // by record - 63 (an empty model: none of its own)
         constexpr const char *kModelNames[] = {"model.wrs", "model.glb", "model.gltf"};
         // the files that make an attire folder count (or its textures folder)
-        constexpr const char *kAttireFiles[] = {"wrestler.json", "fight.json", "moveset.json", "render.png", "icon.png",
-                                                "logo.png",      "model.wrs",  "model.glb",    "model.gltf"};
+        constexpr const char *kAttireFiles[] = {"wrestler.json", "render.png", "icon.png",  "logo.png",
+                                                "model.wrs",     "model.glb",  "model.gltf"};
         constexpr size_t kMaxAttireFolders = 9; // looked at, to tell about the ones not used (3 at most for now)
         std::vector<std::pair<std::string, std::string>> g_gameNames; // the game's records' full and short names, upper
                                                                        // case, as the game has them (kept at start-up)
@@ -123,7 +123,7 @@ namespace vendetta_wrestlers
             bool noLogo = false;         // a new identity (names or pictures) without a logo of its own: no logo
             uint32_t unlockIndex = 0;    // its +0x18: the logo and the story row go by it
             ModelFile model;             // empty: the game's model
-            size_t slotFile = SIZE_MAX;  // its moveset.json's entry in g_slotFiles
+            size_t slotFile = SIZE_MAX;  // its moveset's entry in g_slotFiles
         };
         std::map<uint32_t, Replaced> g_replaced; // by record (base + attire; records 63+: an added attire)
 
@@ -236,6 +236,101 @@ namespace vendetta_wrestlers
             return j.isObject();
         }
 
+        // The three files a wrestler folder once held: now parts of its wrestler.json. One found is named in mods.log
+        // (once a folder) with where its contents go; "" when the folder has none.
+        std::string oldFilesNote(const vendetta_mods::Mod &mod, const std::string &folder)
+        {
+            std::error_code ec;
+            std::string note;
+            int found = 0;
+            for (const char *part : {"fight", "moveset"})
+                if (std::filesystem::is_regular_file(mod.folder / (folder + "/" + part + ".json"), ec))
+                {
+                    note += (note.empty() ? "" : ", ") + std::string(part) + ".json (it goes in wrestler.json as \"" + part + "\")";
+                    ++found;
+                }
+            return note.empty() ? note : note + (found > 1 ? " aren't" : " isn't") + " read any more";
+        }
+
+        // A wrestler's wrestler.json files, each read once: { "profile": { ... }, "fight": { ... }, "moveset": { ... } }.
+        // An attire folder's file can hold any of the three: a part it leaves out comes from the wrestler folder's file.
+        class WrestlerFiles
+        {
+        public:
+            WrestlerFiles(const vendetta_mods::Mod &mod, std::string label) : m_mod(mod), m_label(std::move(label)) {}
+
+            // The part `key` of the attire folder's wrestler.json, else the wrestler folder's (null: neither has it, or
+            // the first file there can't be read: unreadable()). `where` = the file it came from (or was looked for in).
+            const vendetta_mods::Json *part(const std::string &attireFolder, const std::string &folder, const char *key,
+                                            std::string &where)
+            {
+                where = folder + "/wrestler.json";
+                m_unreadable = false;
+                for (const std::string &f : {attireFolder, folder})
+                {
+                    if (f.empty())
+                        continue; // no attire folder (the wrestler folder is the attire)
+                    const File &file = read(f);
+                    if (!file.there)
+                        continue;
+                    where = f + "/wrestler.json";
+                    if (!file.good)
+                    {
+                        m_unreadable = true;
+                        return nullptr;
+                    }
+                    if (const vendetta_mods::Json *v = file.json.find(key))
+                        return v;
+                }
+                return nullptr;
+            }
+            bool unreadable() const { return m_unreadable; } // the last part() stopped at a wrestler.json that can't be read
+
+        private:
+            struct File
+            {
+                bool there = false, good = false;
+                vendetta_mods::Json json;
+            };
+            const File &read(const std::string &folder)
+            {
+                if (const auto it = m_files.find(folder); it != m_files.end())
+                    return it->second;
+                File &file = m_files[folder];
+                const std::string where = folder + "/wrestler.json";
+                if (const std::string note = oldFilesNote(m_mod, folder); !note.empty())
+                    vendetta_mods::problem() << m_label << folder << ": " << note << std::endl;
+                std::error_code ec;
+                file.there = std::filesystem::is_regular_file(m_mod.folder / where, ec);
+                if (!file.there)
+                    return file;
+                std::string error;
+                file.good = readJson(vendetta_mods::modFile(m_mod, where, "wrestler"), file.json, error);
+                if (!file.good)
+                {
+                    vendetta_mods::problem() << m_label << where << " can't be read: " << error << std::endl;
+                    return file;
+                }
+                for (const auto &[key, value] : file.json.members)
+                    if (key != "profile" && key != "fight" && key != "moveset")
+                        vendetta_mods::problem() << m_label << where << ": \"" << key << "\" isn't read"
+                                                 << (key == "name" || key == "full name" || key == "height" || key == "weight" ||
+                                                             key == "size" || key == "based on" || key == "sounds like" ||
+                                                             key == "story comment"
+                                                         ? " here: it goes in \"profile\""
+                                                         : " (wrestler.json holds \"profile\", \"fight\" and \"moveset\")")
+                                                 << std::endl;
+                if (const vendetta_mods::Json *profile = file.json.find("profile"); profile && profile->find("attires"))
+                    vendetta_mods::problem() << m_label << where << ": \"attires\" isn't read: the attires are the folders attires\\1-3"
+                                             << std::endl;
+                return file;
+            }
+            const vendetta_mods::Mod &m_mod;
+            std::string m_label;
+            std::map<std::string, File> m_files;
+            bool m_unreadable = false;
+        };
+
         // The fight record, bit by bit, most significant first, in the order the game's FUN_0011ccb8 reads it.
         struct Bits
         {
@@ -251,7 +346,7 @@ namespace vendetta_wrestlers
 
         bool isNumber(const vendetta_mods::Json *v) { return v && v->type == vendetta_mods::Json::Type::Number; }
 
-        // fight.json: every value of a wrestler's fight record (WPAR, unpacked by FUN_0011ccb8), each by name, none left
+        // wrestler.json's "fight": every value of a wrestler's fight record (WPAR, unpacked by FUN_0011ccb8), each by name, none left
         // out. A missing or wrong value is named in `problems` (the wrestler is then left out).
         bool packFight(const vendetta_mods::Json &j, std::array<uint8_t, kWparSize> &out, std::vector<std::string> &problems)
         {
@@ -378,7 +473,7 @@ namespace vendetta_wrestlers
             return end != value.c_str() + want.size() && n >= 0 && n < 999 ? static_cast<int>(n) : -1;
         }
 
-        // moveset.json: all 128 slots, each "none", "game move <number> <name>", a mod's move by its name, or
+        // wrestler.json's "moveset": all 128 slots, each "none", "game move <number> <name>", a mod's move by its name, or
         // { "move": ..., "flags": 0-15 } (bits 12-15 of the slot, which the game never reads). This gives the moveset
         // as far as it is known at start-up; a mod's move goes in at each match (vendetta_animations.cpp) and counts as
         // game move 0 until then.
@@ -457,9 +552,10 @@ namespace vendetta_wrestlers
                         }
                         if (there && n <= 3u)
                         {
+                            const std::string old = oldFilesNote(mod, attireFolder(n));
                             vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << item.text << ": attires\\" << n
                                                      << " is skipped because it's empty (no files in it), and any after it"
-                                                     << std::endl;
+                                                     << (old.empty() ? "" : " (" + old + ")") << std::endl;
                             break;
                         }
                         for (size_t later = n + (n <= 3u ? 1u : 0u); later <= kMaxAttireFolders; ++later)
@@ -479,7 +575,7 @@ namespace vendetta_wrestlers
                         attireFolders.push_back(std::string());
                     const size_t attires = attireFolders.size();
 
-                    // each attire's wrestler.json: its own folder's, whole, else the wrestler folder's
+                    // each attire's "profile": its own folder's wrestler.json's, whole, else the wrestler folder's
                     struct Info
                     {
                         std::string name, full, height, weight;
@@ -488,7 +584,7 @@ namespace vendetta_wrestlers
                         bool ownModel = false;
                     };
                     std::vector<Info> infos(attires);
-                    std::map<std::string, vendetta_mods::Json> jsons; // by file (an attire without its own: the main one)
+                    WrestlerFiles files(mod, "[wrestlers] " + mod.name + ": ");
                     const auto modelIn = [&](const std::string &folder)
                     {
                         for (const char *modelName : kModelNames)
@@ -503,33 +599,19 @@ namespace vendetta_wrestlers
                     std::set<std::string> told; // a file's notes once
                     for (size_t k = 0; k < attires && good; ++k)
                     {
-                        const std::string folder =
-                            !attireFolders[k].empty() &&
-                                    std::filesystem::is_regular_file(mod.folder / (attireFolders[k] + "/wrestler.json"), ec)
-                                ? attireFolders[k]
-                                : item.text;
-                        const std::string where = folder + "/wrestler.json";
-                        if (!jsons.count(where))
+                        std::string where;
+                        const vendetta_mods::Json *profile = files.part(attireFolders[k], item.text, "profile", where);
+                        if (!profile || !profile->isObject())
                         {
-                            const std::filesystem::path file = vendetta_mods::modFile(mod, where, "wrestler");
-                            std::vector<uint8_t> bytes;
-                            vendetta_mods::Json j;
-                            std::string error;
-                            if (file.empty() || !vendetta_mods::readWhole(file, bytes) ||
-                                !vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), j, error) || !j.isObject())
-                            {
-                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << where << " can't be read"
-                                                         << (error.empty() ? "" : ": " + error) << " - left out" << std::endl;
-                                good = false;
-                                break;
-                            }
-                            if (j.find("attires"))
-                                vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << where
-                                                         << ": \"attires\" isn't read: the attires are the folders attires\\1-3"
-                                                         << std::endl;
-                            jsons.emplace(where, std::move(j));
+                            vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << where
+                                                     << (files.unreadable() ? " can't be read"
+                                                         : !profile         ? ": no \"profile\""
+                                                                            : ": \"profile\" should be { ... }")
+                                                     << " - left out" << std::endl;
+                            good = false;
+                            break;
                         }
-                        const vendetta_mods::Json &j = jsons.at(where);
+                        const vendetta_mods::Json &j = *profile;
                         Info &info = infos[k];
                         info.name = text(j, "name");
                         info.full = text(j, "full name", info.name);
@@ -582,42 +664,39 @@ namespace vendetta_wrestlers
                         continue;
                     const std::string name = infos[0].name, full = infos[0].full;
 
-                    // each attire's fight values and moveset: its own folder's fight.json / moveset.json, else the wrestler's
+                    // each attire's fight values and moveset: its own folder's wrestler.json's "fight" / "moveset", else
+                    // the wrestler folder's
                     std::vector<std::array<uint8_t, kWparSize>> fights(attires);
                     std::vector<std::array<uint16_t, 128>> movesets(attires);
                     std::vector<std::filesystem::path> movesetFiles(attires);
-                    std::set<std::filesystem::path> toldFiles; // a file shared by the attires: its problems once
+                    std::set<std::string> toldParts; // a part shared by the attires: its problems once
                     for (size_t k = 0; k < attires; ++k)
-                    {
-                        const std::string &attireFolder = attireFolders[k];
-                        for (const std::string fileName : {"fight.json", "moveset.json"})
+                        for (const std::string key : {"fight", "moveset"})
                         {
-                            const bool own = !attireFolder.empty() &&
-                                             std::filesystem::is_regular_file(mod.folder / (attireFolder + "/" + fileName), ec);
-                            const std::filesystem::path path =
-                                vendetta_mods::modFile(mod, (own ? attireFolder : item.text) + "/" + fileName, "wrestler");
-                            vendetta_mods::Json data;
-                            std::string why;
+                            std::string where;
+                            const vendetta_mods::Json *data = files.part(attireFolders[k], item.text, key.c_str(), where);
                             std::vector<std::string> problems;
-                            if (!readJson(path, data, why))
-                                problems.push_back(why);
-                            else if (fileName == "fight.json")
-                                packFight(data, fights[k], problems);
+                            if (!data)
+                                problems.push_back(files.unreadable() ? "can't be read" : "no \"" + key + "\"");
+                            else if (!data->isObject())
+                                problems.push_back("\"" + key + "\" should be { ... }");
+                            else if (key == "fight")
+                                packFight(*data, fights[k], problems);
                             else
                             {
-                                readMoveset(data, movesets[k], problems);
-                                movesetFiles[k] = path;
+                                readMoveset(*data, movesets[k], problems);
+                                movesetFiles[k] = vendetta_mods::modFile(mod, where, "wrestler");
                             }
-                            if (toldFiles.insert(path).second)
+                            if (toldParts.insert(where + "#" + key).second)
                                 for (const std::string &problem : problems)
-                                    std::cerr << "[wrestlers] " << mod.name << ": " << infos[k].name << ": "
-                                              << (path.empty() ? fileName : path.filename().string()) << ": " << problem << std::endl;
+                                    std::cerr << "[wrestlers] " << mod.name << ": " << infos[k].name << ": " << where << ": "
+                                              << (data ? "\"" + key + "\": " : std::string()) << problem << std::endl;
                             good = good && problems.empty();
                         }
-                    }
                     if (!good)
                     {
-                        vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << name << " left out (every value must be in its files)" << std::endl;
+                        vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << name
+                                                 << " left out (every value must be in its wrestler.json)" << std::endl;
                         continue;
                     }
                     Wrestler w;
@@ -720,7 +799,7 @@ namespace vendetta_wrestlers
                         }
                         w.wpar.push_back(wpar);
                         w.wwaz.push_back(wwaz);
-                        g_slotFiles.push_back({mod.name, info.name, movesetFiles[k], {record}});
+                        g_slotFiles.push_back({mod.name, info.name, movesetFiles[k], "moveset", {record}});
                     }
                     g_newAttires.push_back(static_cast<uint32_t>(attires));
                     g_firstAttires.push_back(w.records.front() - kFirstNewRecord);
@@ -773,6 +852,7 @@ namespace vendetta_wrestlers
                         continue;
                     }
                     const std::string folder = folderValue.text;
+                    WrestlerFiles files(mod, label + ": ");
                     // the game wrestler: his first record by the game's own names, his attires by his unlock row
                     const std::string want = upper(gameName);
                     uint32_t base = kMovesetRecords;
@@ -799,8 +879,11 @@ namespace vendetta_wrestlers
                             continue;
                         anyAttireFolder = true;
                         if (!hasAttireFiles(mod, attire))
+                        {
+                            const std::string old = oldFilesNote(mod, attire);
                             vendetta_mods::problem() << label << ": attires\\" << n << " is skipped because it's empty (no files in it)"
-                                                     << std::endl;
+                                                     << (old.empty() ? "" : " (" + old + ")") << std::endl;
+                        }
                         else if (n <= count)
                             spots.emplace_back(n, attire);
                         else if (n > 3u)
@@ -844,17 +927,20 @@ namespace vendetta_wrestlers
                         std::vector<std::string> parts;
                         std::string shown = g_gameNames[base].second;
                         bool identity = false;
-                        // wrestler.json: names, height, weight, size, voice, the story's comment (a value it leaves out
+                        // wrestler.json's three parts, each the attire folder's, else the folder's, else the game's
+                        std::string where;
+                        // "profile": names, height, weight, size, voice, the story's comment (a value it leaves out
                         // stays the game's)
-                        if (const std::string path = find("wrestler.json"); !path.empty())
+                        if (const vendetta_mods::Json *profile = files.part(attireFolder, folder, "profile", where);
+                            profile || files.unreadable())
                         {
-                            vendetta_mods::Json j;
-                            std::string why;
-                            if (!readJson(vendetta_mods::modFile(mod, path, "wrestler"), j, why))
-                                vendetta_mods::problem() << here << ": " << path << ": " << why
+                            if (!profile || !profile->isObject())
+                                vendetta_mods::problem() << here << ": " << where
+                                                         << (profile ? ": \"profile\" should be { ... }" : " can't be read")
                                                          << " - the game's names, size and voice stay" << std::endl;
                             else
                             {
+                                const vendetta_mods::Json &j = *profile;
                                 identity = true;
                                 parts.push_back("names");
                                 const auto put = [&](const char *key, uint32_t field, uint32_t rowField, const std::string &otherwise = {})
@@ -898,20 +984,22 @@ namespace vendetta_wrestlers
                                 }
                             }
                         }
-                        // fight.json: its fight values, and the story's copy of its stats (x 10: story opponents fight
+                        // "fight": its fight values, and the story's copy of its stats (x 10: story opponents fight
                         // with these)
-                        if (const std::string path = find("fight.json"); !path.empty())
+                        if (const vendetta_mods::Json *data = files.part(attireFolder, folder, "fight", where);
+                            data || files.unreadable())
                         {
-                            vendetta_mods::Json data;
-                            std::string why;
                             std::vector<std::string> problems;
                             std::array<uint8_t, kWparSize> fight{};
-                            if (!readJson(vendetta_mods::modFile(mod, path, "wrestler"), data, why))
-                                problems.push_back(why);
+                            if (!data)
+                                problems.push_back("can't be read");
+                            else if (!data->isObject())
+                                problems.push_back("\"fight\" should be { ... }");
                             else
-                                packFight(data, fight, problems);
+                                packFight(*data, fight, problems);
                             for (const std::string &problem : problems)
-                                vendetta_mods::problem() << here << ": " << path << ": " << problem << std::endl;
+                                vendetta_mods::problem() << here << ": " << where << ": " << (data ? "\"fight\": " : "") << problem
+                                                         << std::endl;
                             if (!problems.empty())
                                 vendetta_mods::problem() << here << ": the game's fight values stay" << std::endl;
                             else if ((rep.wpar = vendetta_store::allocate(vendetta_store::Area::Boot, 8u + kWparSize, "replaced attires' fight values")))
@@ -921,26 +1009,27 @@ namespace vendetta_wrestlers
                                 std::memcpy(guest(rep.wpar + 8u), fight.data(), kWparSize);
                                 parts.push_back("fight values");
                                 if (row)
-                                    if (const vendetta_mods::Json *stats = data.find("stats"))
+                                    if (const vendetta_mods::Json *stats = data->find("stats"))
                                         for (uint32_t k = 0; k < 6u; ++k)
                                             if (const vendetta_mods::Json *v = stats->find(kStats[k]); isNumber(v))
                                                 write32(row + 0x14u + 4u * k, static_cast<uint32_t>(v->number * 10.0));
                             }
                         }
-                        // moveset.json: its moves (a mod's moves by name go in at each match; edits go on top)
-                        if (const std::string path = find("moveset.json"); !path.empty())
+                        // "moveset": its moves (a mod's moves by name go in at each match; edits go on top)
+                        if (const vendetta_mods::Json *data = files.part(attireFolder, folder, "moveset", where);
+                            data || files.unreadable())
                         {
-                            vendetta_mods::Json data;
-                            std::string why;
                             std::vector<std::string> problems;
                             std::array<uint16_t, 128> moveset{};
-                            const std::filesystem::path file = vendetta_mods::modFile(mod, path, "wrestler");
-                            if (!readJson(file, data, why))
-                                problems.push_back(why);
+                            if (!data)
+                                problems.push_back("can't be read");
+                            else if (!data->isObject())
+                                problems.push_back("\"moveset\" should be { ... }");
                             else
-                                readMoveset(data, moveset, problems);
+                                readMoveset(*data, moveset, problems);
                             for (const std::string &problem : problems)
-                                vendetta_mods::problem() << here << ": " << path << ": " << problem << std::endl;
+                                vendetta_mods::problem() << here << ": " << where << ": " << (data ? "\"moveset\": " : "") << problem
+                                                         << std::endl;
                             if (!problems.empty())
                                 vendetta_mods::problem() << here << ": the game's moves stay" << std::endl;
                             else if ((rep.wwaz = vendetta_store::allocate(vendetta_store::Area::Boot, kMovesetSize, "replaced attires' movesets")))
@@ -949,7 +1038,7 @@ namespace vendetta_wrestlers
                                 write32(rep.wwaz + 4u, 256u);
                                 std::memcpy(guest(rep.wwaz + 8u), moveset.data(), 256u);
                                 rep.slotFile = g_slotFiles.size();
-                                g_slotFiles.push_back({mod.name, shown, file, {record}});
+                                g_slotFiles.push_back({mod.name, shown, vendetta_mods::modFile(mod, where, "wrestler"), "moveset", {record}});
                                 parts.push_back("moves");
                             }
                         }
