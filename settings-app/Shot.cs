@@ -103,96 +103,61 @@ internal static class Shot
         var folder = GameFolder.Find();
         var project = Projects.List(folder).FirstOrDefault()?.Name ?? "";
         var m = new ModsViewModel(folder, readOnly: false, text => Console.WriteLine("  says: " + text), () => { });
-        m.Open(project);
         void Show(string what)
         {
-            Console.WriteLine($"{what}: {m.ListHeading}");
-            foreach (var g in m.Groups)
-                Console.WriteLine($"  {g.Title} {g.Counts}: " + string.Join(", ", g.Rows.Select(r => (r.IsOn ? "[x] " : "[ ] ") + r.Name +
-                    (r.HasPlaces ? $" ({r.PlacesText})" : "") + (r.HasProblem ? " !" : ""))));
+            Console.WriteLine($"{what}: {m.ListHeading}" + (m.HasBad ? $" · {m.BadText}" : ""));
+            foreach (var r in m.Rows)
+                Console.WriteLine($"  {(r.IsOn ? "[on] " : "[off]")} {r.Name} ({r.Kind}): {r.Line}" + (r.IsBad ? " !" : "") + (r.HasFix ? $"  [{r.FixText}]" : ""));
             Console.WriteLine($"  {project}'s project.json mods: " + string.Join(" | ", Projects.List(folder).First(p => p.Name == project).Mods));
             if (m.HasNote)
                 Console.WriteLine($"  note: {m.Note}{(m.AskOff ? "  [Turn both off] [Keep it on]" : "")}");
-            if (m.HasProblems)
-            {
-                Console.WriteLine($"  {m.ProblemsHeading}:");
-                foreach (var p in m.Problems)
-                    Console.WriteLine($"    {p.Text}  " + string.Join(" ", p.Fixes.Select(f => $"[{f.Label}]")));
-            }
         }
-        ModRow? Row(string name) => m.Groups.SelectMany(g => g.Rows).FirstOrDefault(r => r.Name == name);
-        Show("start");
+        // the mods put into the project as the mod kit's Add to project does (their own mod.json says where they go)
         foreach (var path in mods)
         {
-            m.Pick(path);
-            if (!m.IsInstall)
+            var (package, error) = ProjectMods.Open(folder, project, path);
+            if (package == null)
+            {
+                Console.WriteLine($"  {path}: {error}");
                 continue;
-            Console.WriteLine($"install dialog: {m.InstallTitle} | version {m.InstallVersion} | in it {m.InstallContents}" +
-                              (m.InstallHasWrestlers ? $" | {m.InstallPlacesHeading}: " + (m.InstallPlacesInline
-                                  ? string.Join(", ", m.PlaceRows.Select(r => $"{r.Name} = {r.Selected?.Label}"))
-                                  : m.InstallPlacesSummary) : "") +
-                              (m.InstallHasNeeds ? " | needs " + string.Join(", ", m.InstallNeedLines) : "") +
-                              (m.InstallNeedsMissing ? $" | warning: {m.InstallMissingText}" : "") +
-                              (m.InstallReplaces ? $" | {m.InstallReplacesText}" : "") +
-                              (m.InstallBreaksSomething ? " | breaks: " + string.Join(" / ", m.InstallBreaks) : "") +
-                              $" | button {m.InstallConfirmText}");
-            m.ConfirmDialogCommand.Execute(null);
-            Show($"installed {Path.GetFileName(path)}");
+            }
+            var (_, err) = ProjectMods.Install(folder, project, package, package.Mod.Wrestlers.ToDictionary(w => w.Folder, w => w.Place));
+            ProjectMods.Discard(package);
+            Console.WriteLine($"  put in {package.Mod.Name}" + (err != null ? $": {err}" : ""));
         }
-        // where a pack's wrestlers go: the window, a taken spot, a change, Done
-        if (m.Groups.SelectMany(g => g.Rows).FirstOrDefault(r => r.Mod.Wrestlers.Count > 1) is { } pack)
+        m.Open(project);
+        Show("start");
+        // on / off with needs, and the rows' fixes
+        foreach (var row in m.Rows.Where(r => r.Mod is { Needs.Count: > 0 }).ToList())
         {
-            pack.Pick.Execute(null);
-            Console.WriteLine($"picked {m.PickedHeading}: {m.PickedPlacesHeading}: " + string.Join(", ", m.PickedPlaces.Select(p => $"{p.Name} {p.Place}")));
-            m.ChangePlacesCommand.Execute(null);
-            Console.WriteLine($"where dialog: {m.WhereTitle} | {m.WhereSummary}");
-            foreach (var r in m.PlaceRows)
-                Console.WriteLine($"  {r.Name} = {r.Selected?.Label}; greyed: " + string.Join(", ", r.Options.Where(o => !o.IsEnabled).Select(o => o.Label)));
-            var first = m.PlaceRows[0];
-            first.Selected = first.Options[0];
-            Console.WriteLine($"  {first.Name} made a new wrestler: {m.WhereSummary}");
-            m.WhereSearch = first.Name[..2];
-            Console.WriteLine($"  searched '{m.WhereSearch}': " + string.Join(", ", m.WhereRows.Select(r => r.Name)));
-            m.ConfirmDialogCommand.Execute(null);
-            Show("places changed");
-        }
-        // on / off with needs, and the problems' fixes
-        foreach (var row in m.Groups.SelectMany(g => g.Rows).Where(r => r.Mod.Needs.Count > 0).ToList())
-        {
-            var needed = m.Groups.SelectMany(g => g.Rows).FirstOrDefault(r => row.Mod.Needs.Any(r.Mod.Is));
+            var needed = m.Rows.FirstOrDefault(r => r.Mod != null && row.Mod!.Needs.Any(r.Mod.Is));
             if (needed == null)
                 continue;
             needed.Toggle.Execute(null);
             Show($"turned off {needed.Name} (needed by {row.Name})");
             m.KeepOnCommand.Execute(null);
-            Row(needed.Name)!.Toggle.Execute(null);
+            m.Row(needed.Name)!.Toggle.Execute(null);
             m.OffBothCommand.Execute(null);
             Show("both turned off");
-            Row(row.Name)!.Toggle.Execute(null);
+            m.Row(row.Name)!.Toggle.Execute(null);
             Show($"turned {row.Name} on (its need comes with it)");
-            break;
-        }
-        while (m.Problems.FirstOrDefault(p => p.Fixes.Any(f => f.IsCommand)) is { } problem)
-        {
-            var fix = problem.Fixes.First(f => f.IsCommand);
-            Console.WriteLine($"fix: {problem.Text} -> [{fix.Label}]");
-            fix.Run!.Execute(null);
-            if (m.IsWhere)
+            // a need turned off behind its back (as another program would leave it): the row's fix
+            var on = Projects.List(folder).First(p => p.Name == project).Mods.Where(n => !needed.Mod!.Is(n)).ToList();
+            Projects.SetMods(folder, project, on);
+            m.Open(project);
+            Show($"{needed.Name} off in project.json");
+            if (m.Row(row.Name) is { HasFix: true } bad)
             {
-                Console.WriteLine($"  where dialog: {m.WhereTitle}");
-                var clash = m.PlaceRows.FirstOrDefault(r => r.Selected is { IsEnabled: false }) ?? m.PlaceRows[0];
-                clash.Selected = clash.Options[0];
-                m.ConfirmDialogCommand.Execute(null);
+                Console.WriteLine($"fix: [{bad.FixText}]");
+                bad.Fix!.Execute(null);
+                Show("after the fix");
             }
-            Show("after the fix");
-        }
-        if (m.Groups.SelectMany(g => g.Rows).FirstOrDefault() is { } last)
-        {
-            last.Pick.Execute(null);
-            m.AskRemoveCommand.Execute(null);
-            Console.WriteLine($"remove dialog: {m.RemoveTitle} | {m.RemoveText}" + (m.RemoveHasWarning ? $" | {m.RemoveWarning}" : ""));
+            // removing the needed one: the users go off too
+            m.Row(needed.Name)!.Remove.Execute(null);
+            Console.WriteLine($"remove dialog: {m.RemoveTitle} | {m.RemoveWarning} | {m.RemoveText} | button {m.RemoveConfirmText}");
             m.ConfirmDialogCommand.Execute(null);
             Show("removed");
+            break;
         }
         Console.WriteLine("  the project's mods folder: " + string.Join(", ", Directory.GetDirectories(ProjectMods.RootOf(folder, project)).Select(Path.GetFileName)));
     }

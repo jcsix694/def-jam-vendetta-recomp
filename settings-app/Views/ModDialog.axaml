@@ -3,160 +3,21 @@
              xmlns:vm="using:VendettaSettings.ViewModels"
              x:Class="VendettaSettings.Views.ModDialog"
              x:DataType="vm:ModsViewModel">
-    <UserControl.Styles>
-        <!-- a place another wrestler already fills can't be picked -->
-        <Style Selector="ComboBox.places ComboBoxItem" x:DataType="vm:PlaceOption">
-            <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
-        </Style>
-    </UserControl.Styles>
-    <!-- over the whole window: Install a mod (into the project), Remove from this project, Where they go -->
+    <!-- over the whole window: Remove from this project -->
     <Border Background="#8c000000">
-        <Border Width="{Binding DialogWidth}" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="26,22" CornerRadius="10"
+        <Border Width="500" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="26,22" CornerRadius="10"
                 Background="{StaticResource VPanel}" BorderBrush="{StaticResource VLine}" BorderThickness="1"
-                BoxShadow="0 18 50 0 #80000000" MaxHeight="660">
-            <Grid RowDefinitions="*,Auto,Auto" RowSpacing="12">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Spacing="12">
-                        <!-- Install -->
-                        <StackPanel Spacing="12" IsVisible="{Binding IsInstall}">
-                            <TextBlock Classes="h1" FontSize="17" Text="{Binding InstallTitle}" TextWrapping="Wrap" />
-                            <TextBlock Classes="hint" TextTrimming="CharacterEllipsis">
-                                <Run Text="From " />
-                                <Run Text="{Binding InstallFrom}" FontFamily="{StaticResource VMono}" />
-                            </TextBlock>
-                            <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto" RowSpacing="7">
-                                <TextBlock Classes="key" Text="Version" />
-                                <TextBlock Grid.Column="1" Text="{Binding InstallVersion}" FontSize="13.5" />
-                                <TextBlock Grid.Row="1" Classes="key" Text="In it" />
-                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding InstallContents}" FontSize="13.5" TextWrapping="Wrap" />
-                            </Grid>
-
-                            <StackPanel Spacing="8" IsVisible="{Binding InstallHasWrestlers}">
-                                <Border Classes="capline" />
-                                <TextBlock Classes="cap" Text="{Binding InstallPlacesHeading}" />
-                                <ItemsControl ItemsSource="{Binding PlaceRows}" IsVisible="{Binding InstallPlacesInline}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:PlaceRow">
-                                            <Grid ColumnDefinitions="130,*" ColumnSpacing="10">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                                <ComboBox Grid.Column="1" Classes="places" ItemsSource="{Binding Options}" SelectedItem="{Binding Selected}"
-                                                          HorizontalAlignment="Stretch">
-                                                    <ComboBox.ItemTemplate>
-                                                        <DataTemplate x:DataType="vm:PlaceOption">
-                                                            <TextBlock Text="{Binding Label}" />
-                                                        </DataTemplate>
-                                                    </ComboBox.ItemTemplate>
-                                                </ComboBox>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" IsVisible="{Binding InstallPlacesSummaryShown}">
-                                    <TextBlock Text="{Binding InstallPlacesSummary}" VerticalAlignment="Center" />
-                                    <Button Grid.Column="1" Classes="outline small" BorderBrush="{StaticResource VAccent}" Content="Change where they go…"
-                                            Command="{Binding OpenInstallWhereCommand}" />
-                                </Grid>
-                                <TextBlock Classes="hint" Text="You can change this later on the Mods page." />
-                            </StackPanel>
-
-                            <StackPanel Spacing="6" IsVisible="{Binding InstallHasNeeds}">
-                                <Border Classes="capline" />
-                                <TextBlock Classes="cap" Text="IT NEEDS" />
-                                <ItemsControl ItemsSource="{Binding InstallNeedLines}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="x:String">
-                                            <TextBlock Text="{Binding}" FontSize="13.5" Margin="0,1" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                            <Border Classes="note warn" IsVisible="{Binding InstallNeedsMissing}">
-                                <TextBlock Text="{Binding InstallMissingText}" TextWrapping="Wrap" FontSize="13" />
-                            </Border>
-                            <Border Classes="note" IsVisible="{Binding InstallReplaces}">
-                                <TextBlock Text="{Binding InstallReplacesText}" TextWrapping="Wrap" FontSize="13" />
-                            </Border>
-                            <Border Classes="note warn" IsVisible="{Binding InstallBreaksSomething}">
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="This version breaks something" FontWeight="SemiBold" FontSize="13" />
-                                    <ItemsControl ItemsSource="{Binding InstallBreaks}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="x:String">
-                                                <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="13" Margin="0,1" />
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                    <TextBlock Text="{Binding InstallBreaksAfter}" TextWrapping="Wrap" FontSize="13" />
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
-
-                        <!-- Remove -->
-                        <StackPanel Spacing="12" IsVisible="{Binding IsRemove}">
-                            <TextBlock Classes="h1" FontSize="17" Text="{Binding RemoveTitle}" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding RemoveText}" TextWrapping="Wrap" Foreground="{StaticResource VText2}" LineHeight="21" />
-                            <Border Classes="note warn" IsVisible="{Binding RemoveHasWarning}">
-                                <TextBlock Text="{Binding RemoveWarning}" TextWrapping="Wrap" FontSize="13" />
-                            </Border>
-                        </StackPanel>
-
-                        <!-- Where they go -->
-                        <StackPanel Spacing="10" IsVisible="{Binding IsWhere}">
-                            <TextBlock Classes="h1" FontSize="17" Text="{Binding WhereTitle}" TextWrapping="Wrap" />
-                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-                                <TextBox Text="{Binding WhereSearch}" Watermark="Find a wrestler" Width="200" Height="30" MinHeight="30" FontSize="13"
-                                         Padding="8,4" VerticalContentAlignment="Center" />
-                                <TextBlock Grid.Column="1" Classes="hint" Text="{Binding WhereSummary}" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                            </Grid>
-                            <Border BorderBrush="{StaticResource VLine}" BorderThickness="0,0,0,1" Padding="10,0,10,6">
-                                <Grid ColumnDefinitions="150,*" ColumnSpacing="12">
-                                    <TextBlock Classes="cap" Text="WRESTLER" />
-                                    <TextBlock Grid.Column="1" Classes="cap" Text="GOES" />
-                                </Grid>
-                            </Border>
-                            <ItemsControl ItemsSource="{Binding WhereRows}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><StackPanel Spacing="4" /></ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:PlaceRow">
-                                        <Border Classes="placerow">
-                                            <Grid ColumnDefinitions="150,*" ColumnSpacing="12">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                                <ComboBox Grid.Column="1" Classes="places" ItemsSource="{Binding Options}" SelectedItem="{Binding Selected}"
-                                                          HorizontalAlignment="Stretch">
-                                                    <ComboBox.ItemTemplate>
-                                                        <DataTemplate x:DataType="vm:PlaceOption">
-                                                            <TextBlock Text="{Binding Label}" />
-                                                        </DataTemplate>
-                                                    </ComboBox.ItemTemplate>
-                                                </ComboBox>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <TextBlock Grid.Row="1" Classes="bad" TextWrapping="Wrap" Text="{Binding DialogError}"
-                           IsVisible="{Binding DialogError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-
-                <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
-                    <Button Classes="outline" Height="34" Content="Reset" Command="{Binding ResetPlacesCommand}" IsVisible="{Binding IsWhere}" />
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
-                        <Button Classes="outline" Height="34" Content="Cancel" Command="{Binding CancelDialogCommand}" IsCancel="True" />
-                        <Button Classes="accent" Content="{Binding InstallConfirmText}" Command="{Binding ConfirmDialogCommand}" IsDefault="True"
-                                IsVisible="{Binding IsInstall}" />
-                        <Button Classes="accent" Content="Done" Command="{Binding ConfirmDialogCommand}" IsVisible="{Binding IsWhere}" />
-                        <Button Classes="redfill" Content="Remove" Command="{Binding ConfirmDialogCommand}" IsVisible="{Binding IsRemove}" />
-                    </StackPanel>
-                </Grid>
-            </Grid>
+                BoxShadow="0 18 50 0 #80000000">
+            <StackPanel Spacing="12">
+                <TextBlock Classes="h1" FontSize="17" Text="{Binding RemoveTitle}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding RemoveWarning}" TextWrapping="Wrap" Foreground="{StaticResource VText2}" IsVisible="{Binding RemoveHasWarning}" />
+                <TextBlock Classes="hint" Text="{Binding RemoveText}" TextWrapping="Wrap" />
+                <TextBlock Classes="bad" Text="{Binding DialogError}" TextWrapping="Wrap" IsVisible="{Binding DialogError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Classes="outline" Content="Cancel" Command="{Binding CancelDialogCommand}" />
+                    <Button Classes="redfill" Content="{Binding RemoveConfirmText}" Command="{Binding ConfirmDialogCommand}" />
+                </StackPanel>
+            </StackPanel>
         </Border>
     </Border>
 </UserControl>

@@ -2,9 +2,22 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VendettaSettings.ViewModels"
              x:Class="VendettaSettings.Views.ModsView"
-             x:DataType="vm:ModsViewModel"
-             DragDrop.AllowDrop="True">
-    <Grid Margin="26,20,26,16" RowDefinitions="Auto,Auto,*" RowSpacing="12">
+             x:DataType="vm:ModsViewModel">
+    <UserControl.Styles>
+        <!-- a mod that stops the project from starting: outlined, its line in yellow -->
+        <Style Selector="Border.modrow.bad">
+            <Setter Property="Background" Value="#2e2a20" />
+            <Setter Property="BorderBrush" Value="{StaticResource VWarn}" />
+        </Style>
+        <Style Selector="TextBlock.badline">
+            <Setter Property="Foreground" Value="{StaticResource VWarn}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBlock.neededline">
+            <Setter Property="Foreground" Value="#c9a85a" />
+        </Style>
+    </UserControl.Styles>
+    <Grid Margin="26,20,26,16" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="10">
         <!-- the heading, and the project shown -->
         <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
             <TextBlock Classes="h1" Text="Mods" VerticalAlignment="Center" />
@@ -12,208 +25,97 @@
             <ComboBox Grid.Column="2" ItemsSource="{Binding ProjectNames}" SelectedItem="{Binding ForProject}" MinWidth="180"
                       IsVisible="{Binding HasProject}" />
             <TextBlock Grid.Column="2" Classes="hint" VerticalAlignment="Center" IsVisible="{Binding NoProject}"
-                       Text="No projects yet: make one on the Play page, then install mods into it." />
+                       Text="No projects yet: make one on the Play page." />
         </Grid>
 
-        <!-- the problems that stop the project from starting, each with its fixes -->
-        <Border Grid.Row="1" Classes="problems" IsVisible="{Binding HasProblems}">
-            <StackPanel Spacing="8">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <PathIcon Width="16" Height="15" Foreground="{StaticResource VWarn}" Data="M8,0.5 L15.5,14.5 L0.5,14.5 Z M7.2,5 L8.8,5 L8.6,10 L7.4,10 Z M7.2,11.3 L8.8,11.3 L8.8,12.9 L7.2,12.9 Z" />
-                    <TextBlock Text="{Binding ProblemsHeading}" FontWeight="SemiBold" FontSize="15" Foreground="#ffe2b0" />
-                </StackPanel>
-                <ScrollViewer MaxHeight="150" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding Problems}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ProblemRow">
-                                <Border Classes="problemrow">
-                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="13.5" Foreground="#f3e6cc" VerticalAlignment="Center" />
-                                        <ItemsControl Grid.Column="1" ItemsSource="{Binding Fixes}" VerticalAlignment="Center">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="8" /></ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="vm:ProblemFix">
-                                                    <Panel>
-                                                        <Button Classes="outline small" Content="{Binding Label}" Command="{Binding Run}" IsVisible="{Binding IsCommand}" />
-                                                        <Button Classes="outline small" Content="{Binding Label}" Click="OnInstall" IsVisible="{Binding IsInstall}" />
-                                                    </Panel>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-            </StackPanel>
+        <!-- mods come from the mod kit -->
+        <Border Grid.Row="1" Classes="modrow" Padding="12,6" IsVisible="{Binding HasProject}">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <TextBlock Text="Mods are added with the mod kit." Foreground="{StaticResource VText2}" VerticalAlignment="Center" FontSize="13" />
+                <Button Grid.Column="1" Classes="outline small" Content="Open this project's mods folder" Command="{Binding OpenProjectModsCommand}" />
+                <Button Grid.Column="2" Classes="outline small" BorderBrush="{StaticResource VAccent}" Content="Open the mod kit" Command="{Binding OpenModKitCommand}" />
+            </Grid>
         </Border>
 
-        <Grid Grid.Row="2" ColumnDefinitions="*,330" ColumnSpacing="24">
-            <!-- the project's mods -->
-            <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
-                <Border BorderBrush="{StaticResource VLine}" BorderThickness="0,0,0,1" Padding="0,0,0,7">
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                        <TextBlock Classes="cap" Text="{Binding ListHeading}" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Classes="outline small" BorderBrush="{StaticResource VAccent}" Content="Install a mod…" Click="OnInstall"
-                                IsEnabled="{Binding HasProject}" />
-                        <Button Grid.Column="2" Classes="outline small" Content="Open mods folder" Command="{Binding OpenProjectModsCommand}"
-                                IsEnabled="{Binding HasProject}" />
-                    </Grid>
-                </Border>
-                <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                    <TextBox Text="{Binding Search}" Watermark="Search" Width="160" Height="28" MinHeight="28" FontSize="13"
-                             Padding="8,4" VerticalContentAlignment="Center" />
-                    <ItemsControl Grid.Column="1" ItemsSource="{Binding Chips}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel ItemSpacing="6" LineSpacing="6" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:CategoryChip">
-                                <Button Classes="chipbtn" Classes.on="{Binding IsOn}" Content="{Binding Label}" Command="{Binding Pick}" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </Grid>
-                <Border Grid.Row="2" Classes="note" Classes.warn="{Binding NoteIsWarning}" IsVisible="{Binding HasNote}">
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                        <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontSize="13" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Classes="outline small" Content="Turn both off" Command="{Binding OffBothCommand}" IsVisible="{Binding AskOff}" />
-                        <Button Grid.Column="2" Classes="outline small" Content="Keep it on" Command="{Binding KeepOnCommand}" IsVisible="{Binding AskOff}" />
-                    </Grid>
-                </Border>
-                <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
-                    <StackPanel Spacing="4">
-                        <TextBlock Classes="hint" IsVisible="{Binding ListEmpty}" Margin="2,6" TextWrapping="Wrap"
-                                   Text="No mods in this project yet. Install a mod from a zip, or drop a zip or a mod's folder here." />
-                        <TextBlock Classes="hint" IsVisible="{Binding NothingMatches}" Margin="2,6" Text="No mods match." />
-                        <ItemsControl ItemsSource="{Binding Groups}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:ModGroup">
-                                    <StackPanel Spacing="4" Margin="0,2,0,4">
-                                        <Button Classes="grouphead" Command="{Binding Fold}">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <TextBlock Text="▸" FontSize="12" Classes="muted" IsVisible="{Binding !IsOpen}" />
-                                                <TextBlock Text="▾" FontSize="12" Classes="muted" IsVisible="{Binding IsOpen}" />
-                                                <TextBlock Text="{Binding Title}" Classes="cap" Foreground="{StaticResource VText}" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding Counts}" Classes="cap" />
-                                            </StackPanel>
-                                        </Button>
-                                        <ItemsControl ItemsSource="{Binding Rows}" IsVisible="{Binding IsOpen}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <StackPanel Spacing="4" />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="vm:ModRow">
-                                                    <Border Classes="modrow" Classes.picked="{Binding IsPicked}" Classes.off="{Binding !IsOn}">
-                                                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
-                                                            <CheckBox IsChecked="{Binding IsOn, Mode=OneWay}" Command="{Binding Toggle}" MinWidth="0" Padding="0"
-                                                                      VerticalAlignment="Center" ToolTip.Tip="On in this project" />
-                                                            <Button Grid.Column="1" Classes="rowpick" Command="{Binding Pick}">
-                                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#f0f0f2" />
-                                                                    <TextBlock Text="{Binding Contents}" FontSize="12.5" Classes="muted" TextTrimming="CharacterEllipsis" VerticalAlignment="Bottom" />
-                                                                </StackPanel>
-                                                            </Button>
-                                                            <Border Grid.Column="2" Classes="placetag" IsVisible="{Binding HasPlaces}">
-                                                                <TextBlock Text="{Binding PlacesText}" />
-                                                            </Border>
-                                                            <Border Grid.Column="3" Classes="problemtag" IsVisible="{Binding HasProblem}">
-                                                                <TextBlock Text="problem" />
-                                                            </Border>
-                                                        </Grid>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </ScrollViewer>
+        <!-- the list's heading: the counts, and how many need fixing -->
+        <Border Grid.Row="2" BorderBrush="{StaticResource VLine}" BorderThickness="0,0,0,1" Padding="0,4,0,7" IsVisible="{Binding HasProject}">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                <TextBlock Classes="cap" Text="{Binding ListHeading}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding BadText}" FontWeight="SemiBold" FontSize="12.5" Foreground="{StaticResource VWarn}"
+                           VerticalAlignment="Center" IsVisible="{Binding HasBad}" />
+                <TextBox Grid.Column="2" Text="{Binding Search}" Watermark="Search" Width="160" Height="28" MinHeight="28" FontSize="13"
+                         Padding="8,4" VerticalContentAlignment="Center" />
             </Grid>
+        </Border>
 
-            <!-- the load order and the picked mod -->
-            <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Spacing="6">
-                    <StackPanel IsVisible="{Binding HasProject}">
-                        <TextBlock Classes="cap" Text="{Binding OrderHeading}" />
-                        <Border Classes="capline" Margin="0,8,0,6" />
-                    </StackPanel>
-                    <ScrollViewer MaxHeight="200" HorizontalScrollBarVisibility="Disabled" IsVisible="{Binding HasProject}">
-                        <StackPanel>
-                            <TextBlock Classes="hint" Text="{Binding NothingOnText}" IsVisible="{Binding NothingOn}" Margin="0,4" />
-                            <ItemsControl ItemsSource="{Binding Order}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:OrderRow">
-                                        <Grid ColumnDefinitions="24,*,Auto" Height="30">
-                                            <TextBlock Classes="mono muted" Text="{Binding Number}" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="1" Classes="mono" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
-                                                       VerticalAlignment="Center" Classes.warn="{Binding Missing}" />
-                                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
-                                                <Button Classes="outline arrow" Command="{Binding Up}" IsEnabled="{Binding CanUp}" ToolTip.Tip="Load it earlier">
-                                                    <PathIcon Width="10" Height="6" Data="M0,6 L5,0 L10,6 Z" />
-                                                </Button>
-                                                <Button Classes="outline arrow" Command="{Binding Down}" IsEnabled="{Binding CanDown}" ToolTip.Tip="Load it later">
-                                                    <PathIcon Width="10" Height="6" Data="M0,0 L10,0 L5,6 Z" />
-                                                </Button>
-                                                <Button Classes="outline arrow" Command="{Binding Drop}" IsVisible="{Binding Missing}" ToolTip.Tip="Take it off the list"
-                                                        Content="✕" FontSize="11" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </ScrollViewer>
-                    <TextBlock Classes="hint" IsVisible="{Binding HasProject}" TextWrapping="Wrap"
-                               Text="Lower down wins when two mods change the same thing." />
+        <StackPanel Grid.Row="3" Spacing="8">
+            <ItemsControl ItemsSource="{Binding Chips}" IsVisible="{Binding HasChips}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel ItemSpacing="6" LineSpacing="6" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CategoryChip">
+                        <Button Classes="chipbtn" Classes.on="{Binding IsOn}" Content="{Binding Label}" Command="{Binding Pick}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Border Classes="note" Classes.warn="{Binding NoteIsWarning}" IsVisible="{Binding HasNote}">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                    <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontSize="13" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Classes="outline small" Content="Turn both off" Command="{Binding OffBothCommand}" IsVisible="{Binding AskOff}" />
+                    <Button Grid.Column="2" Classes="outline small" Content="Keep it on" Command="{Binding KeepOnCommand}" IsVisible="{Binding AskOff}" />
+                </Grid>
+            </Border>
+        </StackPanel>
 
-                    <StackPanel Margin="0,12,0,0" IsVisible="{Binding HasPicked}" Spacing="6">
-                        <TextBlock Classes="cap" Text="{Binding PickedHeading}" TextTrimming="CharacterEllipsis" />
-                        <Border Classes="capline" Margin="0,2,0,4" />
-                        <Grid ColumnDefinitions="72,*" RowDefinitions="Auto,Auto" RowSpacing="5">
-                            <TextBlock Classes="key" FontSize="13" Text="In it" />
-                            <TextBlock Grid.Column="1" FontSize="13" Text="{Binding PickedContents}" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="1" Classes="key" FontSize="13" Text="Needs" />
-                            <TextBlock Grid.Row="1" Grid.Column="1" FontSize="13" Text="{Binding PickedNeeds}" TextWrapping="Wrap" />
-                        </Grid>
-                        <StackPanel Spacing="6" IsVisible="{Binding PickedHasWrestlers}" Margin="0,6,0,0">
-                            <TextBlock Classes="cap" Text="{Binding PickedPlacesHeading}" TextTrimming="CharacterEllipsis" />
-                            <Border Classes="placelist">
-                                <ScrollViewer MaxHeight="112" HorizontalScrollBarVisibility="Disabled">
-                                    <ItemsControl ItemsSource="{Binding PickedPlaces}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:PlaceLine">
-                                                <Grid ColumnDefinitions="118,*" Height="22">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="1" Text="{Binding Place}" FontSize="13" Classes="muted" VerticalAlignment="Center" />
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
-                            </Border>
-                            <Button Classes="outline small" BorderBrush="{StaticResource VAccent}" HorizontalAlignment="Left"
-                                    Content="Change where they go…" Command="{Binding ChangePlacesCommand}" />
-                        </StackPanel>
-                        <WrapPanel ItemSpacing="8" LineSpacing="8" Margin="0,8,0,0">
-                            <Button Classes="outline small" Content="Open its folder" Command="{Binding OpenModFolderCommand}" />
-                            <Button Classes="outline small danger" Content="Remove from this project" Command="{Binding AskRemoveCommand}" />
-                        </WrapPanel>
-                    </StackPanel>
+        <ScrollViewer Grid.Row="4" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+            <StackPanel Spacing="6">
+                <!-- a project with no mods -->
+                <StackPanel Spacing="12" Margin="0,40,0,0" HorizontalAlignment="Center" IsVisible="{Binding ListEmpty}">
+                    <TextBlock Text="{Binding EmptyText}" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+                    <TextBlock Classes="hint" Text="It plays as the original game until then." HorizontalAlignment="Center" />
+                    <Button Classes="accent" Content="Open the mod kit" Command="{Binding OpenModKitCommand}" HorizontalAlignment="Center" />
                 </StackPanel>
-            </ScrollViewer>
-        </Grid>
+                <TextBlock Classes="hint" IsVisible="{Binding NothingMatches}" Margin="2,6" Text="No mods match." />
+
+                <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ModRow">
+                            <Border Classes="modrow" Classes.bad="{Binding IsBad}" Padding="12,8">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="10">
+                                    <ToggleSwitch IsChecked="{Binding IsOn, Mode=OneWay}" Command="{Binding Toggle}" OnContent="" OffContent=""
+                                                  MinWidth="0" VerticalAlignment="Center" IsEnabled="{Binding IsInstalled}" ToolTip.Tip="{Binding ToggleTip}" />
+                                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#f0f0f2" />
+                                            <Border Classes="placetag" IsVisible="{Binding IsInstalled}"><TextBlock Text="{Binding Kind}" /></Border>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Line}" FontSize="12.5" Classes="muted" Classes.badline="{Binding IsBad}" Classes.neededline="{Binding IsNeeded}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <Button Grid.Column="2" Classes="outline small" BorderBrush="{StaticResource VWarn}" Content="{Binding FixText}"
+                                            Command="{Binding Fix}" IsVisible="{Binding HasFix}" VerticalAlignment="Center" />
+                                    <Button Grid.Column="3" Classes="outline arrow" Command="{Binding Up}" IsEnabled="{Binding CanUp}" ToolTip.Tip="Load it earlier" VerticalAlignment="Center">
+                                        <PathIcon Width="10" Height="6" Data="M0,6 L5,0 L10,6 Z" />
+                                    </Button>
+                                    <Button Grid.Column="4" Classes="outline arrow" Command="{Binding Down}" IsEnabled="{Binding CanDown}" ToolTip.Tip="Load it later" VerticalAlignment="Center">
+                                        <PathIcon Width="10" Height="6" Data="M0,0 L10,0 L5,6 Z" />
+                                    </Button>
+                                    <Button Grid.Column="5" Classes="outline arrow" Command="{Binding Remove}" IsEnabled="{Binding IsInstalled}" VerticalAlignment="Center"
+                                            ToolTip.Tip="Remove from this project" Foreground="#ff8a80">
+                                        <PathIcon Width="11" Height="12" Data="M1,3 L10,3 M3.5,3 L3.5,1 L7.5,1 L7.5,3 M2,3 L2.7,11 L8.3,11 L9,3" Foreground="#ff8a80" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Classes="hint" Margin="2,4" TextWrapping="Wrap" IsVisible="{Binding HasProject}"
+                           Text="Lower down wins when two mods change the same thing." />
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </UserControl>

@@ -290,10 +290,8 @@ public partial class MainViewModel : ObservableObject
             case "play-export": PageIndex = 0; Projects.ShowSample("export"); return;
             case "play-import": PageIndex = 0; Projects.ShowSample("import"); return;
             case "mods": Mods.ShowSample("", Projects.Key); PageIndex = 3; return;
-            case "mods-install": Mods.ShowSample("install", Projects.Key); PageIndex = 3; return;
             case "mods-remove": Mods.ShowSample("remove", Projects.Key); PageIndex = 3; return;
-            case "mods-where": Mods.ShowSample("where", Projects.Key); PageIndex = 3; return;
-            case "mods-pick": Mods.ShowSample("pick", Projects.Key); PageIndex = 3; return;
+            case "mods-off": Mods.ShowSample("off", Projects.Key); PageIndex = 3; return;
             case "about": PageIndex = 2; break;
             case "display": ShowSettingsTab(0); break;
             case "graphics": ShowSettingsTab(1); break;
