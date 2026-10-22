@@ -5,6 +5,27 @@ The newest version is at the top.
 
 ---
 
+## 0.4.2
+
+### Fixed
+- **Crackling sound on some PCs.** On some PCs the sound crackled all the time, in the menus and in matches, even
+  though other games sounded fine. The game now hands its sound to Windows in bigger pieces, which stops it. You
+  won't hear any delay.
+
+### Better
+- **New installs start borderless.** A first install now opens in a borderless window the size of your screen, with
+  widescreen and VSync on. If you already play, your settings stay as they are. You can switch between borderless,
+  fullscreen and a window on the settings program's Display page.
+
+### Good to know
+- On a 144 or 165 Hz monitor, **Fullscreen** can look a little smoother than borderless, because it can switch your
+  screen to a rate that suits the game.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.4.1
 
 ### Fixed
