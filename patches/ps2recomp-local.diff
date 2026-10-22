@@ -2650,10 +2650,21 @@ index 509fd07..71243e7 100644
  
      std::string CodeGenerator::translateVU_VMTIR(const Instruction &inst)
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..0189154 100644
+index 589d768..09548da 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
-@@ -383,12 +383,21 @@ add_library(ps2_runtime STATIC
+@@ -82,6 +82,10 @@ else()
+         GIT_PROGRESS TRUE
+     )
+     FetchContent_MakeAvailable(raylib)
++    # The sound device's period: raylib opens it with miniaudio's "low latency" default, 10 ms slices handed to
++    # Windows, too tight on some PCs (the sound crackles there though the game keeps its queue full); 25 ms is
++    # still far below a delay anyone hears. miniaudio only sets its own when this is not defined.
++    target_compile_definitions(raylib PRIVATE MA_DEFAULT_PERIOD_SIZE_IN_MILLISECONDS_LOW_LATENCY=25)
+ 
+     if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_ANDROID)
+         FetchContent_Declare(
+@@ -383,12 +387,21 @@ add_library(ps2_runtime STATIC
      src/lib/gs/ps2_gs_memory.cpp
      src/lib/gs/gs_frontend.cpp
      src/lib/gs/gs_cpu_backend.cpp
@@ -2675,7 +2686,7 @@ index 589d768..0189154 100644
      src/lib/ps2_vif1_interpreter.cpp
      src/lib/vu/ps2_vu1_core.cpp
      src/lib/vu/ps2_vu1_upper.cpp
-@@ -396,6 +405,27 @@ add_library(ps2_runtime STATIC
+@@ -396,6 +409,27 @@ add_library(ps2_runtime STATIC
      src/lib/games_database.cpp
  )
  
@@ -2703,7 +2714,7 @@ index 589d768..0189154 100644
  if(PS2X_ENABLE_RUNTIME_LOGS)
      target_compile_definitions(ps2_runtime PUBLIC
          PS2_RUNTIME_LOGS=1
-@@ -429,6 +459,12 @@ target_compile_definitions(ps2_runtime PRIVATE
+@@ -429,6 +463,12 @@ target_compile_definitions(ps2_runtime PRIVATE
      PS2X_HAS_FFMPEG=$<BOOL:${PS2X_ENABLE_FFMPEG}>
  )
  
@@ -2716,7 +2727,7 @@ index 589d768..0189154 100644
  file(GLOB_RECURSE KERNEL_SRC_FILES CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/Kernel/*.cpp"
  )
-@@ -462,6 +498,17 @@ else()
+@@ -462,6 +502,17 @@ else()
      )
  endif()
  
@@ -2734,7 +2745,7 @@ index 589d768..0189154 100644
  if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      set_target_properties(ps2EntryRunner PROPERTIES
          UNITY_BUILD ON
-@@ -507,6 +554,19 @@ target_include_directories(ps2_runtime PUBLIC
+@@ -507,6 +558,19 @@ target_include_directories(ps2_runtime PUBLIC
  )
  
  target_link_libraries(ps2_runtime PUBLIC ps2_host_backend ffmpeg ps2_iop)
@@ -2754,7 +2765,7 @@ index 589d768..0189154 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
-@@ -518,10 +578,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
+@@ -518,10 +582,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
      )
      target_link_libraries(ps2EntryRunner PRIVATE rlImGui imgui)
      target_compile_definitions(ps2EntryRunner PRIVATE PS2X_ENABLE_DEBUG_UI=1)
