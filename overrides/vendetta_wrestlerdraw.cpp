@@ -1239,16 +1239,18 @@ namespace vendetta_wrestlerdraw
     }
 
     bool drawGamePart(PS2Runtime &runtime, uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours,
-                      bool rows, uint32_t image, std::vector<GsTriangle> *capture)
+                      bool rows, uint32_t image, std::vector<GsTriangle> *capture, uint8_t *own)
     {
         if (!g_runtime)
             g_runtime = &runtime;
         const Stats wrestlers = g_stats; // the wrestlers' own count stays theirs
         uint8_t *p = mem(rdram, part);
-        if (rows)
+        if (own)
+            writeRows(p, own, mem(rdram, lightMatrix), mem(rdram, colours), own + (word(own) & ~3u));
+        else if (rows)
             writeRows(rdram, part, lightMatrix, colours, mem(rdram, part + (word(p) & ~3u)));
         g_capture = capture;
-        const bool drawn = drawPart(p, image);
+        const bool drawn = drawPart(own ? own : p, image);
         g_capture = nullptr;
         g_stats = wrestlers;
         return drawn;

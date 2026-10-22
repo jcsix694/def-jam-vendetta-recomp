@@ -165,4 +165,18 @@ instructions = [
   { address = "0x0016ba40", value = "0xdfb100c0" }, # ld $s1, 0x40($sp) -> +0x80 (FUN_0016b818)
   { address = "0x0016ba44", value = "0xdfb000b0" }, # ld $s0, 0x30($sp) -> +0x80 (FUN_0016b818)
   { address = "0x0016ba4c", value = "0x27bd00e0" }, # addiu $sp, $sp, 0x60 -> +0x80 (FUN_0016b818)
+  # The 3-D crowd read from the store's fixed area (vendetta_store.h kCrowdPeople / kCrowdClips): overrides/vendetta_arenas.cpp
+  # copies each arena's crowd there at the arena's set-up (FUN_001a1c38), the game's own from the loader's buffers or a
+  # mod arena's. Each copy keeps the original's low 16 bits, so only the luis change; the loader's own writes (0x165A18,
+  # 0x165A5C) stay. The part draw's DMA mask widened so a crowd person (and a rope) can be sent from above 32 MB.
+  { address = "0x00196ed8", value = "0x3c020290" }, # lui $v0, 0xBD -> 0x290: the people 0xBD5500 -> 0x02905500 (FUN_00196ed8)
+  { address = "0x00197434", value = "0x3c020290" }, # lui $v0, 0xBD -> 0x290 (FUN_00197428)
+  { address = "0x0019769c", value = "0x3c0402c1" }, # lui $a0, 0xD2 -> 0x2C1 (a delay slot): the clips 0xD1A500 -> 0x02C0A500
+  { address = "0x0019770c", value = "0x3c0202c1" }, # lui $v0, 0xD2 -> 0x2C1 (FUN_00197428)
+  { address = "0x0019785c", value = "0x3c020290" }, # lui $v0, 0xBD -> 0x290 (FUN_00197830)
+  { address = "0x001b949c", value = "0x3c030fff" }, # lui $v1, 0x1FF -> 0xFFF: FUN_001b93a0's DMA source mask (256 MB)
+  # The arena objects' draws reach the store too (a mod arena's stand-in scene lives there): their DMA source masks widened
+  { address = "0x001b8c64", value = "0x3c020fff" }, # lui $v0, 0x1FF -> 0xFFF: FUN_001b8bf8 (an object)
+  { address = "0x001b9c2c", value = "0x3c020fff" }, # lui $v0, 0x1FF -> 0xFFF: FUN_001b9bb0 (a scrolled object)
+  { address = "0x001b9904", value = "0x3c020fff" }, # lui $v0, 0x1FF -> 0xFFF: FUN_001b9880 (the shadow floor)
 ]

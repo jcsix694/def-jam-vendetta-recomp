@@ -46,6 +46,8 @@
 //                           with the packet ours would send, triangle by triangle ([arenas] check lines; needs
 //                           VENDETTA_CHAIN_ASYNC=0 and VENDETTA_GS_ASYNC=0, so the game's packets arrive in the call)
 // VENDETTA_ARENALOG=1       each arena's objects, textures and a count of what was drawn every 5 s
+// VENDETTA_ARENA_FULLSTANDIN=1  a mod arena's stand-in keeps its triangles (a test: with VENDETTA_ARENADRAW=check the game
+//                           draws the mod's arena and ours, read from the mod's file, is compared with it)
 // VENDETTA_ARENA_GAMEIDS=<ids, comma separated>  those scene objects left to the game (finding a difference)
 // VENDETTA_ARENA_STRESS=<N> each object drawn N times over itself, VENDETTA_ARENA_SPLIT=<N> each triangle drawn as N
 //                           smaller ones over the same area (N times the detail), VENDETTA_ARENA_TEXSCALE=<k> each
@@ -55,6 +57,8 @@
 #include "runtime/gs/gs_gpu.h"
 #include "runtime/gs/ps2_gs_memory.h"
 #include "vendetta_gsdraw.h"
+#include "vendetta_mods.h"
+#include "vendetta_store.h"
 
 #include <algorithm>
 #include <array>
@@ -64,7 +68,10 @@
 #include <limits>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -103,8 +110,15 @@ namespace vendetta_arenas
         constexpr uint32_t kDrawPart = 0x1B93A0u;     // FUN_001b93a0(part, light matrix, colour matrix): a model part
         constexpr uint32_t kFromCrowd = 0x1978F8u;    // its return addresses: a crowd person (FUN_00197830),
         constexpr uint32_t kFromRope = 0x1A3240u, kFromRopeFaded = 0x1A34C0u, kFromRopeLowPoly = 0x1A36F4u; // a rope
-        constexpr uint32_t kCrowd = 0xBD5500u;        // the 3-D crowd's people (AUD): "AUD ", size, count, from + 0x10
-        constexpr uint32_t kCrowdBytes = 0x145000u;   // its buffer's size
+        constexpr uint32_t kSetUp = 0x1A1C38u;        // FUN_001a1c38(venue, scene): a venue's set-up, at each venue load
+        constexpr uint32_t kSounds = 0x1B0958u;       // FUN_001b0958(venue, ...): the match's sounds, the set 0x2598C8[venue]
+        constexpr uint32_t kFlyInPaths = 0x234A00u;   // the venue's fly-in: its camera path's number
+        constexpr uint32_t kCameraPaths = 0x140FD0Cu; // the camera paths (PAK 0): path n's self-relative offset at + 4n
+        constexpr uint32_t kGameCrowd = 0xBD5500u;    // the loader's buffers: the 3-D crowd's people (AUD: "AUD ", size,
+        constexpr uint32_t kGameClips = 0xD1A500u;    // count, people of 0x70 from + 0x10) and their clips (PAK)
+        constexpr uint32_t kGameCrowdBytes = 0x145000u, kGameClipsBytes = 0xC8000u;
+        constexpr uint32_t kCrowd = vendetta_store::kCrowdPeople; // where the game's crowd code reads them (patched)
+        constexpr uint32_t kCrowdBytes = vendetta_store::kCrowdRoom;
         constexpr uint32_t kUpload = 0x1B85C0u;       // FUN_001b85c0(p): one GIF DMA from p + p[0], p[1] bytes
         constexpr uint32_t kUploadFromArena = 0x165C70u; // the return address of its call in the arena set-up
         constexpr uint32_t kIntros = 0x1245C8u;          // FUN_001245c8(a0): the match's intros by match kind (a log line)
@@ -187,6 +201,50 @@ namespace vendetta_arenas
         GsScratch g_scratch; // the arena's uploads replayed (the blocks they wrote: low, high)
         std::unordered_map<uint64_t, uint32_t> g_images; // TEX0 (texture bits) -> host image id
         uint32_t g_nextImage = kImageIdBase;
+
+        // ------------------------------------------------------------------ the mods' arenas (their data)
+
+        // A mod arena replacing a game arena (mod.json "replace": {"arenas": {"Def Jam": "arenas/Ring"}}): its folder
+        // holds model.arena (the game's arena format as the mod kit writes it: "DJARENA1", then the offsets and lengths of
+        // the scene, its textures, the crowd's people and their clips, each part as the game keeps it) and an optional
+        // textures\ folder (PNGs at any size; pictures.json names each one's GS address, else a PNG named "@<address>").
+        struct ModArena
+        {
+            std::string what;                // "<mod>: <folder>", for messages
+            std::filesystem::path folder;
+            uint32_t venue = 0;              // the game arena it replaces
+            std::vector<uint8_t> file;       // model.arena, read at the arena's load (only the current arena's kept)
+            uint32_t scene = 0, sceneBytes = 0, textures = 0, texturesBytes = 0;
+            uint32_t people = 0, peopleBytes = 0, clips = 0, clipsBytes = 0;
+            std::map<uint32_t, std::filesystem::path> pictures; // a texture's GS address (TBP) -> its PNG
+            // arena.json: "sounds" (a game arena whose sound set it uses), "fly-in" (its camera path: {"frames",
+            // "keys": [{"frame", "eye": [x, y, z], "target": [x, y, z], "roll", "fov"}]}); missing = the arena it replaces
+            uint32_t soundsVenue = ~0u;
+            std::vector<uint8_t> flyIn; // the path as the game keeps it: {s32 last frame, u32 keys, keys of 0x24 bytes}
+        };
+        std::vector<ModArena> g_modArenas;
+        ModArena *g_current = nullptr; // the mod arena loaded now (its stand-in in the store), or none
+        bool g_fullStandIn = false;    // VENDETTA_ARENA_FULLSTANDIN: the stand-in keeps its triangles (the check)
+
+        // A mod arena drawn by our code alone (always, except the check of a full stand-in: then the game draws it too)
+        bool modOnly() { return g_current && !(g_fullStandIn && g_mode == Mode::Check); }
+
+        // Where our draw reads a mod arena's triangles: an address in its stand-in (the scene at kArenaScene, the crowd's
+        // people at kCrowdPeople) is the same offset in the mod's file, whose triangles the stand-in leaves out; null
+        // for anything else (guest memory).
+        uint8_t *modBytes(uint32_t address, uint32_t bytes)
+        {
+            if (!g_current)
+                return nullptr;
+            ModArena &m = *g_current;
+            auto in = [&](uint32_t base, uint32_t at, uint32_t size) -> uint8_t * {
+                return address >= base && uint64_t(address - base) + bytes <= size ? m.file.data() + at + (address - base)
+                                                                                     : nullptr;
+            };
+            if (uint8_t *p = in(vendetta_store::kArenaScene, m.scene, m.sceneBytes))
+                return p;
+            return in(kCrowd, m.people, m.peopleBytes);
+        }
 
         struct Stats
         {
@@ -365,7 +423,9 @@ namespace vendetta_arenas
                             batch.top = (k % 2u) ? 0x100u : 0x200u;
                             batch.data = pending;
                             batch.nq = pendingQ;
-                            if (readBatch(d + (pending & PS2_RAM_MASK), pendingQ, batch.top, imm == 0xCu ? 3u : 2u, batch))
+                            const uint8_t *own = modBytes(pending, pendingQ * 16u); // a mod's triangles
+                            if (readBatch(own ? own : d + (pending & PS2_RAM_MASK), pendingQ, batch.top, imm == 0xCu ? 3u : 2u,
+                                          batch))
                                 mesh.batches.push_back(std::move(batch));
                             else
                                 otherKernel = true;
@@ -385,7 +445,7 @@ namespace vendetta_arenas
                     break;
                 o += extra;
             }
-            mesh.ours = !otherKernel && mesh.table != 0u && !mesh.batches.empty();
+            mesh.ours = !otherKernel && mesh.table != 0u; // none of its batches: an empty object (the mod kit writes some)
             // What the kernel reads as a batch's material: the latest write to that VU address, this batch's own data
             // or an earlier one's, else the slot table. A table longer than 0xC7 slots reaches VU 0x100, where the odd
             // batches are unpacked: 6 batches of The Dragon House and Club Luda read a slot an earlier batch overwrote
@@ -404,6 +464,40 @@ namespace vendetta_arenas
                 if (!b.slot && a >= 0x40u && a < 0x40u + mesh.slots)
                     b.slot = mesh.table + (a - 0x39u) * 16u;
             }
+        }
+
+        // A batch's material slot: in the slot table (the game writes there: the picture cards' frames), or where an earlier
+        // batch's data lies (a mod's triangles: from its file)
+        const uint8_t *slotBytes(const uint8_t *rdram, const Mesh &mesh, const Batch &batch)
+        {
+            const bool table = batch.slot >= mesh.table && batch.slot < mesh.table + 16u * (7u + mesh.slots);
+            const uint8_t *own = table ? nullptr : modBytes(batch.slot, 16u);
+            return own ? own : guest(rdram, batch.slot);
+        }
+
+        // A mod arena's object our draw can't read: skipped, never handed to the game's routine (it can't reach the store
+        // above 32 MB: it would send whatever lies at the address cut to 32 MB). One line each (mods.log).
+        void skipUnreadable(const uint8_t *rdram, uint32_t object, const char *what)
+        {
+            static std::unordered_set<uint64_t> told;
+            const uint32_t scene = Ps2FastRead32(rdram, kScenePointer);
+            int32_t id = INT32_MIN;
+            const uint32_t count = std::min<uint32_t>(Ps2FastRead32(rdram, scene), 4096u);
+            for (uint32_t i = 0; i < count && id == INT32_MIN; ++i)
+            {
+                const uint32_t entry = scene + 0x14u + 8u * i;
+                if (entry + 4u + Ps2FastRead32(rdram, entry + 4u) == object)
+                    id = static_cast<int32_t>(Ps2FastRead32(rdram, entry));
+            }
+            if (!told.insert((uint64_t(reinterpret_cast<uintptr_t>(g_current)) << 32) ^ object).second)
+                return;
+            char where[64];
+            if (id != INT32_MIN)
+                std::snprintf(where, sizeof(where), " (part %d at 0x%x)", id, object);
+            else
+                std::snprintf(where, sizeof(where), " at 0x%x (not in the scene's list)", object);
+            vendetta_mods::problem() << "[arenas] " << (g_current ? g_current->what : std::string("?")) << ": " << what
+                                     << where << " can't be read by our draw: left out" << std::endl;
         }
 
         Mesh &meshFor(const uint8_t *rdram, uint32_t object)
@@ -432,7 +526,8 @@ namespace vendetta_arenas
         bool inScene(const uint8_t *rdram, uint32_t object)
         {
             const uint32_t scene = Ps2FastRead32(rdram, kScenePointer);
-            return scene && object >= scene && object < scene + kSceneBytes;
+            const uint32_t bytes = g_current && scene == vendetta_store::kArenaScene ? g_current->sceneBytes : kSceneBytes;
+            return scene && object >= scene && object < scene + bytes;
         }
 
         // ------------------------------------------------------------------ the textures
@@ -464,9 +559,28 @@ namespace vendetta_arenas
             std::vector<uint32_t> rgba;
             uint32_t w = 0, h = 0;
             uint32_t id = 0;
-            if (renderer && decode(tex0, rgba, w, h))
+            bool own = false; // a mod's PNG: any size
+            if (renderer && g_current)
             {
-                if (g_texScale > 1u)
+                const auto png = g_current->pictures.find(static_cast<uint32_t>(tex0 & 0x3FFFu));
+                std::vector<uint8_t> bytes;
+                if (png != g_current->pictures.end() && vendetta_mods::readWhole(png->second, bytes))
+                {
+                    if (gsDecodePicture(bytes.data(), bytes.size(), 0, 0, rgba, w, h))
+                    {
+                        for (uint32_t &c : rgba) // PNG alpha (255 = solid) to the GS's (128 = solid)
+                            c = (c & 0x00FFFFFFu) | ((((c >> 24) * 128u + 127u) / 255u) << 24);
+                        own = true;
+                    }
+                    else
+                        vendetta_mods::problem() << "[arenas] " << g_current->what << ": " << png->second.filename().string()
+                                                 << " can't be read as a picture: the model file's own texture is used"
+                                                 << std::endl;
+                }
+            }
+            if (renderer && (own || decode(tex0, rgba, w, h)))
+            {
+                if (g_texScale > 1u && !own)
                 {
                     gsResizePicture(rgba, w, h, w * g_texScale, h * g_texScale);
                     w *= g_texScale;
@@ -952,8 +1066,9 @@ namespace vendetta_arenas
                         ++g_stats.badSlots;
                         continue;
                     }
-                    std::memcpy(&tex0, guest(rdram, batch.slot), 8);
-                    std::memcpy(&reg, guest(rdram, batch.slot + 8u), 8);
+                    const uint8_t *slot = slotBytes(rdram, mesh, batch);
+                    std::memcpy(&tex0, slot, 8);
+                    std::memcpy(&reg, slot + 8, 8);
                     // The kernel sends the slot's quadword as an A+D write. Where an earlier batch's vertices lie (the
                     // 6 batches above), its register byte is 0x00 (PRIM, which the next tag sets again) or 0xE4 (no
                     // register): the TEX0 stays the last batch's, and the card shows that picture.
@@ -1163,9 +1278,12 @@ namespace vendetta_arenas
         bool tryDraw(uint8_t *rdram, R5900Context *ctx, Call call)
         {
             const uint32_t object = getRegU32(ctx, 4);
-            if (!inScene(rdram, object))
+            const bool mod = modOnly(); // a mod's arena: always ours (the game's would draw its stand-in: nothing)
+            if (mod && object == 0u)
+                return true; // a part the arena's routine asks for and the mod hasn't: skipped (the game would draw address 0)
+            if ((g_mode == Mode::Off && !mod) || !inScene(rdram, object))
                 return false;
-            if (!g_gameIds.empty())
+            if (!g_gameIds.empty() && !mod)
             {
                 // the scene's directory at + 0x14: {id, offset from the next word}
                 const uint32_t scene = Ps2FastRead32(rdram, kScenePointer);
@@ -1179,11 +1297,15 @@ namespace vendetta_arenas
                 }
             }
             Mesh &mesh = meshFor(rdram, object);
-            if (!mesh.ours || mesh.kernel != (call == Call::Shadow ? 0x10u : 0xCu) || mesh.table != object + 0xB0u)
-                return false;
-            if (g_mode == Mode::Check)
+            if (!mesh.ours || (mesh.kernel && mesh.kernel != (call == Call::Shadow ? 0x10u : 0xCu)) || mesh.table != object + 0xB0u)
+            {
+                if (mod)
+                    skipUnreadable(rdram, object, "an object");
+                return mod; // a mod's: skipped
+            }
+            if (g_mode == Mode::Check && !mod)
                 return false; // the game's draw (checkDraw compares)
-            if (!oursNow())
+            if (!mod && !oursNow())
             {
                 ++g_stats.gameObjects;
                 return false;
@@ -1210,10 +1332,10 @@ namespace vendetta_arenas
         bool checkDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::RecompiledFunction original, Call call)
         {
             const uint32_t object = getRegU32(ctx, 4);
-            if (g_mode != Mode::Check || !inScene(rdram, object))
+            if (g_mode != Mode::Check || modOnly() || !inScene(rdram, object))
                 return false;
             Mesh &mesh = meshFor(rdram, object);
-            if (!mesh.ours || mesh.kernel != (call == Call::Shadow ? 0x10u : 0xCu) || mesh.table != object + 0xB0u)
+            if (!mesh.ours || (mesh.kernel && mesh.kernel != (call == Call::Shadow ? 0x10u : 0xCu)) || mesh.table != object + 0xB0u)
                 return false;
             const float du = ctx->f[12], dv = ctx->f[13];
             const uint32_t ra = getRegU32(ctx, 31), sp = getRegU32(ctx, 29);
@@ -1456,11 +1578,13 @@ namespace vendetta_arenas
                 return false;
             float m[16];
             std::memcpy(m, guest(rdram, matrix), 64);
+            // a mod's post: its vertices and triangles from its file (the stand-in has neither)
+            uint8_t *own = modBytes(object, 16u + 64u * vertices + 6u * triangles);
             static std::vector<PostVertex> transformed;
             transformed.resize(vertices);
             for (uint32_t k = 0; k < vertices; ++k)
             {
-                uint8_t *v = rdram + ((object + 16u + 64u * k) & PS2_RAM_MASK);
+                uint8_t *v = own ? own + 16u + 64u * k : rdram + ((object + 16u + 64u * k) & PS2_RAM_MASK);
                 float f[16];
                 std::memcpy(f, v, 64);
                 float c[4];
@@ -1482,7 +1606,7 @@ namespace vendetta_arenas
             const uint32_t id = !g_vramTextures && gpu() ? imageFor(tex0) : 0u;
             if (id)
                 packet.ad(0x71u, uint64_t(tbp) | (uint64_t(id) << 32));
-            const uint8_t *index = guest(rdram, object + 16u + 64u * vertices);
+            const uint8_t *index = own ? own + 16u + 64u * vertices : guest(rdram, object + 16u + 64u * vertices);
             for (uint32_t t = 0; t < triangles; ++t)
             {
                 uint16_t ix[3];
@@ -1556,7 +1680,13 @@ namespace vendetta_arenas
         void drawPostHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t object = getRegU32(ctx, 4), matrix = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
-            if (g_mode == Mode::Check)
+            const bool mod = modOnly();
+            if (g_mode == Mode::Off && !mod)
+            {
+                g_originalDrawPost(rdram, ctx, runtime);
+                return;
+            }
+            if (g_mode == Mode::Check && !mod)
             {
                 const uint32_t sp = getRegU32(ctx, 29);
                 g_checkStarted = true;
@@ -1572,7 +1702,7 @@ namespace vendetta_arenas
                 }
                 return;
             }
-            if (!oursNow())
+            if (!mod && !oursNow())
             {
                 ++g_stats.gameObjects;
                 g_originalDrawPost(rdram, ctx, runtime);
@@ -1581,6 +1711,12 @@ namespace vendetta_arenas
             Packet packet;
             if (!drawPost(rdram, object, matrix, packet))
             {
+                if (mod)
+                {
+                    skipUnreadable(rdram, object, "a post");
+                    ctx->pc = ra;
+                    return;
+                }
                 g_originalDrawPost(rdram, ctx, runtime);
                 return;
             }
@@ -1605,33 +1741,57 @@ namespace vendetta_arenas
             const uint32_t ra = getRegU32(ctx, 31), part = getRegU32(ctx, 4);
             const uint32_t light = getRegU32(ctx, 5), colours = getRegU32(ctx, 6);
             const bool arena = ra == kFromCrowd || ra == kFromRope || ra == kFromRopeFaded || ra == kFromRopeLowPoly;
-            if (!arena || part == 0u)
+            const bool mod = modOnly();
+            if (!arena || part == 0u || (g_mode == Mode::Off && !mod))
             {
                 g_originalDrawPart(rdram, ctx, runtime); // the wrestlers' (their own hook, if on, comes before this one)
                 return;
             }
-            if (g_mode == Mode::Check)
+            if (g_mode == Mode::Check && !mod)
             {
                 const uint32_t sp = getRegU32(ctx, 29);
                 g_checkStarted = true;
                 g_originalDrawPart(rdram, ctx, runtime);
                 if (ctx->pc != ra || getRegU32(ctx, 29) != sp)
                     return;
-                // the game wrote the rows: ours read them there
+                // the game wrote the rows: ours read them there (a mod's part: its own copy, the rows written into it)
                 g_ourTriangles.clear();
-                if (vendetta_wrestlerdraw::drawGamePart(*runtime, rdram, part, light, colours, false, 0u, &g_ourTriangles))
+                uint8_t *own = nullptr;
+                if (modBytes(part, 16u))
+                    own = modBytes(part, (Ps2FastRead32(rdram, part) & ~3u) + Ps2FastRead32(rdram, part + 4u));
+                if (vendetta_wrestlerdraw::drawGamePart(*runtime, rdram, part, light, colours, false, 0u, &g_ourTriangles, own))
                     checkWindow({part, ra, static_cast<uint32_t>(Call::Part), light, colours});
                 return;
             }
-            if (!oursNow())
+            if (!mod && !oursNow())
             {
                 ++g_stats.gameObjects;
                 g_originalDrawPart(rdram, ctx, runtime);
                 return;
             }
             const uint32_t id = !g_vramTextures && gpu() ? imageFor(partTex0(rdram, part)) : 0u;
-            if (!vendetta_wrestlerdraw::drawGamePart(*runtime, rdram, part, light, colours, true, id, nullptr))
+            // a mod's rope or crowd person: its triangles from its file, the stand-in's bones as the game posed them
+            uint8_t *own = nullptr;
+            if (uint8_t *head = modBytes(part, 16u))
             {
+                uint32_t streamAt, streamBytes;
+                std::memcpy(&streamAt, head, 4);
+                std::memcpy(&streamBytes, head + 4, 4);
+                own = modBytes(part, (streamAt & ~3u) + streamBytes);
+                if (!own)
+                {
+                    ctx->pc = ra; // its data runs past the file: nothing drawn (the stand-in has no triangles)
+                    return;
+                }
+            }
+            if (!vendetta_wrestlerdraw::drawGamePart(*runtime, rdram, part, light, colours, true, id, nullptr, own))
+            {
+                if (mod)
+                {
+                    skipUnreadable(rdram, part, ra == kFromCrowd ? "a crowd person" : "a rope");
+                    ctx->pc = ra;
+                    return;
+                }
                 g_originalDrawPart(rdram, ctx, runtime); // not readable: the game's own draw (the same rows)
                 return;
             }
@@ -1676,7 +1836,7 @@ namespace vendetta_arenas
                 const uint32_t entry = scene + 0x14u + 8u * i;
                 const int32_t id = static_cast<int32_t>(Ps2FastRead32(rdram, entry));
                 const uint32_t object = entry + 4u + Ps2FastRead32(rdram, entry + 4u);
-                if (object < scene || object >= scene + kSceneBytes)
+                if (!inScene(rdram, object))
                     continue;
                 if (id == -1)
                 {
@@ -1717,8 +1877,9 @@ namespace vendetta_arenas
                     if (!batch.slot)
                         continue;
                     uint64_t tex0, reg;
-                    std::memcpy(&tex0, guest(rdram, batch.slot), 8);
-                    std::memcpy(&reg, guest(rdram, batch.slot + 8u), 8);
+                    const uint8_t *slot = slotBytes(rdram, mesh, batch);
+                    std::memcpy(&tex0, slot, 8);
+                    std::memcpy(&reg, slot + 8, 8);
                     if (((reg & 0xFFu) == 0x06u || (reg & 0xFFu) == 0x07u) && imageFor(tex0))
                         ++images;
                 }
@@ -1761,7 +1922,7 @@ namespace vendetta_arenas
         // The arena's textures, read as the game uploads them.
         void upload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
-            if (getRegU32(ctx, 31) == kUploadFromArena)
+            if (getRegU32(ctx, 31) == kUploadFromArena && (g_mode != Mode::Off || g_current))
             {
                 const uint32_t p = getRegU32(ctx, 4);
                 const uint32_t start = p + (Ps2FastRead32(rdram, p) & ~3u);
@@ -1769,7 +1930,19 @@ namespace vendetta_arenas
                 const auto t0 = Clock::now();
                 g_meshes.clear();
                 dropImages();
-                replayUploads(guest(rdram, start), std::min<uint32_t>(bytes, 0x100000u));
+                if (g_current) // the mod's own part 1 (the game still uploads its arena's: our draw doesn't use it)
+                {
+                    const uint8_t *t = g_current->file.data() + g_current->textures;
+                    uint32_t at, size;
+                    std::memcpy(&at, t, 4);
+                    std::memcpy(&size, t + 4, 4);
+                    at &= ~3u;
+                    size = (size >> 4) * 16u;
+                    if (uint64_t(at) + size <= g_current->texturesBytes)
+                        replayUploads(t + at, size);
+                }
+                else
+                    replayUploads(guest(rdram, start), std::min<uint32_t>(bytes, 0x100000u));
                 prepareArena(rdram);
                 std::cerr << "[arenas] venue " << Ps2FastRead32(rdram, kVenue) << ": its textures read ("
                           << std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count()
@@ -1777,15 +1950,447 @@ namespace vendetta_arenas
             }
             g_originalUpload(rdram, ctx, runtime);
         }
+
+        // ------------------------------------------------------------------ the arena's set-up: the crowd, a mod's arena
+
+        PS2Runtime::RecompiledFunction g_originalSetUp = nullptr;
+
+        uint32_t word(const uint8_t *p)
+        {
+            uint32_t v;
+            std::memcpy(&v, p, 4);
+            return v;
+        }
+
+        // A VIF1 stream's batch data (each UNPACK with FLG to VU 0: a batch's vertices, strips and triangles) zeroed: what
+        // a stand-in leaves out. The setup rows (tags, slots, matrices, the colour scale) stay: the game writes there.
+        void zeroBatches(uint8_t *stream, uint32_t bytes)
+        {
+            uint32_t o = 0;
+            while (o + 4u <= bytes)
+            {
+                const uint32_t code = word(stream + o);
+                const uint32_t imm = code & 0xFFFFu, num = (code >> 16) & 0xFFu, cmd = (code >> 24) & 0x7Fu;
+                o += 4u;
+                if (cmd >= 0x60u)
+                {
+                    const uint32_t vn = (cmd >> 2) & 3u, vl = cmd & 3u, n = num ? num : 256u;
+                    const uint32_t size = ((n * (vn + 1u) * (32u >> vl) / 8u) + 3u) & ~3u;
+                    if ((imm & 0x8000u) && (imm & 0x3FFu) == 0u)
+                        std::memset(stream + o, 0, std::min(size, bytes - std::min(bytes, o)));
+                    o += size;
+                    continue;
+                }
+                switch (cmd)
+                {
+                case 0x20: o += 4u; break;                                  // STMASK
+                case 0x30: case 0x31: o += 16u; break;                      // STROW, STCOL
+                case 0x4A: o += (num ? num : 256u) * 8u; break;             // MPG
+                case 0x50: case 0x51: o += (imm ? imm : 65536u) * 16u; break; // DIRECT, DIRECTHL
+                case 0x00: case 0x01: case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07:
+                case 0x10: case 0x11: case 0x13: case 0x14: case 0x15: case 0x17:
+                    break;
+                default:
+                    return; // not a stream this knows: the rest left
+                }
+            }
+        }
+
+        // A model part (a rope, a crowd person: {stream offset, stream bytes, bones, 0}, bones, the stream) at `at` in a
+        // copy of `bytes`: its batches zeroed
+        void zeroPart(uint8_t *copy, uint32_t bytes, uint32_t at)
+        {
+            if (uint64_t(at) + 16u > bytes)
+                return;
+            const uint32_t stream = at + (word(copy + at) & ~3u), size = word(copy + at + 4u);
+            if (stream > at && uint64_t(stream) + size <= bytes)
+                zeroBatches(copy + stream, size);
+        }
+
+        // The stand-in scene: the mod's scene, its objects' triangles left out (in place, so every offset stays and our
+        // draw finds them at the same offset in the mod's file): the meshes' batches, the posts' vertices and triangles
+        // (ids 81-92, the High Poly venues' format), the rope's batches; the directory, the lights (LIT), the picture cards
+        // (BBD), the header (the rope spring) and every object's own header and setup rows kept.
+        void zeroScene(uint8_t *copy, uint32_t bytes, bool highPoly)
+        {
+            const uint32_t count = std::min<uint32_t>(word(copy), (bytes - std::min<uint32_t>(bytes, 0x14u)) / 8u);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const uint32_t entry = 0x14u + 8u * i;
+                const int32_t id = static_cast<int32_t>(word(copy + entry));
+                const uint32_t object = entry + 4u + word(copy + entry + 4u);
+                if (id < 0 || object < 0x14u || uint64_t(object) + 0x80u > bytes)
+                    continue; // the picture cards (-1), the lights (-2), or nothing
+                if (highPoly && id >= 81 && id <= 92)
+                {
+                    const uint64_t end = uint64_t(object) + 16u + 64ull * word(copy + object) + 6ull * word(copy + object + 4u);
+                    if (end <= bytes)
+                        std::memset(copy + object + 16u, 0, static_cast<size_t>(end - object - 16u));
+                    continue;
+                }
+                bool zeroHead = true; // a mesh: {QWC, 0x7C zero bytes}, then its stream
+                for (uint32_t k = 4; k < 0x80u && zeroHead; k += 4)
+                    zeroHead = word(copy + object + k) == 0u;
+                const uint32_t qwc = word(copy + object);
+                if (zeroHead && qwc && uint64_t(object) + 0x80u + 16ull * qwc <= bytes)
+                    zeroBatches(copy + object + 0x80u, 16u * qwc);
+                else if (id == 2)
+                    zeroPart(copy, bytes, object); // the rope: a model part
+            }
+        }
+
+        // The mod arena's file read and its stand-in put in the store: the scene at kArenaScene, the crowd's people (each
+        // model without its triangles) and clips where the game's crowd code reads them. False: unusable (a mods.log line;
+        // the game's own arena is used).
+        bool loadModArena(ModArena &m)
+        {
+            const char *const instead = ": the game's own arena is used";
+            std::vector<uint8_t> file;
+            const std::filesystem::path model = m.folder / "model.arena";
+            if (!vendetta_mods::readWhole(model, file))
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena can't be read" << instead << std::endl;
+                return false;
+            }
+            if (file.size() < 0x40u || std::memcmp(file.data(), "DJARENA1", 8) != 0)
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena is not an arena in the game's format"
+                                         << instead << std::endl;
+                return false;
+            }
+            auto part = [&](uint32_t at, uint32_t &offset, uint32_t &bytes) {
+                offset = word(file.data() + at);
+                bytes = word(file.data() + at + 4u);
+                return bytes == 0u || (offset >= 0x40u && uint64_t(offset) + bytes <= file.size());
+            };
+            if (!part(0x10, m.scene, m.sceneBytes) || !part(0x18, m.textures, m.texturesBytes) ||
+                !part(0x30, m.people, m.peopleBytes) || !part(0x38, m.clips, m.clipsBytes) || m.sceneBytes < 0x14u ||
+                m.texturesBytes < 8u)
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena is damaged (a part runs past the file)"
+                                         << instead << std::endl;
+                return false;
+            }
+            const uint32_t venue = word(file.data() + 0x0C);
+            if (venue != m.venue)
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena is made for venue " << venue
+                                         << ", not the arena it replaces (venue " << m.venue << "); replacing another arena "
+                                         << "comes later" << instead << std::endl;
+                return false;
+            }
+            if (m.sceneBytes > vendetta_store::kArenaSceneRoom || m.peopleBytes > vendetta_store::kCrowdRoom ||
+                m.clipsBytes > vendetta_store::kCrowdRoom)
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena is too big (the scene up to 4 MB, the crowd "
+                                         << "and its clips up to 3 MB each)" << instead << std::endl;
+                return false;
+            }
+            m.file = std::move(file);
+            // the stand-in scene
+            uint8_t *scene = vendetta_store::host(vendetta_store::kArenaScene);
+            std::memcpy(scene, m.file.data() + m.scene, m.sceneBytes);
+            if (!g_fullStandIn)
+                zeroScene(scene, m.sceneBytes, m.venue < 12u || m.venue >= 24u);
+            // the crowd: its people (each model without its triangles) and their clips; none = no one ("AUD ", 8, 0)
+            uint8_t *people = vendetta_store::host(kCrowd);
+            if (m.peopleBytes >= 0x10u)
+            {
+                std::memcpy(people, m.file.data() + m.people, m.peopleBytes);
+                const uint32_t count = std::min<uint32_t>(word(people + 8u), (m.peopleBytes - 0x10u) / 0x70u);
+                for (uint32_t i = 0; i < count; ++i)
+                    for (uint32_t k = 0; k < 4u; ++k)
+                    {
+                        const uint32_t at = 0x10u + 0x70u * i + 4u * k;
+                        const uint32_t model = at + word(people + at); // the models' pointers are self-relative
+                        if (model < m.peopleBytes && !g_fullStandIn)
+                            zeroPart(people, m.peopleBytes, model); // a model shared by several pointers: zeroed once more
+                    }
+            }
+            else
+            {
+                const uint32_t empty[4] = {0x20445541u, 8u, 0u, 0u}; // "AUD ", size, no people
+                std::memcpy(people, empty, sizeof(empty));
+            }
+            if (m.clipsBytes)
+                std::memcpy(vendetta_store::host(vendetta_store::kCrowdClips), m.file.data() + m.clips, m.clipsBytes);
+            std::cerr << "[arenas] " << m.what << ": in place of venue " << m.venue << " (" << m.file.size() / 1024
+                      << " KB; the stand-in scene " << m.sceneBytes / 1024 << " KB, the crowd " << m.peopleBytes / 1024
+                      << " KB without its triangles)" << std::endl;
+            return true;
+        }
+
+        // FUN_001a1c38(venue, scene): the game's crowd (the loader's buffers) copied where its crowd code reads it, or a
+        // mod arena's stand-in in its place (a1 = the stand-in scene), before the set-up reads any of it
+        // A mod arena's fly-in: the camera path its venue uses pointed at the mod's own (in the store) while it is loaded,
+        // the game's put back at the next venue's load
+        uint32_t g_redirectedPath = ~0u, g_gamePathOffset = 0;
+
+        void restoreFlyIn(uint8_t *rdram)
+        {
+            if (g_redirectedPath == ~0u)
+                return;
+            std::memcpy(rdram + kCameraPaths + 4u * g_redirectedPath, &g_gamePathOffset, 4);
+            g_redirectedPath = ~0u;
+        }
+
+        void redirectFlyIn(uint8_t *rdram, const ModArena &m)
+        {
+            if (m.flyIn.empty() || m.venue >= 28u)
+                return;
+            const uint32_t path = word(rdram + kFlyInPaths + 4u * m.venue);
+            if (path >= 369u)
+                return;
+            std::memcpy(vendetta_store::host(vendetta_store::kArenaFlyIn), m.flyIn.data(), m.flyIn.size());
+            const uint32_t entry = kCameraPaths + 4u * path;
+            g_gamePathOffset = word(rdram + entry);
+            g_redirectedPath = path;
+            const uint32_t offset = vendetta_store::kArenaFlyIn - entry; // self-relative
+            std::memcpy(rdram + entry, &offset, 4);
+        }
+
+        // FUN_001b0958(venue, ...): a mod arena's sounds are the sound set of the game arena its arena.json names
+        PS2Runtime::RecompiledFunction g_originalSounds = nullptr;
+        void sounds(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_current && g_current->soundsVenue != ~0u && getRegU32(ctx, 4) == g_current->venue)
+            {
+                std::cerr << "[arenas] " << g_current->what << ": the sounds of venue " << g_current->soundsVenue << std::endl;
+                SET_GPR_U32(ctx, 4, g_current->soundsVenue);
+            }
+            g_originalSounds(rdram, ctx, runtime);
+        }
+
+        void setUp(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t venue = getRegU32(ctx, 4);
+            restoreFlyIn(rdram);
+            for (ModArena &m : g_modArenas)
+                if (&m != g_current)
+                    std::vector<uint8_t>().swap(m.file);
+            g_current = nullptr;
+            for (ModArena &m : g_modArenas) // the mods in load order: the last one replacing this arena wins
+                if (m.venue == venue)
+                    g_current = &m;
+            if (g_current && !loadModArena(*g_current))
+                g_current = nullptr;
+            if (g_current)
+            {
+                SET_GPR_U32(ctx, 5, vendetta_store::kArenaScene);
+                redirectFlyIn(rdram, *g_current);
+                if (g_redirectedPath != ~0u)
+                    std::cerr << "[arenas] " << g_current->what << ": its own fly-in (camera path " << g_redirectedPath << ")"
+                              << std::endl;
+            }
+            else
+            {
+                std::memcpy(vendetta_store::host(kCrowd), rdram + kGameCrowd, kGameCrowdBytes);
+                std::memcpy(vendetta_store::host(vendetta_store::kCrowdClips), rdram + kGameClips, kGameClipsBytes);
+            }
+            g_originalSetUp(rdram, ctx, runtime);
+        }
+
+        // The game's arenas by the names a mod uses (Choose Stage's), and their venues
+        uint32_t venueNamed(std::string name)
+        {
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            if (name.rfind("the ", 0) == 0)
+                name = name.substr(4);
+            static const std::pair<const char *, uint32_t> names[] = {
+                {"bounty club", 0}, {"junkyard", 1}, {"warehouse", 2}, {"grimeyville", 3}, {"dragon house", 4},
+                {"da bridge", 5}, {"club luda", 6}, {"face club", 7}, {"face club after hours", 8}, {"sanctuary", 9},
+                {"def jam", 10}, {"def jam vendetta", 11}};
+            for (const auto &[n, v] : names)
+                if (name == n)
+                    return v;
+            return ~0u;
+        }
+
+        // arena.json: the sounds (a game arena named) and the fly-in (camera keys). Missing or unusable: the replaced
+        // arena's own, with a mods.log line.
+        void readArenaJson(ModArena &m)
+        {
+            std::vector<uint8_t> bytes;
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(m.folder / "arena.json", ec) || !vendetta_mods::readWhole(m.folder / "arena.json", bytes))
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": no arena.json: the sounds and the fly-in of the arena it "
+                                         << "replaces" << std::endl;
+                return;
+            }
+            vendetta_mods::Json json;
+            std::string error;
+            if (!vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), json, error) || !json.isObject())
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json can't be read (" << error
+                                         << "): the sounds and the fly-in of the arena it replaces" << std::endl;
+                return;
+            }
+            if (const vendetta_mods::Json *sounds = json.find("sounds"))
+            {
+                const uint32_t venue = sounds->isString() ? venueNamed(sounds->text) : ~0u;
+                if (venue == ~0u)
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"sounds\" is not one of the game's "
+                                             << "arenas: the sounds of the arena it replaces" << std::endl;
+                else
+                    m.soundsVenue = venue;
+            }
+            const vendetta_mods::Json *flyIn = json.find("fly-in");
+            if (!flyIn)
+                return;
+            const vendetta_mods::Json *frames = flyIn->find("frames"), *keys = flyIn->find("keys");
+            auto number = [](const vendetta_mods::Json *j) { return j && j->type == vendetta_mods::Json::Type::Number; };
+            auto vec3 = [&](const vendetta_mods::Json *j, float out[3]) {
+                if (!j || !j->isArray() || j->items.size() != 3u)
+                    return false;
+                for (int i = 0; i < 3; ++i)
+                {
+                    if (!number(&j->items[i]))
+                        return false;
+                    out[i] = static_cast<float>(j->items[i].number);
+                }
+                return true;
+            };
+            std::vector<uint8_t> path;
+            bool ok = number(frames) && frames->number >= 1.0 && keys && keys->isArray() && !keys->items.empty() &&
+                      keys->items.size() <= 1024u;
+            int32_t last = -1;
+            if (ok)
+            {
+                const int32_t lastFrame = static_cast<int32_t>(frames->number);
+                const uint32_t count = static_cast<uint32_t>(keys->items.size());
+                path.resize(8u + 0x24u * count);
+                std::memcpy(path.data(), &lastFrame, 4);
+                std::memcpy(path.data() + 4, &count, 4);
+                for (uint32_t k = 0; k < count && ok; ++k)
+                {
+                    const vendetta_mods::Json &key = keys->items[k];
+                    float eye[3], target[3];
+                    const vendetta_mods::Json *frame = key.find("frame"), *roll = key.find("roll"), *fov = key.find("fov");
+                    ok = number(frame) && vec3(key.find("eye"), eye) && vec3(key.find("target"), target) && number(roll) &&
+                         number(fov) && static_cast<int32_t>(frame->number) > last && frame->number <= frames->number;
+                    if (!ok)
+                        break;
+                    last = static_cast<int32_t>(frame->number);
+                    const float values[8] = {eye[0], eye[1], eye[2], target[0], target[1], target[2],
+                                             static_cast<float>(roll->number), static_cast<float>(fov->number)};
+                    uint8_t *at = path.data() + 8u + 0x24u * k;
+                    std::memcpy(at, &last, 4);
+                    std::memcpy(at + 4, values, 32);
+                }
+            }
+            if (!ok || path.size() > vendetta_store::kArenaFlyInRoom)
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"fly-in\" can't be used (\"frames\", then "
+                                         << "\"keys\" in frame order, each with \"frame\", \"eye\", \"target\", \"roll\", "
+                                         << "\"fov\"): the fly-in of the arena it replaces" << std::endl;
+                return;
+            }
+            m.flyIn = std::move(path);
+        }
+
+        // The mods' arenas ("replace": {"arenas": {"<game arena>": "<folder>"}}), read at start (their files at each load)
+        void findModArenas()
+        {
+            for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
+            {
+                const vendetta_mods::Json *replace = mod.manifest.find("replace");
+                const vendetta_mods::Json *arenas = replace ? replace->find("arenas") : nullptr;
+                if (!arenas || !arenas->isObject())
+                    continue;
+                for (const auto &[name, value] : arenas->members)
+                {
+                    const std::string what = mod.name + ": " + (value.isString() ? value.text : name);
+                    const uint32_t venue = venueNamed(name);
+                    if (venue == ~0u)
+                    {
+                        vendetta_mods::problem() << "[arenas] " << what << ": \"" << name << "\" is not one of the game's arenas"
+                                                 << std::endl;
+                        continue;
+                    }
+                    const std::filesystem::path folder = value.isString() ? vendetta_mods::fileNamed(mod.folder, value.text)
+                                                                          : std::filesystem::path();
+                    std::error_code ec;
+                    if (folder.empty() || !std::filesystem::is_regular_file(folder / "model.arena", ec))
+                    {
+                        vendetta_mods::problem() << "[arenas] " << what << ": no model.arena in its folder: " << name
+                                                 << " stays the game's" << std::endl;
+                        continue;
+                    }
+                    ModArena m;
+                    m.what = what;
+                    m.folder = folder;
+                    m.venue = venue;
+                    // textures\: pictures.json {"pictures": [{"file", "dbp"}, ...]}, else PNGs named "@<address>"
+                    const std::filesystem::path textures = folder / "textures";
+                    std::vector<uint8_t> list;
+                    if (std::filesystem::is_regular_file(textures / "pictures.json", ec) &&
+                        vendetta_mods::readWhole(textures / "pictures.json", list))
+                    {
+                        vendetta_mods::Json json;
+                        std::string error;
+                        const vendetta_mods::Json *pictures = nullptr;
+                        if (vendetta_mods::parseJson(std::string(list.begin(), list.end()), json, error) &&
+                            (pictures = json.find("pictures")) != nullptr && pictures->isArray())
+                        {
+                            for (const vendetta_mods::Json &picture : pictures->items)
+                            {
+                                const vendetta_mods::Json *file = picture.find("file"), *dbp = picture.find("dbp");
+                                if (file && file->isString() && dbp && dbp->type == vendetta_mods::Json::Type::Number &&
+                                    std::filesystem::is_regular_file(textures / file->text, ec))
+                                    m.pictures[static_cast<uint32_t>(dbp->number)] = textures / file->text;
+                            }
+                        }
+                        else
+                            vendetta_mods::problem() << "[arenas] " << what << ": textures\\pictures.json can't be read ("
+                                                     << error << "): the model file's own textures are used" << std::endl;
+                    }
+                    if (std::filesystem::is_directory(textures, ec))
+                        for (const auto &f : std::filesystem::directory_iterator(textures, ec))
+                        {
+                            const std::string n = f.path().stem().string();
+                            if (f.path().extension() == ".png" && n.size() > 1 && n[0] == '@')
+                                m.pictures.emplace(static_cast<uint32_t>(std::strtoul(n.c_str() + 1, nullptr, 10)), f.path());
+                        }
+                    readArenaJson(m);
+                    std::cerr << "[arenas] " << what << ": replaces " << name << " (" << m.pictures.size()
+                              << " textures of its own; " << (m.flyIn.empty() ? "the arena's fly-in" : "its own fly-in")
+                              << ", the sounds of venue " << (m.soundsVenue == ~0u ? m.venue : m.soundsVenue) << ")" << std::endl;
+                    g_modArenas.push_back(std::move(m));
+                }
+            }
+        }
     }
 
     void install(PS2Runtime &runtime)
     {
-        const char *value = std::getenv("VENDETTA_ARENADRAW");
-        if (!value || !*value || std::string(value) == "0")
+        g_runtime = &runtime;
+        // the 3-D crowd is always read from the store (the game's own copied there at each venue's set-up)
+        const uint32_t crowdAt = kCrowd - vendetta_store::kFixedArea, clipsAt = vendetta_store::kCrowdClips - vendetta_store::kFixedArea;
+        const uint32_t sceneAt = vendetta_store::kArenaScene - vendetta_store::kFixedArea;
+        g_originalSetUp = runtime.lookupFunction(kSetUp);
+        if (!g_originalSetUp || !vendetta_store::fixed(crowdAt, vendetta_store::kCrowdRoom, "the arena's crowd") ||
+            !vendetta_store::fixed(clipsAt, vendetta_store::kCrowdRoom, "the arena's crowd clips") ||
+            !vendetta_store::fixed(sceneAt, vendetta_store::kArenaSceneRoom, "a mod arena's stand-in") ||
+            !vendetta_store::fixed(vendetta_store::kArenaFlyIn - vendetta_store::kFixedArea, vendetta_store::kArenaFlyInRoom,
+                                   "a mod arena's fly-in"))
+        {
+            std::cerr << "[arenas] the arena's set-up or the store's room not found: the 3-D crowd can't be read" << std::endl;
             return;
-        const std::string v = value;
-        if (v == "vram")
+        }
+        runtime.replaceFunction(kSetUp, setUp);
+        if ((g_originalSounds = runtime.lookupFunction(kSounds)) != nullptr)
+            runtime.replaceFunction(kSounds, sounds);
+        g_fullStandIn = std::getenv("VENDETTA_ARENA_FULLSTANDIN") && *std::getenv("VENDETTA_ARENA_FULLSTANDIN") != '0';
+        findModArenas();
+        const char *value = std::getenv("VENDETTA_ARENADRAW");
+        const bool off = !value || !*value || std::string(value) == "0";
+        if (off && g_modArenas.empty())
+            return;
+        const std::string v = off ? "" : value;
+        if (off)
+            g_mode = Mode::Off; // our draw only for the mods' arenas
+        else if (v == "vram")
         {
             g_mode = Mode::Vram;
             g_vramTextures = true;
@@ -1829,7 +2434,6 @@ namespace vendetta_arenas
         if (const char *k = std::getenv("VENDETTA_ARENA_TEXSCALE"))
             g_texScale = static_cast<uint32_t>(std::clamp(std::atoi(k), 1, 16));
         g_log = std::getenv("VENDETTA_ARENALOG") && *std::getenv("VENDETTA_ARENALOG") != '0';
-        g_runtime = &runtime;
         g_originalDraw = runtime.lookupFunction(kDraw);
         g_originalDrawScrolled = runtime.lookupFunction(kDrawScrolled);
         g_originalDrawShadow = runtime.lookupFunction(kDrawShadow);
@@ -1852,6 +2456,11 @@ namespace vendetta_arenas
         runtime.replaceFunction(kUpload, upload);
         if (g_log && (g_originalIntros = runtime.lookupFunction(kIntros)) != nullptr)
             runtime.replaceFunction(kIntros, intros);
+        if (g_mode == Mode::Off)
+        {
+            std::cerr << "[arenas] the mods' arenas drawn by our code (" << g_modArenas.size() << ")" << std::endl;
+            return;
+        }
         std::cerr << "[arenas] on: the arena drawn by our code ("
                   << (g_mode == Mode::Vram ? "the game's uploaded textures" : g_mode == Mode::Ab ? "in turn with the game's"
                       : g_mode == Mode::Flip ? "F9 swaps it with the game's" : "textures as host images")

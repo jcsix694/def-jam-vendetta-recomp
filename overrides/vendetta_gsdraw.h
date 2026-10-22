@@ -458,7 +458,10 @@ namespace vendetta_wrestlerdraw
     // arena's that go through the same routine and VU1 program (the ring's ropes, the 3-D crowd's people). `rows`: the
     // stream's rows written first, as the game writes them; `image`: a host image bound to the part's TEX0 address around
     // its triangles (0: the texture the game uploaded); `capture`: the triangles read back into it instead of sent (a
-    // check). False: the part can't be read (the caller lets the game draw it).
+    // check); `own`: the part's triangles from this copy instead (a mod's part on the PC; the guest part is a stand-in
+    // the game posed: its bones are used, its rows written into `own`). False: the part can't be read (the caller lets
+    // the game draw it).
     bool drawGamePart(PS2Runtime &runtime, uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours,
-                      bool rows, uint32_t image, std::vector<vendetta_gsdraw::GsTriangle> *capture);
+                      bool rows, uint32_t image, std::vector<vendetta_gsdraw::GsTriangle> *capture,
+                      uint8_t *own = nullptr);
 }
