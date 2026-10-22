@@ -123,6 +123,13 @@ namespace vendetta_arenas
         constexpr uint32_t kBigSlot = 0x3621u, kThumbSlot = 0x36A5u;
         constexpr uint32_t kUploadNames = 0x1A0FD0u;
         constexpr uint32_t kNameScale = 4u;           // a mod's name drawn at 4 times the sheet's texels
+        // Choose Stage FUN_0014e7c8 (front end in a0) with any number of places: its tables and flags in the store
+        // (patched), the window's last start and Random's count at front end + 0xF78 / + 0xF7C, its four helpers here
+        constexpr uint32_t kChooseStage = 0x14E7C8u;
+        constexpr uint32_t kGameOrder = 0x239AB8u, kGamePictures = 0x239AE8u, kGameThumbs = 0x239B18u; // 12 each
+        constexpr uint32_t kLeft = 0x14F078u, kRight = 0x14F0E0u, kAnyLeft = 0x14F150u, kAnyRight = 0x14F1A0u;
+        constexpr uint32_t kPictureAndName = 0x157A70u; // FUN_00157A70(ctx, {x, y, id}): the big picture (id 26 + stage), its name
+        constexpr uint32_t kStandInStage = 8u;          // a new stage's draw borrows stage 8's id: its name at sheet 1, row 0
         constexpr uint32_t kGameCrowd = 0xBD5500u;    // the loader's buffers: the 3-D crowd's people (AUD: "AUD ", size,
         constexpr uint32_t kGameClips = 0xD1A500u;    // count, people of 0x70 from + 0x10) and their clips (PAK)
         constexpr uint32_t kGameCrowdBytes = 0x145000u, kGameClipsBytes = 0xC8000u;
@@ -221,19 +228,20 @@ namespace vendetta_arenas
         {
             std::string what;                // "<mod>: <folder>", for messages
             std::filesystem::path folder;
-            uint32_t stage = 0;              // the game arena it replaces (its Choose Stage place's stage, 0-11)
+            uint32_t stage = 0;              // its Choose Stage stage: the game arena it replaces (0-11), or a new place (12 on)
             uint32_t venue = 0;              // the venue its file was made from: the one the game loads behind it
             std::vector<uint8_t> file;       // model.arena, read at the arena's load (only the current arena's kept)
             uint32_t scene = 0, sceneBytes = 0, textures = 0, texturesBytes = 0;
             uint32_t people = 0, peopleBytes = 0, clips = 0, clipsBytes = 0;
             std::map<uint32_t, std::filesystem::path> pictures; // a texture's GS address (TBP) -> its PNG
             // arena.json: "sounds" (a game arena whose sound set it uses), "fly-in" (its camera path: {"frames",
-            // "keys": [{"frame", "eye": [x, y, z], "target": [x, y, z], "roll", "fov"}]}); missing = the arena it replaces
+            // "keys": [{"frame", "eye": [x, y, z], "target": [x, y, z], "roll", "fov"}]}); missing = the venue it was made from
             uint32_t soundsVenue = ~0u;
             std::vector<uint8_t> flyIn; // the path as the game keeps it: {s32 last frame, u32 keys, keys of 0x24 bytes}
             // Choose Stage: picture.png (the big picture), thumbnail.png, name.png (the name strip), each optional
             uint32_t picture = 0, thumbnail = 0;
             std::filesystem::path name;
+            bool isNew = false; // a new place on Choose Stage (stage 12 and on), not a replacement
         };
         std::vector<ModArena> g_modArenas;
         ModArena *g_current = nullptr; // the mod arena loaded now (its stand-in in the store), or none
@@ -1990,9 +1998,73 @@ namespace vendetta_arenas
 
         // FUN_00157570(pack, index): a replaced stage's big picture or thumbnail drawn from the mod's PNG over the game's
         // own upload (the game draws its own when the file can't be shown)
+        const ModArena *g_drawingNew = nullptr; // FUN_00157A70 drawing a new stage's picture and name (its stand-in's)
+        uint32_t g_sheetImage[2] = {};           // the name sheets' own images (the replaced names), 0 = the game's
+        uint32_t g_newNameStage = ~0u;           // the stage whose name the new-name image holds
+        constexpr uint32_t kNewNameImage = kImageIdBase + 0x08000010u;
+
+        // A new stage's name for its draw: an image the shape of name sheet 1 with the mod's name on row 0 (the stand-in's
+        // row), bound at once to the sheet's address around the game's draw of the strip (GS register 0x71)
+        void bindNewName(const ModArena &m)
+        {
+            GSGpuRenderer *renderer = gpu();
+            if (!renderer)
+                return;
+            if (g_newNameStage != m.stage)
+            {
+                const uint32_t W = 256u * kNameScale, H = 128u * kNameScale, rowH = 32u * kNameScale;
+                std::vector<uint32_t> sheet(size_t(W) * H, 0u);
+                std::vector<uint8_t> file;
+                std::vector<uint32_t> rgba;
+                uint32_t pw = 0, ph = 0;
+                if (!m.name.empty() && vendetta_mods::readWhole(m.name, file) &&
+                    gsDecodePicture(file.data(), file.size(), 0, 0, rgba, pw, ph))
+                {
+                    gsResizePicture(rgba, pw, ph, W, rowH);
+                    for (uint32_t i = 0; i < W * rowH; ++i) // PNG alpha (255 = solid) to the GS's (128)
+                        sheet[i] = (rgba[i] & 0x00FFFFFFu) | ((((rgba[i] >> 24) * 128u + 127u) / 255u) << 24);
+                }
+                renderer->setHostImage(kNewNameImage, W, H, std::move(sheet)); // none: a clear strip
+                g_newNameStage = m.stage;
+            }
+            Packet bind;
+            bind.ad(0x71u, 0x3081u | (uint64_t(kNewNameImage) << 32));
+            send(bind);
+        }
+
         void picture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t pack = getRegU32(ctx, 4), index = getRegU32(ctx, 5);
+            if (g_drawingNew && (pack == 0xCu || pack == 1u))
+            {
+                if (pack == 0xCu)
+                {
+                    if (g_drawingNew->picture)
+                        vendetta_pictures::show(kBigSlot, g_drawingNew->picture);
+                    else
+                        vendetta_pictures::hide(kBigSlot);
+                }
+                else
+                    bindNewName(*g_drawingNew);
+                g_originalPicture(rdram, ctx, runtime);
+                return;
+            }
+            if (pack == 0xDu && index >= 12u)
+            {
+                // a new stage's tile: its thumbnail over stage 0's, or the "?" tile (pack 0xF, 5)
+                const ModArena *m = replacing(index);
+                if (m && m->thumbnail && vendetta_pictures::show(kThumbSlot, m->thumbnail))
+                    SET_GPR_U32(ctx, 5, 0u);
+                else
+                {
+                    SET_GPR_U32(ctx, 4, 0xFu);
+                    SET_GPR_U32(ctx, 5, 5u);
+                }
+                if (m && m->picture)
+                    vendetta_pictures::want(m->picture);
+                g_originalPicture(rdram, ctx, runtime);
+                return;
+            }
             if ((pack == 0xCu || pack == 0xDu) && index < 12u)
                 if (const ModArena *m = replacing(index))
                 {
@@ -2063,11 +2135,155 @@ namespace vendetta_arenas
                     continue;
                 const uint32_t id = kImageIdBase + 0x08000000u + sheet; // kept for the whole run (never dropped with an arena's)
                 renderer->setHostImage(id, W, H, std::move(big));
+                g_sheetImage[sheet] = id;
                 Packet bind;
                 bind.ad(0x70u, uint64_t(l.tbp) | (uint64_t(id) << 32));
                 send(bind);
                 std::cerr << "[arenas] Choose Stage's name sheet " << sheet << ": " << painted << " name(s) from the mods" << std::endl;
             }
+        }
+
+        // ------------------------------------------------------------------ Choose Stage with any number of places
+
+        PS2Runtime::RecompiledFunction g_originalChooseStage = nullptr, g_originalPictureAndName = nullptr;
+        uint32_t g_places = 12;     // the game's 12, then the mods' new arenas
+        bool g_tablesReady = false;
+        uint32_t g_lastFlags[12] = {};
+
+        uint32_t *storeWords(uint32_t address) { return reinterpret_cast<uint32_t *>(vendetta_store::host(address)); }
+
+        // The tables in the store: the game's 12 places, pictures and thumbnails, then each new arena's (its stage at
+        // the next place, picture id 26 + stage, thumbnail = its stage: both caught by the picture hooks)
+        void buildTables(uint8_t *rdram)
+        {
+            uint32_t *order = storeWords(vendetta_store::kStageOrder), *pictures = storeWords(vendetta_store::kStagePictures);
+            uint32_t *thumbs = storeWords(vendetta_store::kStageThumbs);
+            for (uint32_t i = 0; i < 12u; ++i)
+            {
+                order[i] = Ps2FastRead32(rdram, kGameOrder + 4u * i);
+                pictures[i] = Ps2FastRead32(rdram, kGamePictures + 4u * i);
+                thumbs[i] = Ps2FastRead32(rdram, kGameThumbs + 4u * i);
+            }
+            g_places = 12;
+            for (const ModArena &m : g_modArenas)
+                if (m.isNew && g_places < vendetta_store::kStageRoom / 4u)
+                {
+                    order[g_places] = m.stage;
+                    pictures[m.stage] = 26u + m.stage;
+                    thumbs[m.stage] = m.stage;
+                    ++g_places;
+                }
+            g_tablesReady = true;
+        }
+
+        uint32_t placeStage(uint32_t place) { return storeWords(vendetta_store::kStageOrder)[place]; }
+        bool unlocked(uint32_t place)
+        {
+            const uint32_t stage = placeStage(place);
+            return stage < vendetta_store::kStageRoom / 4u && storeWords(vendetta_store::kStageFlags)[stage] != 0u;
+        }
+
+        // FUN_0014e7c8(front end): before each frame, the flags (the game's 12 from + 0xF48, a cheat code's unlocks of the
+        // last frame carried back into them; the new ones on), the counts, and the window kept within the places
+        // (Random sets it by sixes)
+        void chooseStage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t frontEnd = getRegU32(ctx, 4);
+            if (!g_tablesReady)
+                buildTables(rdram);
+            uint32_t *flags = storeWords(vendetta_store::kStageFlags);
+            uint8_t *fe = rdram + (frontEnd & PS2_RAM_MASK);
+            for (uint32_t i = 0; i < 12u; ++i)
+            {
+                uint32_t game = Ps2FastRead32(rdram, frontEnd + 0xF48u + 4u * i);
+                if (flags[i] != g_lastFlags[i])
+                    game |= flags[i]; // a cheat code unlocked it last frame (the game ORs into the flags it reads)
+                std::memcpy(fe + 0xF48u + 4u * i, &game, 4);
+                flags[i] = g_lastFlags[i] = game;
+            }
+            for (uint32_t p = 12; p < g_places; ++p)
+                flags[placeStage(p)] = 1u;
+            const uint32_t lastStart = g_places - 6u;
+            std::memcpy(fe + 0xF78u, &lastStart, 4);
+            std::memcpy(fe + 0xF7Cu, &g_places, 4);
+            uint32_t cursor = Ps2FastRead32(rdram, frontEnd + 0x58u), window = Ps2FastRead32(rdram, frontEnd + 0x5Cu);
+            if (window > lastStart)
+            {
+                cursor = std::min(cursor + (window - lastStart), 5u);
+                window = lastStart;
+                std::memcpy(fe + 0x58u, &cursor, 4);
+                std::memcpy(fe + 0x5Cu, &window, 4);
+            }
+            g_originalChooseStage(rdram, ctx, runtime);
+        }
+
+        // The four helpers (leaf functions, a0 = front end, a1 = a place): the distance to the nearest unlocked place to
+        // the left / right (0: none), whether any lies left of the window / right of it (the window starts at a1)
+        void helperLeft(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            const int32_t from = static_cast<int32_t>(getRegU32(ctx, 5));
+            uint32_t distance = 0;
+            for (int32_t p = from - 1; p >= 0 && !distance; --p)
+                if (unlocked(static_cast<uint32_t>(p)))
+                    distance = static_cast<uint32_t>(from - p);
+            SET_GPR_U32(ctx, 2, distance);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void helperRight(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t from = getRegU32(ctx, 5);
+            uint32_t distance = 0;
+            for (uint32_t p = from + 1; p < g_places && !distance; ++p)
+                if (unlocked(p))
+                    distance = p - from;
+            SET_GPR_U32(ctx, 2, distance);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void helperAnyLeft(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            const int32_t window = static_cast<int32_t>(getRegU32(ctx, 5));
+            uint32_t any = 0;
+            for (int32_t p = window - 1; p >= 0 && !any; --p)
+                any = unlocked(static_cast<uint32_t>(p)) ? 1u : 0u;
+            SET_GPR_U32(ctx, 2, any);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void helperAnyRight(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t window = getRegU32(ctx, 5);
+            uint32_t any = 0;
+            for (uint32_t p = window + 6u; p < g_places && !any; ++p)
+                any = unlocked(p) ? 1u : 0u;
+            SET_GPR_U32(ctx, 2, any);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // FUN_00157A70(ctx, {x, y, id}): a new stage's big picture and name drawn through a stand-in's (stage 8's id: its
+        // picture slot and name sheet 1's row 0), the mod's PNGs shown there by the picture hook; afterwards the sheet's
+        // own image put back. Never waits: the work after it is safe.
+        void pictureAndName(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t at = getRegU32(ctx, 5) + 8u, ra = getRegU32(ctx, 31);
+            const uint32_t id = Ps2FastRead32(rdram, at);
+            const ModArena *m = id >= 38u ? replacing(id - 26u) : nullptr;
+            if (!m)
+            {
+                g_originalPictureAndName(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t standIn = 26u + kStandInStage;
+            std::memcpy(rdram + (at & PS2_RAM_MASK), &standIn, 4);
+            g_drawingNew = m;
+            g_originalPictureAndName(rdram, ctx, runtime);
+            g_drawingNew = nullptr;
+            if (ctx->pc == ra)
+                std::memcpy(rdram + (at & PS2_RAM_MASK), &id, 4);
+            Packet restore;
+            restore.ad(0x71u, 0x3081u | (uint64_t(g_sheetImage[1]) << 32)); // the sheet's own image, or none
+            send(restore);
         }
 
         // ------------------------------------------------------------------ the arena's set-up: the crowd, a mod's arena
@@ -2293,7 +2509,7 @@ namespace vendetta_arenas
             if (ctx->pc != ra)
                 return;
             const uint32_t stage = Ps2FastRead32(rdram, frontEnd + 0x54u), venue = Ps2FastRead32(rdram, frontEnd + 0x880u);
-            if (stage >= 12u || venue != stage)
+            if (venue != stage) // the Low Poly copy of 3 to 4 fighters: High Poly only
                 return;
             for (ModArena &m : g_modArenas)
                 if (m.stage == stage)
@@ -2371,12 +2587,12 @@ namespace vendetta_arenas
         // arena's own, with a mods.log line.
         void readArenaJson(ModArena &m)
         {
+            const char *const base = m.isNew ? "the arena it was made from" : "the arena it replaces";
             std::vector<uint8_t> bytes;
             std::error_code ec;
             if (!std::filesystem::is_regular_file(m.folder / "arena.json", ec) || !vendetta_mods::readWhole(m.folder / "arena.json", bytes))
             {
-                vendetta_mods::problem() << "[arenas] " << m.what << ": no arena.json: the sounds and the fly-in of the arena it "
-                                         << "replaces" << std::endl;
+                vendetta_mods::problem() << "[arenas] " << m.what << ": no arena.json: the sounds and the fly-in of " << base << std::endl;
                 return;
             }
             vendetta_mods::Json json;
@@ -2384,7 +2600,7 @@ namespace vendetta_arenas
             if (!vendetta_mods::parseJson(std::string(bytes.begin(), bytes.end()), json, error) || !json.isObject())
             {
                 vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json can't be read (" << error
-                                         << "): the sounds and the fly-in of the arena it replaces" << std::endl;
+                                         << "): the sounds and the fly-in of " << base << std::endl;
                 return;
             }
             if (const vendetta_mods::Json *sounds = json.find("sounds"))
@@ -2392,7 +2608,7 @@ namespace vendetta_arenas
                 const uint32_t venue = sounds->isString() ? venueNamed(sounds->text) : ~0u;
                 if (venue == ~0u)
                     vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"sounds\" is not one of the game's "
-                                             << "arenas: the sounds of the arena it replaces" << std::endl;
+                                             << "arenas: the sounds of " << base << std::endl;
                 else
                     m.soundsVenue = venue;
             }
@@ -2444,7 +2660,7 @@ namespace vendetta_arenas
             {
                 vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"fly-in\" can't be used (\"frames\", then "
                                          << "\"keys\" in frame order, each with \"frame\", \"eye\", \"target\", \"roll\", "
-                                         << "\"fov\"): the fly-in of the arena it replaces" << std::endl;
+                                         << "\"fov\"): the fly-in of " << base << std::endl;
                 return;
             }
             m.flyIn = std::move(path);
@@ -2453,16 +2669,25 @@ namespace vendetta_arenas
         // The mods' arenas ("replace": {"arenas": {"<game arena>": "<folder>"}}), read at start (their files at each load)
         void findModArenas()
         {
+            uint32_t nextStage = 12; // the new arenas' stages, in load order after the game's 12
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
                 const vendetta_mods::Json *replace = mod.manifest.find("replace");
                 const vendetta_mods::Json *arenas = replace ? replace->find("arenas") : nullptr;
-                if (!arenas || !arenas->isObject())
-                    continue;
-                for (const auto &[name, value] : arenas->members)
+                // "new": {"arenas": ["<folder>", ...]}: each a place of its own after the game's 12
+                std::vector<std::pair<std::string, vendetta_mods::Json>> entries;
+                if (arenas && arenas->isObject())
+                    entries = arenas->members;
+                const vendetta_mods::Json *added = mod.manifest.find("new");
+                const vendetta_mods::Json *newArenas = added ? added->find("arenas") : nullptr;
+                if (newArenas && newArenas->isArray())
+                    for (const vendetta_mods::Json &folder : newArenas->items)
+                        entries.push_back({"", folder});
+                for (const auto &[name, value] : entries)
                 {
+                    const bool isNew = name.empty();
                     const std::string what = mod.name + ": " + (value.isString() ? value.text : name);
-                    const uint32_t venue = venueNamed(name);
+                    const uint32_t venue = isNew ? nextStage : venueNamed(name);
                     if (venue == ~0u)
                     {
                         vendetta_mods::problem() << "[arenas] " << what << ": \"" << name << "\" is not one of the game's arenas"
@@ -2474,14 +2699,15 @@ namespace vendetta_arenas
                     std::error_code ec;
                     if (folder.empty() || !std::filesystem::is_regular_file(folder / "model.arena", ec))
                     {
-                        vendetta_mods::problem() << "[arenas] " << what << ": no model.arena in its folder: " << name
-                                                 << " stays the game's" << std::endl;
+                        vendetta_mods::problem() << "[arenas] " << what << ": no model.arena in its folder: "
+                                                 << (isNew ? std::string("left out") : name + " stays the game's") << std::endl;
                         continue;
                     }
                     ModArena m;
                     m.what = what;
                     m.folder = folder;
                     m.stage = venue;
+                    m.isNew = isNew;
                     // the venue its file was made from (the header's + 0x0C): the game loads that one behind it
                     {
                         std::ifstream in(folder / "model.arena", std::ios::binary);
@@ -2493,8 +2719,8 @@ namespace vendetta_arenas
                         if (made >= 12u)
                         {
                             vendetta_mods::problem() << "[arenas] " << what << ": model.arena is not an arena in the game's format "
-                                                     << "made from one of the 12 Choose Stage arenas: " << name
-                                                     << " stays the game's" << std::endl;
+                                                     << "made from one of the 12 Choose Stage arenas: "
+                                                     << (isNew ? std::string("left out") : name + " stays the game's") << std::endl;
                             continue;
                         }
                         m.venue = made;
@@ -2538,7 +2764,19 @@ namespace vendetta_arenas
                         m.thumbnail = vendetta_pictures::add(folder / "thumbnail.png", 64u, 64u, 4u);
                     if (std::filesystem::is_regular_file(folder / "name.png", ec))
                         m.name = folder / "name.png";
-                    std::cerr << "[arenas] " << what << ": replaces " << name << " (made from venue " << m.venue << "; "
+                    if (isNew)
+                    {
+                        for (const char *file : {"picture.png", "thumbnail.png", "name.png"})
+                            if (!std::filesystem::is_regular_file(folder / file, ec))
+                                vendetta_mods::problem() << "[arenas] " << what << ": no " << file << ": Choose Stage shows "
+                                                         << (std::string(file) == "thumbnail.png" ? "the \"?\" tile"
+                                                             : std::string(file) == "name.png" ? "no name" : "no picture")
+                                                         << std::endl;
+                        ++nextStage;
+                    }
+                    std::cerr << "[arenas] " << what << ": " << (isNew ? "a new place, stage " + std::to_string(m.stage)
+                                                                         : "replaces " + name)
+                              << " (made from venue " << m.venue << "; "
                               << m.pictures.size()
                               << " textures of its own; " << (m.flyIn.empty() ? "the arena's fly-in" : "its own fly-in")
                               << ", the sounds of venue " << (m.soundsVenue == ~0u ? m.venue : m.soundsVenue) << ")" << std::endl;
@@ -2565,6 +2803,17 @@ namespace vendetta_arenas
             return;
         }
         runtime.replaceFunction(kSetUp, setUp);
+        for (const uint32_t at : {vendetta_store::kStageOrder, vendetta_store::kStagePictures, vendetta_store::kStageThumbs,
+                                  vendetta_store::kStageFlags})
+            vendetta_store::fixed(at - vendetta_store::kFixedArea, vendetta_store::kStageRoom, "Choose Stage's places");
+        if ((g_originalChooseStage = runtime.lookupFunction(kChooseStage)) != nullptr)
+        {
+            runtime.replaceFunction(kChooseStage, chooseStage);
+            runtime.replaceFunction(kLeft, helperLeft);
+            runtime.replaceFunction(kRight, helperRight);
+            runtime.replaceFunction(kAnyLeft, helperAnyLeft);
+            runtime.replaceFunction(kAnyRight, helperAnyRight);
+        }
         if ((g_originalSounds = runtime.lookupFunction(kSounds)) != nullptr)
             runtime.replaceFunction(kSounds, sounds);
         g_fullStandIn = std::getenv("VENDETTA_ARENA_FULLSTANDIN") && *std::getenv("VENDETTA_ARENA_FULLSTANDIN") != '0';
@@ -2577,6 +2826,8 @@ namespace vendetta_arenas
             runtime.replaceFunction(kPicture, picture);
         if (!g_modArenas.empty() && (g_originalMatchSetUp = runtime.lookupFunction(kMatchSetUp)) != nullptr)
             runtime.replaceFunction(kMatchSetUp, matchSetUp);
+        if (!g_modArenas.empty() && (g_originalPictureAndName = runtime.lookupFunction(kPictureAndName)) != nullptr)
+            runtime.replaceFunction(kPictureAndName, pictureAndName);
         const std::string v = off ? "" : value;
         if (off)
             g_mode = Mode::Off; // our draw only for the mods' arenas

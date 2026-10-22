@@ -63,6 +63,10 @@ namespace vendetta_store
     constexpr uint32_t kCrowdRoom = 0x00300000u, kArenaSceneRoom = 0x00400000u;
     constexpr uint32_t kArenaFlyIn = 0x03310000u;  // a mod arena's fly-in camera path (the game's path entry pointed here)
     constexpr uint32_t kArenaFlyInRoom = 0x00010000u;
+    // Choose Stage's places (patched luis): the stage at each place, each stage's picture id and thumbnail, each stage's
+    // unlock flag (copied from the game's 12 before each Choose Stage frame, the mods' new ones always on), 64 KB each
+    constexpr uint32_t kStageOrder = 0x03320000u, kStagePictures = 0x03330000u, kStageThumbs = 0x03340000u,
+                       kStageFlags = 0x03350000u, kStageRoom = 0x00010000u;
 
     // Host pointer for a guest address the store handed out.
     uint8_t *host(uint32_t guestAddress);

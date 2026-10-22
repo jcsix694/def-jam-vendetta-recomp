@@ -179,4 +179,18 @@ instructions = [
   { address = "0x001b8c64", value = "0x3c020fff" }, # lui $v0, 0x1FF -> 0xFFF: FUN_001b8bf8 (an object)
   { address = "0x001b9c2c", value = "0x3c020fff" }, # lui $v0, 0x1FF -> 0xFFF: FUN_001b9bb0 (a scrolled object)
   { address = "0x001b9904", value = "0x3c020fff" }, # lui $v0, 0x1FF -> 0xFFF: FUN_001b9880 (the shadow floor)
+  # Choose Stage FUN_0014e7c8 with any number of places (overrides/vendetta_arenas.cpp, vendetta_store.h kStage*): its
+  # tables of places (stage by place), pictures and thumbnails (by stage) and the unlock flags (by stage) read from the
+  # store's fixed area; the window's last start and Random's count from the front end's + 0xF78 / + 0xF7C (the unlock
+  # flags' unused tail, written before each Choose Stage frame); its four helpers replaced in C++
+  { address = "0x0014e810", value = "0x3c020332" }, # lui $v0, 0x24 -> 0x332: the places 0x239AB8 -> 0x03320000
+  { address = "0x0014e824", value = "0x24560000" }, # addiu $s6, $v0, -0x6548 -> 0 (a delay slot)
+  { address = "0x0014ed54", value = "0x3c020334" }, # lui $v0, 0x24 -> 0x334: the thumbnails 0x239B18 -> 0x03340000
+  { address = "0x0014ed58", value = "0x24520000" }, # addiu $s2, $v0, -0x64E8 -> 0
+  { address = "0x0014edf0", value = "0x3c020333" }, # lui $v0, 0x24 -> 0x333 (a delay slot): the pictures 0x239AE8 -> 0x03330000
+  { address = "0x0014edfc", value = "0x24420000" }, # addiu $v0, $v0, -0x6518 -> 0
+  { address = "0x0014e868", value = "0x3c130335" }, # addiu $s3, $s0, 0xF48 -> lui $s3, 0x335: the flags 0x03350000 (a delay slot)
+  { address = "0x0014e8a8", value = "0x3c130335" }, # addiu $s3, $s0, 0xF48 -> lui $s3, 0x335
+  { address = "0x0014ea54", value = "0x8e050f78" }, # addiu $a1, $zero, 6 -> lw $a1, 0xF78($s0): the window's last start
+  { address = "0x0014ec30", value = "0x8e030f7c" }, # addiu $v1, $zero, 12 -> lw $v1, 0xF7C($s0): Random's count
 ]
