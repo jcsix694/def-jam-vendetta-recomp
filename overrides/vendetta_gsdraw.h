@@ -451,3 +451,14 @@ namespace vendetta_gsdraw
     }
 #endif
 }
+
+namespace vendetta_wrestlerdraw
+{
+    // A model part drawn by our code in FUN_001b93a0's place (vendetta_wrestlerdraw.cpp): the wrestlers' parts, and the
+    // arena's that go through the same routine and VU1 program (the ring's ropes, the 3-D crowd's people). `rows`: the
+    // stream's rows written first, as the game writes them; `image`: a host image bound to the part's TEX0 address around
+    // its triangles (0: the texture the game uploaded); `capture`: the triangles read back into it instead of sent (a
+    // check). False: the part can't be read (the caller lets the game draw it).
+    bool drawGamePart(PS2Runtime &runtime, uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours,
+                      bool rows, uint32_t image, std::vector<vendetta_gsdraw::GsTriangle> *capture);
+}

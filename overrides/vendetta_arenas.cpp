@@ -17,11 +17,24 @@
 // floor (object 99, FUN_001b9880 from FUN_001a2930, the VU1 kernel at 0x10) is drawn the same way: positions by the
 // camera matrix, the shadow picture's coordinates by the shadow matrix the game builds, its colour (0, 0, 0, 48).
 //
+// The ring and the 3-D crowd are drawn by our code too. The ring draw FUN_001a2de8 (each match picture, after the shadow
+// floor) keeps its own work: the fade near the camera (FIX by distance, the faded pieces sorted far to near), its GS
+// register writes, the ropes' bend and the bones' posing. Its leaves are ours:
+//   the posts, pads and turnbuckles (ids 81-92, the High Poly venues): FUN_001b3820(object, matrix, colour), the game's
+//   own draw on the main processor, copied step for step: each vertex x the matrix ((x m0 + y m4) + z m8) + m12, kept
+//   at vertex + 0x20; per triangle the back faces skipped, then cut at the near limit (z < 1048574), divided by w and
+//   cut to the screen (y 1936-2160, x 1792-2304) in the game's order, sent as a fan: PRIM 0x5D (context 1, blended:
+//   the fade's ALPHA_1), ST / RGBAQ / XYZ2, the float to integer conversions of FUN_0020aa90 (below 1 or NaN: 0);
+//   the ropes (object 2, three to a side) and the crowd's people (one model part each, posed by the crowd's code):
+//   FUN_001b93a0(part, light matrix, colour matrix) from 0x1A3240 / 0x1A34C0 / 0x1A36F4 (ropes) and 0x1978F8 (crowd),
+//   the wrestlers' routine and VU1 program, drawn by the wrestlers' code (drawGamePart). The crowd's logic (its
+//   clips, moods and rand()), its poses and light sets stay the game's.
+//
 // The textures: the arena's part 1 (FUN_001b85c0 from the arena set-up FUN_00165bd8) is read when the game uploads it,
 // replayed into our own copy of GS memory, and each texture a draw uses is decoded from it into a host image of the
 // GS texture's size (GS register 0x71 binds it around our primitives: paraLLEl-GS, a local addition). The game's own
-// upload still happens (the 3-D crowd and the ring use it). Without the graphics card renderer the game's uploaded
-// textures are used.
+// upload still happens (the game's own draws use it, in the test modes). Without the graphics card renderer the game's
+// uploaded textures are used.
 //
 // VENDETTA_ARENADRAW=1      our draw, textures as host images (decoded from the game's files)
 // VENDETTA_ARENADRAW=vram   our draw, sampling the textures the game uploaded (the geometry alone)
@@ -86,6 +99,12 @@ namespace vendetta_arenas
         constexpr uint32_t kDraw = 0x1B8BF8u;         // FUN_001b8bf8(object, matrix, colour): an object through VU1
         constexpr uint32_t kDrawScrolled = 0x1B9BB0u; // FUN_001b9bb0: the same, (u, v) in f12 / f13 into VU 0x40
         constexpr uint32_t kDrawShadow = 0x1B9880u;   // FUN_001b9880(object, camera, shadow): the shadow floor (99)
+        constexpr uint32_t kDrawPost = 0x1B3820u;     // FUN_001b3820(object, matrix, colour): a post / pad / turnbuckle
+        constexpr uint32_t kDrawPart = 0x1B93A0u;     // FUN_001b93a0(part, light matrix, colour matrix): a model part
+        constexpr uint32_t kFromCrowd = 0x1978F8u;    // its return addresses: a crowd person (FUN_00197830),
+        constexpr uint32_t kFromRope = 0x1A3240u, kFromRopeFaded = 0x1A34C0u, kFromRopeLowPoly = 0x1A36F4u; // a rope
+        constexpr uint32_t kCrowd = 0xBD5500u;        // the 3-D crowd's people (AUD): "AUD ", size, count, from + 0x10
+        constexpr uint32_t kCrowdBytes = 0x145000u;   // its buffer's size
         constexpr uint32_t kUpload = 0x1B85C0u;       // FUN_001b85c0(p): one GIF DMA from p + p[0], p[1] bytes
         constexpr uint32_t kUploadFromArena = 0x165C70u; // the return address of its call in the arena set-up
         constexpr uint32_t kIntros = 0x1245C8u;          // FUN_001245c8(a0): the match's intros by match kind (a log line)
@@ -113,6 +132,8 @@ namespace vendetta_arenas
         PS2Runtime::RecompiledFunction g_originalDraw = nullptr;
         PS2Runtime::RecompiledFunction g_originalDrawScrolled = nullptr;
         PS2Runtime::RecompiledFunction g_originalDrawShadow = nullptr;
+        PS2Runtime::RecompiledFunction g_originalDrawPost = nullptr;
+        PS2Runtime::RecompiledFunction g_originalDrawPart = nullptr;
         PS2Runtime::RecompiledFunction g_originalUpload = nullptr;
         PS2Runtime::RecompiledFunction g_originalIntros = nullptr;
         using Clock = std::chrono::steady_clock;
@@ -1133,6 +1154,8 @@ namespace vendetta_arenas
             Plain,    // FUN_001b8bf8(object, matrix, colour)
             Scrolled, // FUN_001b9bb0(object, matrix, colour), (u, v) in f12 / f13
             Shadow,   // FUN_001b9880(object, camera matrix, shadow matrix): the shadow floor
+            Part,     // FUN_001b93a0(part, light matrix, colour matrix): a rope or a crowd person
+            Post,     // FUN_001b3820(object, matrix, colour): a post, pad or turnbuckle
         };
 
         // Writes the draw's values into the object as the game does (+0xD0 the matrix, then + 0x110 the colour or
@@ -1182,6 +1205,8 @@ namespace vendetta_arenas
 
         // VENDETTA_ARENADRAW=check: the game's draw with its packets tapped, then ours worked out from the same values
         // and compared triangle by triangle (positions, depth, ST / Q bits, colour)
+        void checkWindow(const TriangleSource &source);
+
         bool checkDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::RecompiledFunction original, Call call)
         {
             const uint32_t object = getRegU32(ctx, 4);
@@ -1201,13 +1226,20 @@ namespace vendetta_arenas
             g_ourTriangles.clear();
             const bool scrolled = call == Call::Scrolled;
             drawOurs(rdram, mesh, scrolled, scrolled ? du : 0.0f, scrolled ? dv : 0.0f);
+            checkWindow({object, ra, static_cast<uint32_t>(call), m1, m2});
+            return true;
+        }
+
+        // The draw's triangles of ours (g_ourTriangles) into the check's window; every 2 s the last window's looked up
+        // among the game's
+        void checkWindow(const TriangleSource &source)
+        {
             g_ourWindow.insert(g_ourWindow.end(), g_ourTriangles.begin(), g_ourTriangles.end());
-            g_ourWindowObject.insert(g_ourWindowObject.end(), g_ourTriangles.size(),
-                                     {object, ra, static_cast<uint32_t>(call), m1, m2});
+            g_ourWindowObject.insert(g_ourWindowObject.end(), g_ourTriangles.size(), source);
             ++g_check.objects;
             static auto last = Clock::now();
             if (Clock::now() - last < std::chrono::seconds(2))
-                return true;
+                return;
             last = Clock::now();
             // the previous window's triangles of ours against the game's of the previous and this window
             std::unordered_set<GsTriangle, TriangleHash, TriangleEq> game(g_gamePrevious.begin(), g_gamePrevious.end());
@@ -1240,15 +1272,26 @@ namespace vendetta_arenas
                 byPosition.emplace(g, &g);
             std::map<std::pair<uint32_t, int>, size_t> kinds; // (object, kind) -> count
             int detailed = 0;
+            // by kind: 0 the scenery (and the shadow floor), 1 the ropes, 2 the crowd, 3 the posts
+            size_t kindFound[4] = {}, kindMissing[4] = {};
+            auto kindOf = [](const TriangleSource &src) {
+                if (src.call == static_cast<uint32_t>(Call::Post))
+                    return 3;
+                if (src.call == static_cast<uint32_t>(Call::Part))
+                    return src.ra == kFromCrowd ? 2 : 1;
+                return 0;
+            };
             for (size_t ti = 0; ti < g_ourPrevious.size(); ++ti)
             {
                 const GsTriangle &t = g_ourPrevious[ti];
                 if (game.count(t))
                 {
                     ++found;
+                    ++kindFound[kindOf(g_ourPreviousObject[ti])];
                     continue;
                 }
                 ++missing;
+                ++kindMissing[kindOf(g_ourPreviousObject[ti])];
                 {
                     auto range = byPosition.equal_range(t);
                     int kind = 0; // 0: no game triangle at these positions
@@ -1306,6 +1349,9 @@ namespace vendetta_arenas
             std::cerr << "[arenas] check: " << g_ourPrevious.size() << " triangles of ours (" << g_check.objects
                       << " object draws in the window), " << found << " drawn the same by the game, " << missing
                       << " not; the game's path 1 triangles in the two windows: " << game.size() << std::endl;
+            std::cerr << "[arenas] check by kind (the same / not): scenery " << kindFound[0] << " / " << kindMissing[0]
+                      << ", ropes " << kindFound[1] << " / " << kindMissing[1] << ", crowd " << kindFound[2] << " / "
+                      << kindMissing[2] << ", posts " << kindFound[3] << " / " << kindMissing[3] << std::endl;
             g_ourPrevious.swap(g_ourWindow);
             g_ourWindow.clear();
             g_ourPreviousObject.swap(g_ourWindowObject);
@@ -1313,7 +1359,6 @@ namespace vendetta_arenas
             g_gamePrevious.swap(g_gameWindow);
             g_gameWindow.clear();
             g_check = {};
-            return true;
         }
 
         void draw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1352,6 +1397,249 @@ namespace vendetta_arenas
             g_originalDrawShadow(rdram, ctx, runtime);
         }
 
+        // ------------------------------------------------------------------ the ring's posts (FUN_001b3820)
+
+        // The post format: {u32 vertices, u32 triangles, u64 TEX0}, then 64-byte vertices {(s, t, q, 0), (r, g, b, a),
+        // a quadword the draw writes (the vertex x the matrix), (x, y, z, w)}, then u16 x 3 per triangle. A vertex in the
+        // clipper as the game keeps it: 12 floats, s t q 0 | r g b a | x y z w.
+        struct PostVertex
+        {
+            float f[12];
+        };
+
+        // FUN_0020aa90: the game's float to unsigned (soft float): below 1 or NaN 0, from 2^32 0xFFFFFFFF, else truncated
+        uint32_t toUnsigned(float v)
+        {
+            if (!(v >= 1.0f))
+                return 0u;
+            if (v >= 4294967296.0f)
+                return 0xFFFFFFFFu;
+            return static_cast<uint32_t>(v);
+        }
+
+        // div.s as the recompiled game does it: a zero divisor gives infinity with the dividend's sign
+        float eeDiv(float a, float b) { return b == 0.0f ? std::copysign(INFINITY, a * 0.0f) : a / b; }
+
+        // One cut of the post clipper (Sutherland-Hodgman, every float carried along, always from the current vertex
+        // toward the next): keep lane `lane` below `plane` (or above it)
+        int clipPost(const PostVertex *in, int n, PostVertex *out, int lane, float plane, bool keepBelow)
+        {
+            int m = 0;
+            for (int i = 0; i < n; ++i)
+            {
+                const PostVertex &cur = in[i], &next = in[(i + 1) % n];
+                const bool curIn = keepBelow ? cur.f[lane] < plane : plane < cur.f[lane];
+                const bool nextIn = keepBelow ? next.f[lane] < plane : plane < next.f[lane];
+                if (curIn)
+                {
+                    out[m++] = cur;
+                    if (nextIn)
+                        continue;
+                }
+                else if (!nextIn)
+                    continue;
+                const float t = eeDiv(plane - cur.f[lane], next.f[lane] - cur.f[lane]);
+                PostVertex &v = out[m++];
+                for (int k = 0; k < 12; ++k)
+                    v.f[k] = cur.f[k] + (next.f[k] - cur.f[k]) * t;
+            }
+            return m;
+        }
+
+        // A post drawn as FUN_001b3820 draws it (in the game thread's own rounding, as the game's code runs), into one
+        // packet: the TEX0 (TEX0_1) once, then a fan for each triangle that shows. False: not a post (the game draws it).
+        bool drawPost(uint8_t *rdram, uint32_t object, uint32_t matrix, Packet &packet)
+        {
+            const uint32_t vertices = Ps2FastRead32(rdram, object), triangles = Ps2FastRead32(rdram, object + 4u);
+            if (vertices == 0u || vertices > 0x10000u || triangles > 0x10000u || !inScene(rdram, object) ||
+                !inScene(rdram, object + 16u + 64u * vertices + 6u * triangles - 1u))
+                return false;
+            float m[16];
+            std::memcpy(m, guest(rdram, matrix), 64);
+            static std::vector<PostVertex> transformed;
+            transformed.resize(vertices);
+            for (uint32_t k = 0; k < vertices; ++k)
+            {
+                uint8_t *v = rdram + ((object + 16u + 64u * k) & PS2_RAM_MASK);
+                float f[16];
+                std::memcpy(f, v, 64);
+                float c[4];
+                for (int j = 0; j < 4; ++j)
+                {
+                    const float a = f[12] * m[j], b = f[13] * m[4 + j], d = f[14] * m[8 + j];
+                    const float ab = a + b, abd = ab + d;
+                    c[j] = abd + m[12 + j];
+                }
+                std::memcpy(v + 0x20, c, 16);
+                PostVertex &out = transformed[k];
+                std::copy(f, f + 8, out.f);
+                std::copy(c, c + 4, out.f + 8);
+            }
+            uint64_t tex0;
+            std::memcpy(&tex0, guest(rdram, object + 8u), 8);
+            packet.ad(0x06u, tex0); // TEX0_1
+            const uint32_t tbp = static_cast<uint32_t>(tex0 & 0x3FFFu);
+            const uint32_t id = !g_vramTextures && gpu() ? imageFor(tex0) : 0u;
+            if (id)
+                packet.ad(0x71u, uint64_t(tbp) | (uint64_t(id) << 32));
+            const uint8_t *index = guest(rdram, object + 16u + 64u * vertices);
+            for (uint32_t t = 0; t < triangles; ++t)
+            {
+                uint16_t ix[3];
+                std::memcpy(ix, index + 6u * t, 6);
+                if (ix[0] >= vertices || ix[1] >= vertices || ix[2] >= vertices)
+                    continue;
+                PostVertex one[16], two[16];
+                for (int c = 0; c < 3; ++c)
+                    one[c] = transformed[ix[c]];
+                // the back faces (FUN_001b3e18), on the three vertices before any cut
+                float sx[3], sy[3];
+                for (int c = 0; c < 3; ++c)
+                {
+                    const float r = eeDiv(1.0f, one[c].f[11]);
+                    sx[c] = one[c].f[8] * r;
+                    sy[c] = one[c].f[9] * r;
+                }
+                const float a = (sy[1] - sy[0]) * (sx[2] - sx[0]);
+                const float b = (sx[1] - sx[0]) * (sy[2] - sy[0]);
+                if (0.0f < b - a)
+                    continue;
+                int n = clipPost(one, 3, two, 10, 1048574.0f, true); // the near limit, z not yet divided
+                for (int i = 0; i < n; ++i)
+                {
+                    PostVertex &p = two[i];
+                    const float w = p.f[11];
+                    p.f[0] = eeDiv(p.f[0], w);
+                    p.f[1] = eeDiv(p.f[1], w);
+                    p.f[2] = eeDiv(p.f[2], w);
+                    p.f[8] = eeDiv(p.f[8], w);
+                    p.f[9] = eeDiv(p.f[9], w);
+                }
+                if (n)
+                    n = clipPost(two, n, one, 9, 1936.0f, false);
+                if (n)
+                    n = clipPost(one, n, two, 9, 2160.0f, true);
+                if (n)
+                    n = clipPost(two, n, one, 8, 1792.0f, false);
+                if (n)
+                    n = clipPost(one, n, two, 8, 2304.0f, true);
+                if (n < 3)
+                {
+                    ++g_stats.culled;
+                    continue;
+                }
+                // a fan: PRIM 0x5D (fan, Gouraud, textured, blended, context 1), PACKED, ST / RGBAQ / XYZ2
+                packet.tag(uint64_t(n) | (uint64_t(0x302EC000u) << 32), 0x412ull);
+                for (int i = 0; i < n; ++i)
+                {
+                    const PostVertex &p = two[i];
+                    uint32_t s, tt, q;
+                    std::memcpy(&s, &p.f[0], 4);
+                    std::memcpy(&tt, &p.f[1], 4);
+                    std::memcpy(&q, &p.f[2], 4);
+                    packet.add(uint64_t(s) | (uint64_t(tt) << 32), uint64_t(q));
+                    packet.add(uint64_t(toUnsigned(p.f[4])) | (uint64_t(toUnsigned(p.f[5])) << 32),
+                               uint64_t(toUnsigned(p.f[6])) | (uint64_t(0x80u) << 32));
+                    const float x = p.f[8] * 16.0f, y = p.f[9] * 16.0f;
+                    packet.add(uint64_t(toUnsigned(x)) | (uint64_t(toUnsigned(y)) << 32), uint64_t(toUnsigned(p.f[10]) << 4));
+                }
+                g_stats.triangles += static_cast<uint64_t>(n - 2);
+                if (n > 3)
+                    ++g_stats.clipped;
+            }
+            if (id)
+                packet.ad(0x71u, uint64_t(tbp)); // unbound
+            ++g_stats.objects;
+            return true;
+        }
+
+        void drawPostHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t object = getRegU32(ctx, 4), matrix = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
+            if (g_mode == Mode::Check)
+            {
+                const uint32_t sp = getRegU32(ctx, 29);
+                g_checkStarted = true;
+                g_originalDrawPost(rdram, ctx, runtime);
+                if (ctx->pc != ra || getRegU32(ctx, 29) != sp)
+                    return;
+                g_ourTriangles.clear();
+                Packet packet;
+                if (drawPost(rdram, object, matrix, packet))
+                {
+                    send(packet);
+                    checkWindow({object, ra, static_cast<uint32_t>(Call::Post), matrix, 0u});
+                }
+                return;
+            }
+            if (!oursNow())
+            {
+                ++g_stats.gameObjects;
+                g_originalDrawPost(rdram, ctx, runtime);
+                return;
+            }
+            Packet packet;
+            if (!drawPost(rdram, object, matrix, packet))
+            {
+                g_originalDrawPost(rdram, ctx, runtime);
+                return;
+            }
+            send(packet);
+            logStats();
+            ctx->pc = ra;
+        }
+
+        // ------------------------------------------------------------------ the ropes and the crowd (FUN_001b93a0)
+
+        // The part's TEX0 (its stream's VU 0x3B row), for its host image
+        uint64_t partTex0(const uint8_t *rdram, uint32_t part)
+        {
+            const uint32_t stream = part + (Ps2FastRead32(rdram, part) & ~3u);
+            uint64_t tex0;
+            std::memcpy(&tex0, guest(rdram, stream + 0x30u), 8);
+            return tex0;
+        }
+
+        void drawPartHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t ra = getRegU32(ctx, 31), part = getRegU32(ctx, 4);
+            const uint32_t light = getRegU32(ctx, 5), colours = getRegU32(ctx, 6);
+            const bool arena = ra == kFromCrowd || ra == kFromRope || ra == kFromRopeFaded || ra == kFromRopeLowPoly;
+            if (!arena || part == 0u)
+            {
+                g_originalDrawPart(rdram, ctx, runtime); // the wrestlers' (their own hook, if on, comes before this one)
+                return;
+            }
+            if (g_mode == Mode::Check)
+            {
+                const uint32_t sp = getRegU32(ctx, 29);
+                g_checkStarted = true;
+                g_originalDrawPart(rdram, ctx, runtime);
+                if (ctx->pc != ra || getRegU32(ctx, 29) != sp)
+                    return;
+                // the game wrote the rows: ours read them there
+                g_ourTriangles.clear();
+                if (vendetta_wrestlerdraw::drawGamePart(*runtime, rdram, part, light, colours, false, 0u, &g_ourTriangles))
+                    checkWindow({part, ra, static_cast<uint32_t>(Call::Part), light, colours});
+                return;
+            }
+            if (!oursNow())
+            {
+                ++g_stats.gameObjects;
+                g_originalDrawPart(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t id = !g_vramTextures && gpu() ? imageFor(partTex0(rdram, part)) : 0u;
+            if (!vendetta_wrestlerdraw::drawGamePart(*runtime, rdram, part, light, colours, true, id, nullptr))
+            {
+                g_originalDrawPart(rdram, ctx, runtime); // not readable: the game's own draw (the same rows)
+                return;
+            }
+            ++g_stats.objects;
+            logStats();
+            ctx->pc = ra;
+        }
+
         // A picture card's frame as the game writes it into its slot (FUN_001b8af8 with FUN_001b8ca8 / FUN_001b8cf0):
         // TBP, TBW = (width + 63) / 64, PSM from the bits per pixel (4: T4, 8: T8, 16: CT16, 24: CT24, else CT32),
         // TW / TH = log2 of the size, TCC 1, CBP, CLD 1
@@ -1380,6 +1668,8 @@ namespace vendetta_arenas
                 return;
             const uint32_t count = std::min<uint32_t>(Ps2FastRead32(rdram, scene), 4096u);
             const bool host = !g_vramTextures && gpu() != nullptr;
+            const uint32_t venue = Ps2FastRead32(rdram, kVenue);
+            const bool highPoly = venue < 12u || venue >= 24u; // the ring draw's posts by the main processor
             size_t images = 0;
             for (uint32_t i = 0; i < count; ++i)
             {
@@ -1409,6 +1699,16 @@ namespace vendetta_arenas
                     }
                     continue;
                 }
+                if (host && id >= 81 && id <= 92 && highPoly)
+                {
+                    // a post in the post format of the High Poly venues (its TEX0 at + 8); a Low Poly one is a mesh
+                    uint64_t tex0;
+                    std::memcpy(&tex0, guest(rdram, object + 8u), 8);
+                    if (imageFor(tex0))
+                        ++images;
+                }
+                if (host && id == 2 && imageFor(partTex0(rdram, object))) // the rope (a model part)
+                    ++images;
                 Mesh &mesh = meshFor(rdram, object);
                 if (!mesh.ours || mesh.kernel != 0xCu || !host)
                     continue;
@@ -1423,6 +1723,18 @@ namespace vendetta_arenas
                         ++images;
                 }
             }
+            // the 3-D crowd's people: four model pointers each (self-relative), their skins in the part 1 just replayed
+            const uint32_t people = Ps2FastRead32(rdram, kCrowd + 8u);
+            if (host && Ps2FastRead32(rdram, kCrowd) == 0x20445541u && people < 0x1000u &&
+                0x10u + 0x70u * people <= kCrowdBytes) // "AUD "
+                for (uint32_t i = 0; i < people; ++i)
+                    for (uint32_t k = 0; k < 4u; ++k)
+                    {
+                        const uint32_t at = kCrowd + 0x10u + 0x70u * i + 4u * k;
+                        const uint32_t model = at + Ps2FastRead32(rdram, at);
+                        if (model > kCrowd && model < kCrowd + kCrowdBytes && imageFor(partTex0(rdram, model)))
+                            ++images;
+                    }
             if (host)
             {
                 // a register write the graphics card thread answers by making the queued images now, in the loading
@@ -1522,7 +1834,10 @@ namespace vendetta_arenas
         g_originalDrawScrolled = runtime.lookupFunction(kDrawScrolled);
         g_originalDrawShadow = runtime.lookupFunction(kDrawShadow);
         g_originalUpload = runtime.lookupFunction(kUpload);
-        if (!g_originalDraw || !g_originalDrawScrolled || !g_originalDrawShadow || !g_originalUpload)
+        g_originalDrawPost = runtime.lookupFunction(kDrawPost);
+        g_originalDrawPart = runtime.lookupFunction(kDrawPart);
+        if (!g_originalDraw || !g_originalDrawScrolled || !g_originalDrawShadow || !g_originalUpload ||
+            !g_originalDrawPost || !g_originalDrawPart)
         {
             std::cerr << "[arenas] the game's draw routines not found: off" << std::endl;
             g_mode = Mode::Off;
@@ -1531,6 +1846,9 @@ namespace vendetta_arenas
         runtime.replaceFunction(kDraw, draw);
         runtime.replaceFunction(kDrawScrolled, drawScrolled);
         runtime.replaceFunction(kDrawShadow, drawShadow);
+        runtime.replaceFunction(kDrawPost, drawPostHook);
+        // installed before the wrestlers' draw, which hooks the same routine and passes the arena's calls on to this one
+        runtime.replaceFunction(kDrawPart, drawPartHook);
         runtime.replaceFunction(kUpload, upload);
         if (g_log && (g_originalIntros = runtime.lookupFunction(kIntros)) != nullptr)
             runtime.replaceFunction(kIntros, intros);

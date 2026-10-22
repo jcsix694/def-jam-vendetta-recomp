@@ -340,6 +340,7 @@ namespace vendetta_wrestlerdraw
         }
 
         std::vector<GsTriangle> g_ourTriangles;
+        std::vector<GsTriangle> *g_capture = nullptr; // drawGamePart's caller reads the triangles back (its check)
 
         // One whole GIF packet (EOP on its last tag) into the game's GS stream, in order (check: read back instead)
         void send(Packet &packet)
@@ -347,10 +348,10 @@ namespace vendetta_wrestlerdraw
             if (packet.q.empty())
                 return;
             packet.end();
-            if (g_mode == Mode::Check)
+            if (g_capture || g_mode == Mode::Check)
             {
                 GsReader reader;
-                reader.out = &g_ourTriangles;
+                reader.out = g_capture ? g_capture : &g_ourTriangles;
                 reader.feed(reinterpret_cast<const uint8_t *>(packet.q.data()), static_cast<uint32_t>(packet.q.size() * 8u));
             }
             else
@@ -1235,6 +1236,22 @@ namespace vendetta_wrestlerdraw
             logStats();
             ctx->pc = ra;
         }
+    }
+
+    bool drawGamePart(PS2Runtime &runtime, uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours,
+                      bool rows, uint32_t image, std::vector<GsTriangle> *capture)
+    {
+        if (!g_runtime)
+            g_runtime = &runtime;
+        const Stats wrestlers = g_stats; // the wrestlers' own count stays theirs
+        uint8_t *p = mem(rdram, part);
+        if (rows)
+            writeRows(rdram, part, lightMatrix, colours, mem(rdram, part + (word(p) & ~3u)));
+        g_capture = capture;
+        const bool drawn = drawPart(p, image);
+        g_capture = nullptr;
+        g_stats = wrestlers;
+        return drawn;
     }
 
     void install(PS2Runtime &runtime)
