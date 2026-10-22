@@ -113,7 +113,12 @@ namespace vendetta_arenas
         constexpr uint32_t kFromRope = 0x1A3240u, kFromRopeFaded = 0x1A34C0u, kFromRopeLowPoly = 0x1A36F4u; // a rope
         constexpr uint32_t kSetUp = 0x1A1C38u;        // FUN_001a1c38(venue, scene): a venue's set-up, at each venue load
         constexpr uint32_t kMatchSetUp = 0x140298u;   // FUN_00140298(front end, match): Battle's stage -> the match's venue
-        constexpr uint32_t kSounds = 0x1B0958u;       // FUN_001b0958(venue, ...): the match's sounds, the set 0x2598C8[venue]
+        constexpr uint32_t kSounds = 0x1B0958u;
+        // The ring draw's 16 pieces' spots on the floor {x, 0, z} (posts, pads, turnbuckles 0-11 = ids 81-92, the rope sides
+        // 12-15): read only by the ring draw FUN_001a2de8, for the fade near the camera (0x1A2F8C) and the far-to-near
+        // order (0x1A3284)
+        constexpr uint32_t kPieceSpots = 0x258950u;
+        constexpr uint32_t kGameScene = 0xB1C500u;    // the loader's scene buffer (the venue behind a mod arena, loaded)       // FUN_001b0958(venue, ...): the match's sounds, the set 0x2598C8[venue]
         constexpr uint32_t kFlyInPaths = 0x234A00u;   // the venue's fly-in: its camera path's number
         constexpr uint32_t kCameraPaths = 0x140FD0Cu; // the camera paths (PAK 0): path n's self-relative offset at + 4n
         // Choose Stage's pictures: FUN_00157570(pack, index) uploads pack 0xC's big picture n (stage n) to 0x3621, pack
@@ -2483,6 +2488,85 @@ namespace vendetta_arenas
             std::memcpy(rdram + entry, &offset, 4);
         }
 
+        // The fade follows a mod's own posts: each piece's spot moved by as much as the mod moved that piece from the venue
+        // it was made from (the middle of its box across the floor, the mod's file against the venue's own scene, which
+        // the loader read into its buffer); an unmoved piece keeps the game's spot exactly. Put back at the next load.
+        float g_gameSpots[16 * 3] = {};
+        bool g_spotsMoved = false;
+
+        void restoreSpots(uint8_t *rdram)
+        {
+            if (g_spotsMoved)
+                std::memcpy(rdram + kPieceSpots, g_gameSpots, sizeof(g_gameSpots));
+            g_spotsMoved = false;
+        }
+
+        // A post-format piece's box middle across the floor (x, z); false: not found or not a post
+        bool pieceMiddle(const uint8_t *scene, uint32_t sceneBytes, int32_t wanted, float &x, float &z)
+        {
+            if (sceneBytes < 0x14u)
+                return false;
+            const uint32_t count = std::min<uint32_t>(word(scene), (sceneBytes - 0x14u) / 8u);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const uint32_t entry = 0x14u + 8u * i;
+                if (static_cast<int32_t>(word(scene + entry)) != wanted)
+                    continue;
+                const uint32_t object = entry + 4u + word(scene + entry + 4u);
+                if (uint64_t(object) + 16u > sceneBytes)
+                    return false;
+                const uint32_t vertices = word(scene + object);
+                if (vertices == 0u || uint64_t(object) + 16u + 64ull * vertices > sceneBytes)
+                    return false;
+                float lo[2] = {1e30f, 1e30f}, hi[2] = {-1e30f, -1e30f};
+                for (uint32_t k = 0; k < vertices; ++k)
+                {
+                    float v[3];
+                    std::memcpy(v, scene + object + 16u + 64u * k + 0x30u, 12);
+                    lo[0] = std::min(lo[0], v[0]);
+                    hi[0] = std::max(hi[0], v[0]);
+                    lo[1] = std::min(lo[1], v[2]);
+                    hi[1] = std::max(hi[1], v[2]);
+                }
+                x = (lo[0] + hi[0]) * 0.5f;
+                z = (lo[1] + hi[1]) * 0.5f;
+                return true;
+            }
+            return false;
+        }
+
+        void followPosts(uint8_t *rdram, const ModArena &m)
+        {
+            float spots[16 * 3];
+            std::memcpy(spots, rdram + kPieceSpots, sizeof(spots));
+            if (!g_spotsMoved)
+                std::memcpy(g_gameSpots, spots, sizeof(spots));
+            const uint8_t *game = rdram + kGameScene;
+            const uint32_t gameBytes = 0xB9000u;
+            const uint8_t *mod = m.file.data() + m.scene;
+            int moved = 0;
+            for (int i = 0; i < 12; ++i)
+            {
+                float gx, gz, mx, mz;
+                if (!pieceMiddle(game, gameBytes, 81 + i, gx, gz) || !pieceMiddle(mod, m.sceneBytes, 81 + i, mx, mz))
+                    continue;
+                const float dx = mx - gx, dz = mz - gz;
+                if (std::fabs(dx) < 0.01f && std::fabs(dz) < 0.01f)
+                    continue; // where the game has it (a re-export rounds a little)
+                spots[3 * i] = g_gameSpots[3 * i] + dx;
+                spots[3 * i + 2] = g_gameSpots[3 * i + 2] + dz;
+                ++moved;
+                std::cerr << "[arenas] " << m.what << ": ring piece " << (81 + i) << " moved by (" << dx << ", " << dz
+                          << "): its fade spot (" << spots[3 * i] << ", " << spots[3 * i + 2] << ")" << std::endl;
+            }
+            if (!moved)
+                return;
+            std::memcpy(rdram + kPieceSpots, spots, sizeof(spots));
+            g_spotsMoved = true;
+            std::cerr << "[arenas] " << m.what << ": " << moved << " of the ring's 12 corner pieces moved: the fade follows them"
+                      << std::endl;
+        }
+
         // FUN_001b0958(venue, ...): a mod arena's sounds are the sound set of the game arena its arena.json names
         PS2Runtime::RecompiledFunction g_originalSounds = nullptr;
         void sounds(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -2529,6 +2613,7 @@ namespace vendetta_arenas
         {
             const uint32_t venue = getRegU32(ctx, 4);
             restoreFlyIn(rdram);
+            restoreSpots(rdram);
             for (ModArena &m : g_modArenas)
                 if (&m != g_current)
                     std::vector<uint8_t>().swap(m.file);
@@ -2555,6 +2640,8 @@ namespace vendetta_arenas
             {
                 SET_GPR_U32(ctx, 5, vendetta_store::kArenaScene);
                 redirectFlyIn(rdram, *g_current);
+                if (venue < 12u)
+                    followPosts(rdram, *g_current);
                 if (g_redirectedPath != ~0u)
                     std::cerr << "[arenas] " << g_current->what << ": its own fly-in (camera path " << g_redirectedPath << ")"
                               << std::endl;
