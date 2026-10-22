@@ -16392,7 +16392,7 @@ index 0000000..8bb1d56
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_settings.cpp b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 new file mode 100644
-index 0000000..8b26bfa
+index 0000000..09ac8f6
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 @@ -0,0 +1,546 @@
@@ -16430,7 +16430,7 @@ index 0000000..8b26bfa
 +            "# A VENDETTA_* switch set in the environment wins over a line here.\n"
 +            "\n"
 +            "[display]\n"
-+            "mode = \"fullscreen\"      # \"window\", \"borderless\" (a frameless window the size of the screen) or \"fullscreen\"\n"
++            "mode = \"borderless\"      # \"window\", \"borderless\" (a frameless window the size of the screen) or \"fullscreen\"\n"
 +            "screen = 1               # which screen: 1 = the main one\n"
 +            "maximised = true         # start maximised (window only)\n"
 +            "fullscreen_width = 0     # fullscreen resolution; 0 = the screen's own\n"
@@ -16686,8 +16686,8 @@ index 0000000..8b26bfa
 +            case 0:
 +                s.mode = WindowMode::Window;
 +                break;
-+            default: // no mode line: fullscreen, the default (no settings file at all, as in test runs: a window)
-+                s.mode = WindowMode::Fullscreen;
++            default: // no mode line: borderless, the default (no settings file at all, as in test runs: a window)
++                s.mode = WindowMode::Borderless;
 +                break;
 +            }
 +            reader.integer("display.screen", s.screen, 1, 16);

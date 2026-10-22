@@ -12,7 +12,7 @@ public sealed class GameSettings
     public const int RefreshAutomatic = -2; // "automatic": the screen's rate when it suits 60 frames, else the smoothest
 
     // [display]
-    public string Mode = "fullscreen";      // fullscreen (the default) | window | borderless
+    public string Mode = "borderless";      // borderless (the default) | window | fullscreen
     public int Screen = 1;
     public bool Maximised = true;
     public int FullscreenWidth;             // 0 = the screen's own resolution
@@ -54,7 +54,7 @@ public sealed class GameSettings
         "# A VENDETTA_* switch set in the environment wins over a line here.\n" +
         "\n" +
         "[display]\n" +
-        "mode = \"fullscreen\"      # \"window\", \"borderless\" (a frameless window the size of the screen) or \"fullscreen\"\n" +
+        "mode = \"borderless\"      # \"window\", \"borderless\" (a frameless window the size of the screen) or \"fullscreen\"\n" +
         "screen = 1               # which screen: 1 = the main one\n" +
         "maximised = true         # start maximised (window only)\n" +
         "fullscreen_width = 0     # fullscreen resolution; 0 = the screen's own\n" +
