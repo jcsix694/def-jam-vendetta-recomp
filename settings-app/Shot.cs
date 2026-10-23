@@ -49,13 +49,15 @@ internal static class Shot
             Console.WriteLine("play: " + (folder.Play(out var game) ?? $"started (pid {game?.Id})"));
             return;
         }
+        var before = File.Exists(folder.SettingsPath) ? GameSettings.Load(folder.SettingsPath) : null;
         var vm = new MainViewModel(folder, readOnly: false);
         var s = vm.Settings;
         Console.WriteLine($"loaded: mode {s.ModeIndex}, screen {s.Screen?.Label}, refresh {s.Refresh?.Label}, scale {s.ScaleIndex}");
-        Console.WriteLine("refresh choices in fullscreen: " + string.Join(" | ", s.RefreshChoices.Select(c => c.Label)));
-        Console.WriteLine("resolution choices: " + string.Join(" | ", s.ResolutionChoices.Take(6).Select(c => c.Label)));
-        s.ModeIndex = 2;
-        s.Refresh = s.RefreshChoices.FirstOrDefault(c => c.Value == 60) ?? s.Refresh;
+        // a file from before Fullscreen was taken out: borderless at once, the file saved so on opening
+        if (before?.WasFullscreen == true)
+            Console.WriteLine("the file said fullscreen; on opening it now says: " +
+                              (File.ReadLines(folder.SettingsPath).FirstOrDefault(l => l.TrimStart().StartsWith("mode")) ?? "no mode line"));
+        s.ModeIndex = 0;
         s.ScaleIndex = 2;
         s.FilterIndex = 2;
         s.Volume = 55;

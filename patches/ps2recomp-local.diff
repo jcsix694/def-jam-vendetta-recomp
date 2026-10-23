@@ -16392,10 +16392,10 @@ index 0000000..8bb1d56
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_settings.cpp b/ps2xRuntime/src/lib/ps2_host_settings.cpp
 new file mode 100644
-index 0000000..09ac8f6
+index 0000000..79a5840
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_settings.cpp
-@@ -0,0 +1,546 @@
+@@ -0,0 +1,611 @@
 +#include "runtime/ps2_host_settings.h"
 +
 +#include <algorithm>
@@ -16423,6 +16423,7 @@ index 0000000..09ac8f6
 +    namespace
 +    {
 +        Settings g_settings;
++        bool g_fullscreenInFile = false; // the file's mode line said "fullscreen" (no longer offered)
 +
 +        // What a missing file is replaced by: every setting, at its default, with what it does.
 +        const char *kDefaultFile =
@@ -16430,12 +16431,12 @@ index 0000000..09ac8f6
 +            "# A VENDETTA_* switch set in the environment wins over a line here.\n"
 +            "\n"
 +            "[display]\n"
-+            "mode = \"borderless\"      # \"window\", \"borderless\" (a frameless window the size of the screen) or \"fullscreen\"\n"
++            "mode = \"borderless\"      # \"window\" or \"borderless\" (a frameless window the size of the screen)\n"
 +            "screen = 1               # which screen: 1 = the main one\n"
 +            "maximised = true         # start maximised (window only)\n"
-+            "fullscreen_width = 0     # fullscreen resolution; 0 = the screen's own\n"
++            "fullscreen_width = 0     # these three: only with the test switch VENDETTA_WINDOW=fullscreen\n"
 +            "fullscreen_height = 0\n"
-+            "refresh_rate = \"automatic\" # fullscreen only: \"automatic\" (the screen's rate when it suits the game's 60 frames a\n"
++            "refresh_rate = \"automatic\" # \"automatic\" (the screen's rate when it suits the game's 60 frames a\n"
 +            "                         # second, else the smoothest rate it has), \"smoothest\" (the highest multiple of 60 Hz),\n"
 +            "                         # 0 = the screen's own (no switch), or a number such as 60 or 120\n"
 +            "vsync = true             # wait for the screen before showing each picture (no tearing)\n"
@@ -16492,6 +16493,62 @@ index 0000000..09ac8f6
 +            std::transform(text.begin(), text.end(), text.begin(),
 +                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 +            return text;
++        }
++
++        // [display]'s mode = "fullscreen" rewritten as "borderless" in the file, the rest of it (spacing, comments, line
++        // endings) as it was; false when nothing was changed (the game still plays borderless)
++        bool rewriteFullscreenAsBorderless(const std::filesystem::path &file)
++        {
++            std::string text;
++            {
++                std::ifstream in(file, std::ios::binary);
++                if (!in)
++                    return false;
++                std::ostringstream content;
++                content << in.rdbuf();
++                text = content.str();
++            }
++            std::string section;
++            bool changed = false;
++            for (size_t begin = 0; begin < text.size();)
++            {
++                size_t end = text.find('\n', begin);
++                if (end == std::string::npos)
++                    end = text.size();
++                const std::string line = text.substr(begin, end - begin);
++                const std::string body = line.substr(0, line.find('#'));
++                const std::string trimmed = trim(body);
++                if (!trimmed.empty() && trimmed.front() == '[' && trimmed.back() == ']')
++                    section = lower(trim(trimmed.substr(1, trimmed.size() - 2)));
++                else if (section == "display")
++                {
++                    const size_t equals = body.find('=');
++                    if (equals != std::string::npos && lower(trim(body.substr(0, equals))) == "mode")
++                    {
++                        const size_t word = lower(body).find("fullscreen", equals);
++                        if (word != std::string::npos)
++                        {
++                            text.replace(begin + word, 10, "borderless"); // the same length: nothing else moves
++                            changed = true;
++                        }
++                    }
++                }
++                begin = end + 1;
++            }
++            if (!changed)
++                return false;
++            std::filesystem::path temp = file;
++            temp += ".new";
++            {
++                std::ofstream out(temp, std::ios::binary);
++                if (!out || !(out << text) || !out.flush())
++                    return false;
++            }
++            std::error_code error;
++            std::filesystem::rename(temp, file, error);
++            if (error)
++                std::filesystem::remove(temp, error);
++            return !error;
 +        }
 +
 +        // The TOML this file needs: [section], key = "string" | number | true / false, # comments. Values come back
@@ -16680,8 +16737,10 @@ index 0000000..09ac8f6
 +            case 1:
 +                s.mode = WindowMode::Borderless;
 +                break;
-+            case 2:
-+                s.mode = WindowMode::Fullscreen;
++            case 2: // fullscreen is no longer offered (borderless does the same): borderless, and
++                    // load() rewrites the line. The fullscreen code stays, for VENDETTA_WINDOW=fullscreen.
++                s.mode = WindowMode::Borderless;
++                g_fullscreenInFile = true;
 +                break;
 +            case 0:
 +                s.mode = WindowMode::Window;
@@ -16896,9 +16955,15 @@ index 0000000..09ac8f6
 +            if (in)
 +            {
 +                Reader reader(parse(in, file), file);
++                g_fullscreenInFile = false;
 +                apply(reader);
 +                reader.reportLeftovers();
 +                g_settings.file = file;
++                in.close();
++                if (g_fullscreenInFile)
++                    std::cerr << "[settings] mode = \"fullscreen\" is no longer offered: borderless"
++                              << (rewriteFullscreenAsBorderless(file) ? " (the file now says so)" : " (the file couldn't be changed)")
++                              << std::endl;
 +            }
 +            else
 +                std::cerr << "[settings] can't read " << file.string() << "; the defaults are used" << std::endl;
