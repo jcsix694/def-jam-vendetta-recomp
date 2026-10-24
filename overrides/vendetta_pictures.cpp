@@ -82,9 +82,19 @@ namespace vendetta_pictures
             h = p.height * k;
             for (uint32_t &pixel : rgba)
             {
-                const uint32_t a = pixel >> 24;
+                uint32_t a = pixel >> 24;
+                uint32_t rgb = pixel & 0x00FFFFFFu;
+                if (p.kind == Kind::Shadow)
+                {
+                    // the game's shades (chunk 137, all 64): black, as dark as the icon pixel is dark, clear where
+                    // the icon is; over the white tile a picked wrestler shows as a black and white face
+                    const double luminance = 0.299 * (rgb & 0xFFu) + 0.587 * ((rgb >> 8) & 0xFFu) + 0.114 * (rgb >> 16);
+                    const double dark = std::clamp(280.6 - 355.9 * luminance / 255.0, 0.0, 255.0);
+                    a = static_cast<uint32_t>(dark * a / 255.0 + 0.5);
+                    rgb = 0u;
+                }
                 const uint32_t gsAlpha = (a * 128u + 127u) / 255u;
-                pixel = (p.kind == Kind::Shadow ? 0u : (pixel & 0x00FFFFFFu)) | (gsAlpha << 24);
+                pixel = rgb | (gsAlpha << 24);
             }
             bytes = uint64_t(w) * h * 4u * 4u / 3u; // with its smaller copies
             GSGpuRenderer *renderer = gpu();

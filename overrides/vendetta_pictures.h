@@ -28,7 +28,7 @@ namespace vendetta_pictures
     enum class Kind
     {
         Plain,  // the file as it is
-        Shadow, // black with the file's transparency (a grid icon's shade)
+        Shadow, // a grid icon's shade: black, as dark as the file is dark, clear where it is clear
     };
 
     // A picture from a file, shown on a GS texture of `width` x `height` texels (the game's shape: the file is
