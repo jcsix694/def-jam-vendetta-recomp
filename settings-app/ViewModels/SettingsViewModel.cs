@@ -12,7 +12,7 @@ public sealed record Choice(string Label, int Value, int Value2 = 0);
 public partial class SettingsViewModel : ObservableObject
 {
     private static readonly int[] Scales = { 1, 2, 4, 8, 16 };
-    private static readonly string[] Modes = { "window", "borderless", "fullscreen" };
+    private static readonly string[] Modes = { "window", "borderless" };
     private static readonly string[] Filters = { "fsr", "smooth", "blocky" };
     private static readonly string[] Cameras = { "vendetta", "nomercy", "wk2" };
     private static readonly string[] SpeedPresets = { "vendetta", "nomercy" };
@@ -37,7 +37,10 @@ public partial class SettingsViewModel : ObservableObject
         _folder = folder;
         _readOnly = readOnly;
         _screens = Displays.Find();
-        Load(GameSettings.Load(folder.SettingsPath));
+        var settings = GameSettings.Load(folder.SettingsPath);
+        Load(settings);
+        if (settings.WasFullscreen)
+            Save(); // the file said fullscreen: it says borderless from now on
         UpdatePads();
         if (!readOnly)
         {
@@ -85,7 +88,6 @@ public partial class SettingsViewModel : ObservableObject
     public string SummaryWindow => ModeIndex switch
     {
         1 => "Borderless",
-        2 => $"Fullscreen · {ChosenRate} Hz",
         _ => Maximised ? "Window · maximised" : "Window",
     };
 
@@ -197,67 +199,25 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _status = "";
 
     public bool IsWindowMode => ModeIndex == 0;
-    public bool IsFullscreen => ModeIndex == 2;
-    public bool IsNotFullscreen => ModeIndex != 2;
 
     public string ModeHint => ModeIndex switch
     {
         1 => "A window with no frame that covers the whole screen; switching apps is instant",
-        2 => "The game takes over the screen and can set its own resolution and refresh rate",
         _ => "A normal window you can move and resize",
     };
 
     public string MaximisedHint => IsWindowMode
         ? "Opens filling the screen, title bar kept"
-        : "Only for Window: Borderless and Fullscreen already fill the screen";
+        : "Only for Window: Borderless already fills the screen";
 
-    public string FullscreenHint => IsFullscreen ? "The screen switches to this while the game runs" : "Only for Fullscreen";
-
+    // the screen's own resolution and refresh rate are kept (the game no longer switches them): the fullscreen values
+    // in the file are kept as they are, for the test switch VENDETTA_WINDOW=fullscreen
     private Displays.Screen? CurrentScreen =>
         Screen is { } chosen ? _screens.FirstOrDefault(s => s.Number == chosen.Value) : _screens.FirstOrDefault();
 
-    public string WindowsRate => CurrentScreen is { } s ? $"Windows' setting · {s.Current.Rate} Hz" : "Windows' setting";
-
-    /// <summary>The rate the game will ask for in fullscreen (smoothest / the screen's own worked out).</summary>
-    private int ChosenRate
-    {
-        get
-        {
-            if (CurrentScreen is not { } s)
-                return Refresh?.Value > 0 ? Refresh.Value : 60;
-            var (w, h) = FullscreenSize(s);
-            return Refresh?.Value switch
-            {
-                GameSettings.RefreshSmoothest => s.SmoothestAt(w, h),
-                GameSettings.RefreshAutomatic or null => s.AutomaticAt(w, h),
-                GameSettings.RefreshScreens => s.Current.Rate,
-                var r => r.Value,
-            };
-        }
-    }
-
-    public string RefreshHint
-    {
-        get
-        {
-            if (!IsFullscreen)
-                return "In a window or borderless, the screen keeps the rate set in Windows. Pick Fullscreen to choose it here.";
-            var rate = ChosenRate;
-            if (Refresh?.Value is GameSettings.RefreshAutomatic or null && CurrentScreen is { } screen)
-                return rate == screen.Current.Rate
-                    ? $"Your screen runs at {rate} Hz, which suits the game's 60 frames a second: nothing switches."
-                    : Displays.Screen.FitsSixtyFrames(rate)
-                        ? $"Your screen runs at {screen.Current.Rate} Hz. For smooth motion the game switches it to {rate} Hz while it plays."
-                        : $"Your screen has no rate that suits 60 frames a second, so it stays at {rate} Hz.";
-            return rate % 60 == 0 || (rate + 1) % 60 == 0
-                ? $"The game makes 60 frames a second: at {rate} Hz every frame stays on screen for the same time."
-                : $"The game makes 60 frames a second: at {rate} Hz some stay up longer than others, a slight judder. A multiple of 60 Hz is smoother.";
-        }
-    }
-
     public string VsyncHint => VsyncIndex == 1
         ? "No tearing: each frame waits for the screen. With G-Sync or FreeSync, smooth at any rate."
-        : "The lowest delay; fast moves can tear in fullscreen.";
+        : "The lowest delay; fast moves can tear.";
 
     public string ShapeHint => ShapeIndex switch
     {
@@ -296,7 +256,6 @@ public partial class SettingsViewModel : ObservableObject
             var mode = ModeIndex switch
             {
                 1 => "Borderless",
-                2 => $"Fullscreen · {ChosenRate} Hz",
                 _ => Maximised ? "Maximised" : "Window",
             };
             var renderer = RendererIndex == 0 ? $"graphics card · {Scales[Math.Clamp(ScaleIndex, 0, 4)]}×" : "CPU";
@@ -313,8 +272,7 @@ public partial class SettingsViewModel : ObservableObject
         {
             foreach (var derived in new[]
                      {
-                         nameof(IsWindowMode), nameof(IsFullscreen), nameof(IsNotFullscreen), nameof(ModeHint),
-                         nameof(MaximisedHint), nameof(FullscreenHint), nameof(WindowsRate), nameof(RefreshHint),
+                         nameof(IsWindowMode), nameof(ModeHint), nameof(MaximisedHint),
                          nameof(VsyncHint), nameof(ShapeHint), nameof(RendererHint), nameof(ScaleHint), nameof(FilterHint),
                          nameof(SharpeningText), nameof(VolumeText), nameof(SharpeningEnabled), nameof(Summary),
                          nameof(SummaryWindow), nameof(SummaryPicture), nameof(SummaryPlayers),
@@ -375,7 +333,7 @@ public partial class SettingsViewModel : ObservableObject
         {
             _loading = false;
         }
-        foreach (var name in new[] { nameof(ModeHint), nameof(Summary), nameof(RefreshHint), nameof(WindowsRate), nameof(PresetEnabled) })
+        foreach (var name in new[] { nameof(ModeHint), nameof(Summary), nameof(PresetEnabled) })
             base.OnPropertyChanged(new PropertyChangedEventArgs(name));
     }
 
@@ -431,13 +389,12 @@ public partial class SettingsViewModel : ObservableObject
         {
             _loading = wasLoading;
         }
-        base.OnPropertyChanged(new PropertyChangedEventArgs(nameof(RefreshHint)));
         base.OnPropertyChanged(new PropertyChangedEventArgs(nameof(Summary)));
     }
 
     private GameSettings Current() => new()
     {
-        Mode = Modes[Math.Clamp(ModeIndex, 0, 2)],
+        Mode = Modes[Math.Clamp(ModeIndex, 0, 1)],
         Screen = Screen?.Value ?? 1,
         Maximised = Maximised,
         FullscreenWidth = Resolution?.Value ?? 0,

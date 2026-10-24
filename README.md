@@ -27,7 +27,7 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 - Widescreen matches at 16:9 with more of the arena (menus and movies stay 4:3)
 - Sharp 2D: the HUD, text and menus as sharp as the 3D
 - High Poly in every match (the PS2 used lower detail models with 3 or 4 fighters)
-- Vulkan on your graphics card, in a window, borderless or fullscreen
+- Vulkan on your graphics card, in a window or borderless
 
 **Playing**
 - Up to 4 players on controllers, plus the keyboard as any player
@@ -120,7 +120,7 @@ version. Turn both checks off under About › Check for updates automatically.
 </tr>
 </table>
 
-- **Display:** window, borderless or fullscreen, which screen, fullscreen resolution and refresh rate, VSync, and
+- **Display:** window or borderless, which screen, VSync, and
   widescreen, 4:3 or stretched.
 - **Graphics:** graphics card or CPU, scale 1× to 16×, Sharp 2D, FSR, smooth or blocky scaling with sharpening,
   and High Poly in every match.

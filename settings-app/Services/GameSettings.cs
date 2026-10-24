@@ -12,7 +12,9 @@ public sealed class GameSettings
     public const int RefreshAutomatic = -2; // "automatic": the screen's rate when it suits 60 frames, else the smoothest
 
     // [display]
-    public string Mode = "borderless";      // borderless (the default) | window | fullscreen
+    public string Mode = "borderless";      // borderless (the default) | window (fullscreen is no longer offered)
+    /// <summary>The file said mode = "fullscreen": read as borderless; the page saves at once, so the file says so too.</summary>
+    public bool WasFullscreen;
     public int Screen = 1;
     public bool Maximised = true;
     public int FullscreenWidth;             // 0 = the screen's own resolution
@@ -54,12 +56,12 @@ public sealed class GameSettings
         "# A VENDETTA_* switch set in the environment wins over a line here.\n" +
         "\n" +
         "[display]\n" +
-        "mode = \"borderless\"      # \"window\", \"borderless\" (a frameless window the size of the screen) or \"fullscreen\"\n" +
+        "mode = \"borderless\"      # \"window\" or \"borderless\" (a frameless window the size of the screen)\n" +
         "screen = 1               # which screen: 1 = the main one\n" +
         "maximised = true         # start maximised (window only)\n" +
-        "fullscreen_width = 0     # fullscreen resolution; 0 = the screen's own\n" +
+        "fullscreen_width = 0     # these three: only with the test switch VENDETTA_WINDOW=fullscreen\n" +
         "fullscreen_height = 0\n" +
-        "refresh_rate = \"automatic\" # fullscreen only: \"automatic\" (the screen's rate when it suits the game's 60 frames a\n" +
+        "refresh_rate = \"automatic\" # \"automatic\" (the screen's rate when it suits the game's 60 frames a\n" +
         "                         # second, else the smoothest rate it has), \"smoothest\" (the highest multiple of 60 Hz),\n" +
         "                         # 0 = the screen's own (no switch), or a number such as 60 or 120\n" +
         "vsync = true             # wait for the screen before showing each picture (no tearing)\n" +
@@ -113,7 +115,11 @@ public sealed class GameSettings
         {
             switch (key)
             {
-                case "display.mode": s.Mode = OneOf(value, s.Mode, "window", "borderless", "fullscreen"); break;
+                case "display.mode":
+                    // fullscreen is no longer offered (borderless does the same): borderless
+                    s.WasFullscreen = value.Equals("fullscreen", StringComparison.OrdinalIgnoreCase);
+                    s.Mode = s.WasFullscreen ? "borderless" : OneOf(value, s.Mode, "window", "borderless");
+                    break;
                 case "display.screen": s.Screen = Int(value, s.Screen, 1, 16); break;
                 case "display.maximised": s.Maximised = Bool(value, s.Maximised); break;
                 case "display.fullscreen_width": s.FullscreenWidth = Int(value, s.FullscreenWidth, 0, 16384); break;

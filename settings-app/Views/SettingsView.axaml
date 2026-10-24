@@ -28,7 +28,6 @@
                             <ListBox Grid.Column="1" Classes="seg" SelectedIndex="{Binding ModeIndex}">
                                 <ListBoxItem Content="Window" />
                                 <ListBoxItem Content="Borderless" />
-                                <ListBoxItem Content="Fullscreen" />
                             </ListBox>
                         </Grid>
                     </Border>
@@ -48,39 +47,6 @@
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" OnContent="" OffContent="" VerticalAlignment="Center"
                                           IsChecked="{Binding Maximised}" IsEnabled="{Binding IsWindowMode}" />
-                        </Grid>
-                    </Border>
-                </StackPanel>
-
-                <StackPanel>
-                    <TextBlock Classes="cap" Text="FULLSCREEN" />
-                    <Border Classes="capline" />
-                    <Border Classes="row">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                            <StackPanel VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Classes="label" Text="Resolution" />
-                                <TextBlock Classes="hint" Text="{Binding FullscreenHint}" />
-                            </StackPanel>
-                            <ComboBox Grid.Column="1" Width="300" VerticalAlignment="Center"
-                                      ItemsSource="{Binding ResolutionChoices}" SelectedItem="{Binding Resolution}"
-                                      ItemTemplate="{StaticResource ChoiceItem}" IsEnabled="{Binding IsFullscreen}" />
-                        </Grid>
-                    </Border>
-                    <Border Classes="row">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                            <StackPanel VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Classes="label" Text="Refresh rate" />
-                                <TextBlock Classes="hint" Text="{Binding RefreshHint}" />
-                            </StackPanel>
-                            <Panel Grid.Column="1" Width="300" VerticalAlignment="Center">
-                                <ComboBox HorizontalAlignment="Stretch" IsVisible="{Binding IsFullscreen}"
-                                          ItemsSource="{Binding RefreshChoices}" SelectedItem="{Binding Refresh}"
-                                          ItemTemplate="{StaticResource ChoiceItem}" />
-                                <Border IsVisible="{Binding IsNotFullscreen}" Height="30" CornerRadius="6"
-                                        BorderBrush="{StaticResource VLine}" BorderThickness="1" Padding="10,0">
-                                    <TextBlock Text="{Binding WindowsRate}" VerticalAlignment="Center" FontSize="13" Classes="muted" />
-                                </Border>
-                            </Panel>
                         </Grid>
                     </Border>
                 </StackPanel>
