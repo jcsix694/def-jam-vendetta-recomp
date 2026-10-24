@@ -49,6 +49,7 @@
 #include "ps2_runtime_macros.h"
 #include "vendetta_gsdraw.h"
 #include "vendetta_mods.h"
+#include "vendetta_store.h"
 #include "vendetta_wrestlers.h"
 #include "runtime/gs/gs_gpu.h"
 
@@ -148,7 +149,7 @@ namespace vendetta_wrestlerdraw
             float light[16];
             std::memcpy(light, lightMatrix, 64);
             const uint32_t bones = std::min(word(posed + 8), word(layout + 8));
-            for (uint32_t k = 0; k < bones && k < 256u; ++k)
+            for (uint32_t k = 0; k < bones; ++k)
             {
                 const uint8_t *bone = posed + 0x10 + 0x190 * k;
                 const int32_t segment = static_cast<int32_t>(word(layout + 0x10 + 0x190 * k + 8));
@@ -698,10 +699,40 @@ namespace vendetta_wrestlerdraw
 
         PS2Runtime::RecompiledFunction g_originalPose = nullptr, g_originalSeeThrough = nullptr;
 
+        // The mod's own parts and their data are not copied into the model behind but pointed at: a model's slot words are
+        // self-relative (slot n's data = model + 0x10 + 4n + the word) and the game follows them afresh each time
+        // (FUN_001b1b20 the parts, FUN_001b22e8 / 2620 / 2848 the body and its template, FUN_001b2998 the face, hands
+        // and slots 9-17, FUN_001b3400 the body points), so the mod's BODY (for BODY2 too), FACE, hands, templates and
+        // motions, with any number of bones past the game's, sit in the store's match area and the model behind's words
+        // are rewritten to reach them; its see-through parts (6 / 7, hidden for a mod) point at none (every reader checks)
+        constexpr int kFirstPointed = 1, kLastPointed = 17;
+        constexpr uint32_t kChannelRoom = 25u; // the game's sample buffers (0x1E146B0 + 0x190 n; the rig's 0x190): 25 channels
+        constexpr uint32_t kBodyBones = 42u, kFaceBones = 11u, kHandBones = 13u; // the game's rig: the clips, the body
+                                                                               // points, the mounts, the eyes and lips
+        constexpr uint32_t kWalkDepth = 512u; // FUN_001b95f0 walks the bones recursively (0x90 bytes of stack a level)
+
+        // the game's rig bones of a part slot (1-5) or a template slot (8-13)
+        uint32_t standardBones(int slot)
+        {
+            switch (slot)
+            {
+            case 1: case 2: case 8: return kBodyBones;
+            case 3: case 9: case 10: case 11: return kFaceBones;
+            default: return kHandBones;
+            }
+        }
+
+        // the part a template (8-13) is applied to
+        int partOfTemplate(int slot) { return slot == 8 ? 1 : slot <= 11 ? 3 : slot == 12 ? 4 : 5; }
+
         struct ModModel
         {
             std::vector<uint8_t> file;
             int32_t part[32];
+            uint32_t partSize[32] = {};  // each part's bytes: to the next part or the file's end
+            bool pointable[32] = {};     // slots 1-17: checked, the game may read the mod's own
+            uint32_t placedAt[32] = {};  // their guest addresses in the store's match area (0: not placed this match)
+            std::string what;            // "[wrestlers] <mod>: <wrestler>: <file>", for mods.log
             bool ok = false;
             uint32_t image = 0;
             bool cutout = false;           // its skin has pixels not solid: the alpha test on, those drawn see-through
@@ -944,6 +975,140 @@ namespace vendetta_wrestlerdraw
             return true;
         }
 
+        // A part's bones as the game walks them (FUN_001b95f0: from bone 0, each bone's child (+0x00) then its sibling
+        // (+0x04), negative = none) and as our draw writes their rows (writeRows: segment +0x08, its 0x80 bytes at stream
+        // + 0x80 + 0x80 x segment): every bone reached once, every link and row inside the part, the walk not deeper
+        // than kWalkDepth. nullptr, or what is wrong.
+        const char *checkSkeleton(const uint8_t *p, const uint8_t *end)
+        {
+            const uint32_t bones = word(p + 8);
+            if (uint64_t(0x10u) + 0x190ull * bones > uint64_t(end - p))
+                return "its bones run past the file";
+            const uint32_t streamBytes = word(p + 4);
+            std::vector<uint8_t> seen(bones, 0);
+            std::vector<std::pair<uint32_t, uint32_t>> stack{{0u, 1u}}; // bone, depth
+            uint32_t reached = 0;
+            while (!stack.empty())
+            {
+                const auto [b, depth] = stack.back();
+                stack.pop_back();
+                if (b >= bones)
+                    return "a bone links to a bone it doesn't have";
+                if (seen[b]++)
+                    return "its bones link in a loop";
+                if (depth > kWalkDepth)
+                    return "its bones nest deeper than the game's walk allows (512)";
+                ++reached;
+                const uint8_t *bone = p + 0x10 + 0x190 * b;
+                const int32_t segment = static_cast<int32_t>(word(bone + 8));
+                if (segment >= 0 && 0x100ull + 0x80ull * uint32_t(segment) > streamBytes)
+                    return "a bone's matrix rows lie outside its stream";
+                for (int link = 0; link < 2; ++link)
+                    if (const int32_t next = static_cast<int32_t>(word(bone + 4 * link)); next >= 0)
+                        stack.push_back({static_cast<uint32_t>(next), depth + 1u});
+            }
+            return reached == bones ? nullptr : "some bones aren't linked to the rest";
+        }
+
+        // The parent of each bone (from the child / sibling links; -1 = the root's level)
+        std::vector<int32_t> parents(const uint8_t *p, uint32_t bones)
+        {
+            std::vector<int32_t> parent(bones, -1);
+            for (uint32_t b = 0; b < bones; ++b)
+            {
+                int32_t c = static_cast<int32_t>(word(p + 0x10 + 0x190 * b));
+                for (uint32_t guard = 0; c >= 0 && uint32_t(c) < bones && guard < bones; ++guard)
+                {
+                    parent[uint32_t(c)] = static_cast<int32_t>(b);
+                    c = static_cast<int32_t>(word(p + 0x10 + 0x190 * uint32_t(c) + 4));
+                }
+            }
+            return parent;
+        }
+
+        // A template's keyed channels (its bones not skipped: rotation, position), or ~0u when it isn't one (a u32 count
+        // of 32-byte bones {flags, rotation, position}: flags 1 rotation keyed, 2 position keyed, 4 skipped)
+        uint32_t templateChannels(const uint8_t *t, uint32_t size, uint32_t least, uint32_t most)
+        {
+            if (!t || size < 4u || word(t) < least || word(t) > most || 4ull + 32ull * word(t) > size)
+                return ~0u;
+            uint32_t channels = 0;
+            for (uint32_t k = 0; k < word(t); ++k)
+            {
+                const uint32_t flags = word(t + 4u + 32u * k);
+                if (!(flags & 4u))
+                    channels += (flags & 1u) + ((flags >> 1) & 1u);
+            }
+            return channels;
+        }
+
+        // Whether a motion (the clip header {u16 last pose, u8 n6}, n6 x 6 bytes, then per keyed channel of its template a
+        // u8 key count and 8-byte keys) ends inside its `size` bytes
+        bool motionFits(const uint8_t *motion, uint32_t size, const uint8_t *t)
+        {
+            if (!motion || size < 3u)
+                return false;
+            uint64_t p = 3u + 6u * uint64_t(motion[2]);
+            for (uint32_t k = 0; k < word(t); ++k)
+            {
+                const uint32_t flags = word(t + 4u + 32u * k);
+                if (flags & 4u)
+                    continue;
+                for (uint32_t bit = 1u; bit <= 2u; bit <<= 1)
+                    if (flags & bit)
+                    {
+                        if (p >= size)
+                            return false;
+                        p += 1u + 8u * uint64_t(motion[p]);
+                    }
+            }
+            return p <= size;
+        }
+
+        // Which of slots 1-17 the game may read from the mod's file: its parts (checked whole when read); each template's
+        // count from the game's rig's bones to its part's (the game applies a template to the part bone by bone) and its
+        // channels within the game's sample buffers (the body's counted over the rig's 42: its copy keeps only those, the
+        // clips key nothing more), each motion whole over its template (a motion and its template only together: the keys
+        // follow the template's channels). The rest stays the model behind's, with a line in mods.log.
+        void checkPointed(ModModel &m)
+        {
+            for (int slot : {kBody, kFace, kLeftHand, kRightHand})
+                m.pointable[slot] = m.at(slot) != nullptr;
+            const struct { int slot, motion; const char *name; } templates[] = {
+                {8, -1, "the body's template"}, {9, 14, "the face expressions"}, {10, 15, "the lip shapes"},
+                {11, -1, "the eyes' template"}, {12, 16, "the left hand's poses"}, {13, 17, "the right hand's poses"}};
+            for (const auto &t : templates)
+            {
+                const uint8_t *tp = m.at(t.slot);
+                const uint8_t *part = m.at(partOfTemplate(t.slot));
+                if (!tp || !part)
+                    continue;
+                uint32_t channels = templateChannels(tp, m.partSize[t.slot], standardBones(t.slot), word(part + 8));
+                if (t.slot == 8 && channels != ~0u)
+                {
+                    channels = 0;
+                    for (uint32_t k = 0; k < kBodyBones; ++k)
+                        if (const uint32_t flags = word(tp + 4u + 32u * k); !(flags & 4u))
+                            channels += (flags & 1u) + ((flags >> 1) & 1u);
+                }
+                const char *wrong = channels == ~0u ? "its template is damaged"
+                                    : channels > kChannelRoom ? "its template keys more channels than the game samples (25)"
+                                    : t.motion >= 0 && !m.at(t.motion) ? nullptr
+                                    : t.motion >= 0 && !motionFits(m.at(t.motion), m.partSize[t.motion], tp) ? "its motion is damaged"
+                                    : nullptr;
+                if (wrong)
+                {
+                    vendetta_mods::problem() << m.what << ": " << t.name << ": " << wrong << ": Briggs' are used" << std::endl;
+                    continue;
+                }
+                if (t.motion >= 0 && !m.at(t.motion))
+                    continue; // a template without its motion: both the model behind's
+                m.pointable[t.slot] = true;
+                if (t.motion >= 0)
+                    m.pointable[t.motion] = true;
+            }
+        }
+
         // A mod's model read and checked: the game's format (WRS); glTF to come. Anything wrong: a line in mods.log and
         // the model behind it (Briggs') is used instead, the whole match.
         std::unique_ptr<ModModel> loadModel(const vendetta_wrestlers::ModelFile &files)
@@ -966,10 +1131,22 @@ namespace vendetta_wrestlerdraw
             }
             for (int n = 0; n < 32; ++n)
                 m->part[n] = slotOffset(m->file.data(), m->file.size(), n);
-            // the parts our draw uses: the body (required), the face and the hands (if there); the bones as the game's rig
+            for (int n = 0; n < 32; ++n)
+            {
+                if (m->part[n] < 0)
+                    continue;
+                int64_t end = static_cast<int64_t>(m->file.size());
+                for (int k = 0; k < 32; ++k)
+                    if (m->part[k] > m->part[n])
+                        end = std::min<int64_t>(end, m->part[k]);
+                m->partSize[n] = static_cast<uint32_t>(end - m->part[n]);
+            }
+            m->what = what;
+            // the parts our draw uses: the body (required), the face and the hands (if there); at least the game's rig's
+            // bones, in its order (the clips, the body points, the mounts, the eyes and lips use those), any more after them
             const struct { int slot; uint32_t bones; const char *name; bool required; } parts[] = {
-                {kBody, 42u, "the body (BODY)", true}, {kFace, 11u, "the face", false},
-                {kLeftHand, 13u, "the left hand", false}, {kRightHand, 13u, "the right hand", false}};
+                {kBody, kBodyBones, "the body (BODY)", true}, {kFace, kFaceBones, "the face", false},
+                {kLeftHand, kHandBones, "the left hand", false}, {kRightHand, kHandBones, "the right hand", false}};
             for (const auto &part : parts)
             {
                 const uint8_t *p = m->at(part.slot);
@@ -982,10 +1159,10 @@ namespace vendetta_wrestlerdraw
                     }
                     continue;
                 }
-                if (word(p + 8) != part.bones)
+                if (word(p + 8) < part.bones)
                 {
-                    vendetta_mods::problem() << what << ": " << part.name << " has " << word(p + 8) << " bones, the game's rig has "
-                                             << part.bones << instead << std::endl;
+                    vendetta_mods::problem() << what << ": " << part.name << " has " << word(p + 8) << " bones, fewer than the "
+                                             << "game's rig's " << part.bones << instead << std::endl;
                     return m;
                 }
                 if (!validatePart(p, m->file.data() + m->file.size()))
@@ -994,7 +1171,13 @@ namespace vendetta_wrestlerdraw
                                              << "outside itself)" << instead << std::endl;
                     return m;
                 }
+                if (const char *wrong = checkSkeleton(p, m->file.data() + m->file.size()))
+                {
+                    vendetta_mods::problem() << what << ": " << part.name << ": " << wrong << instead << std::endl;
+                    return m;
+                }
             }
+            checkPointed(*m);
             if (gpu() && !makeSkin(*m, files)) // (the CPU renderer has no host images: the model behind's skin there)
             {
                 vendetta_mods::problem() << what << ": no skin can be read (none in textures\\ and the file's own is damaged)"
@@ -1044,44 +1227,171 @@ namespace vendetta_wrestlerdraw
             }
         }
 
-        // The mod file's skeleton into the game's copy of the model behind it: every bone's inverse bind (+0x10) and
-        // rest matrix (+0x50) of BODY and BODY2 (both from the mod's BODY: a Low Poly body in the file is ignored), FACE
-        // and the hands, and the templates (slots 8-13: face, lip, eye, hands, the body's) where the counts agree.
-        void writeSkeleton(uint8_t *rdram, uint32_t carrier, const ModModel &m)
+        // The model behinds whose slot words point at a mod's blocks: the words as the game had them and as written
+        struct Pointed
         {
-            const uint8_t *game = mem(rdram, carrier);
-            auto gamePart = [&](int slot) -> uint8_t * {
-                const int32_t o = slotOffset(game, kModelBuffer, slot);
-                return o < 0 ? nullptr : mem(rdram, carrier + static_cast<uint32_t>(o));
-            };
-            const struct { int game, mod; } parts[] = {{kBody, kBody}, {kBody2, kBody}, {kFace, kFace},
-                                                        {kLeftHand, kLeftHand}, {kRightHand, kRightHand}};
-            for (const auto &pair : parts)
-            {
-                uint8_t *to = gamePart(pair.game);
-                const uint8_t *from = m.at(pair.mod);
-                if (!to || !from || word(to + 8) != word(from + 8))
-                    continue;
-                for (uint32_t k = 0; k < word(from + 8); ++k)
-                    std::memcpy(to + 0x10 + 0x190 * k + 0x10, from + 0x10 + 0x190 * k + 0x10, 0x80);
-            }
-            for (int slot = 8; slot <= 13; ++slot)
-            {
-                uint8_t *to = gamePart(slot);
-                const uint8_t *from = m.at(slot);
-                if (to && from && word(to) == word(from) && word(from) <= 64u)
-                    std::memcpy(to + 4, from + 4, 32u * word(from));
-            }
+            uint32_t original[32] = {}, written[32] = {};
+            bool set[32] = {};
+        };
+        std::unordered_map<uint32_t, Pointed> g_pointed; // by the model behind's guest address
+
+        uint32_t slotField(uint32_t model, int slot) { return model + 0x10u + 4u * static_cast<uint32_t>(slot); }
+
+        // The model behind's slot words as the game had them (the ones still ours: a model loaded again keeps its own)
+        void pointBack(uint32_t carrier)
+        {
+            const auto found = g_pointed.find(carrier);
+            if (found == g_pointed.end())
+                return;
+            for (int slot = kFirstPointed; slot <= kLastPointed; ++slot)
+                if (found->second.set[slot])
+                {
+                    uint8_t *field = vendetta_store::host(slotField(carrier, slot));
+                    if (word(field) == found->second.written[slot])
+                        std::memcpy(field, &found->second.original[slot], 4);
+                }
+            g_pointed.erase(found);
         }
 
-        // The fighter whose model holds this address, or 4
+        // The match area emptied: every model behind back to its own blocks before anything reads them, the mods' placed
+        // again at their next picture
+        void pointAllBack()
+        {
+            while (!g_pointed.empty())
+                pointBack(g_pointed.begin()->first);
+            for (auto &entry : g_models)
+                std::fill(std::begin(entry.second->placedAt), std::end(entry.second->placedAt), 0u);
+        }
+
+        // Whatever a model's slot word reaches now (the game's block or the mod's), as a guest address; 0 = none
+        uint32_t slotTarget(uint32_t model, int slot)
+        {
+            const uint32_t at = slotField(model, slot), w = word(vendetta_store::host(at));
+            return w == ~0u ? 0u : at + w;
+        }
+
+        // The first `count` entries of two templates keyed the same way (the game's clips, its shared eye tracks and the
+        // face routine's fixed channels, the lips' 1, 2, 3, 6 and the eyes' 7, 8, key the rig's bones that way)
+        bool sameChannels(const uint8_t *a, const uint8_t *b, uint32_t count)
+        {
+            if (word(a) < count || word(b) < count)
+                return false;
+            for (uint32_t k = 0; k < count; ++k)
+                if ((word(a + 4u + 32u * k) & 7u) != (word(b + 4u + 32u * k) & 7u))
+                    return false;
+            return true;
+        }
+
+        // The mod's parts and data placed in the store's match area (once a match) and the model behind's words pointed
+        // there: BODY and BODY2 at the mod's BODY, its FACE and hands (every bone's current local preset to its rest
+        // local, so a bone no template reaches holds its rest pose under its parent), the body's template cut to the
+        // rig's 42 (the SHADOW, the model behind's own, is posed with it too), the other templates and the motions whole,
+        // the see-through parts at none. Before a model behind's words first change: the rig's bones must have the same
+        // parents in the mod's parts as in the game's. False: the model can't be posed (a line in mods.log).
+        bool pointSlots(uint32_t carrier, ModModel &m)
+        {
+            if (!g_pointed.count(carrier))
+                for (int slot : {kBody, kFace, kLeftHand, kRightHand})
+                {
+                    const uint32_t gameAt = slotTarget(carrier, slot);
+                    const uint8_t *mod = m.at(slot), *game = gameAt ? vendetta_store::host(gameAt) : nullptr;
+                    if (!mod || !game || word(game + 8) < standardBones(slot))
+                        continue;
+                    const std::vector<int32_t> pm = parents(mod, word(mod + 8)), pg = parents(game, word(game + 8));
+                    for (uint32_t k = 0; k < standardBones(slot); ++k)
+                        if (pm[k] != pg[k])
+                        {
+                            vendetta_mods::problem() << m.what << ": its bone " << k << (slot == kBody ? " of the body" : slot == kFace ? " of the face" : " of a hand")
+                                                     << " hangs from another bone than in the game's rig: Briggs' model is used instead" << std::endl;
+                            return false;
+                        }
+                }
+            if (!m.placedAt[kBody])
+            {
+                uint64_t total = 0;
+                for (int slot = kFirstPointed; slot <= kLastPointed; ++slot)
+                    if (m.pointable[slot])
+                        total += ((m.part[slot] & 15u) + m.partSize[slot] + 15u) & ~15ull;
+                const uint32_t base = total < 0x10000000ull
+                                          ? vendetta_store::allocate(vendetta_store::Area::Match, static_cast<uint32_t>(total), "mod models")
+                                          : 0u;
+                if (!base)
+                {
+                    vendetta_mods::problem() << m.what << ": no room for it in the game's memory: Briggs' model is used instead" << std::endl;
+                    return false;
+                }
+                uint32_t at = base;
+                for (int slot = kFirstPointed; slot <= kLastPointed; ++slot)
+                    if (m.pointable[slot])
+                    {
+                        const uint32_t phase = static_cast<uint32_t>(m.part[slot]) & 15u; // as loaded: the file's alignment
+                        uint8_t *copy = vendetta_store::host(at + phase);
+                        m.placedAt[slot] = at + phase;
+                        std::memcpy(copy, m.at(slot), m.partSize[slot]);
+                        if (slot <= kRightHand)
+                            for (uint32_t k = 0; k < word(copy + 8); ++k)
+                                std::memcpy(copy + 0x10 + 0x190 * k + 0x90, copy + 0x10 + 0x190 * k + 0x50, 64);
+                        if (slot == 8)
+                            std::memcpy(copy, &kBodyBones, 4);
+                        at += (phase + m.partSize[slot] + 15u) & ~15u;
+                    }
+                std::cerr << m.what << ": placed for the match (" << (at - base) / 1024u << " KB: the body's "
+                          << word(m.at(kBody) + 8) << " bones";
+                if (m.at(kFace))
+                    std::cerr << ", the face's " << word(m.at(kFace) + 8);
+                if (m.at(kLeftHand) && m.at(kRightHand))
+                    std::cerr << ", the hands' " << word(m.at(kLeftHand) + 8) << " / " << word(m.at(kRightHand) + 8);
+                std::cerr << "; " << m.partSize[14] << " bytes of face expressions), the model behind pointed at it" << std::endl;
+            }
+            Pointed &pointed = g_pointed[carrier];
+            for (int slot = kFirstPointed; slot <= kLastPointed; ++slot)
+            {
+                const int from = slot == kBody2 ? kBody : slot;
+                const bool none = slot == 6 || slot == 7;
+                if (!none && !m.pointable[from])
+                    continue;
+                const uint32_t at = slotField(carrier, slot);
+                uint8_t *field = vendetta_store::host(at);
+                const uint32_t now = word(field), want = none ? ~0u : m.placedAt[from] - at;
+                if (now == want)
+                    continue;
+                if (slot >= 8 && slot <= 11 && (!pointed.set[slot] || now != pointed.written[slot]))
+                {
+                    // the game's template, before it is pointed away: the mod's must key the rig's bones the same way
+                    if (now != ~0u && !sameChannels(m.at(slot), vendetta_store::host(at + now), standardBones(slot)))
+                    {
+                        m.pointable[slot] = false;
+                        if (slot == 9 || slot == 10)
+                            m.pointable[slot + 5] = false; // its motion only with it
+                        vendetta_mods::problem() << m.what << ": "
+                                                 << (slot == 8 ? "the body's" : slot == 9 ? "the face's" : slot == 10 ? "the lips'" : "the eyes'")
+                                                 << " template keys the game's rig differently from the game's animations: Briggs' is used"
+                                                 << std::endl;
+                        continue;
+                    }
+                }
+                if (!pointed.set[slot] || now != pointed.written[slot])
+                    pointed.original[slot] = now; // first time, or the model behind loaded again
+                pointed.set[slot] = true;
+                pointed.written[slot] = want;
+                std::memcpy(field, &want, 4);
+            }
+            return true;
+        }
+
+        // The fighter whose model holds this address (in its buffer, or a part its words point at), or 4
         uint32_t fighterOf(uint8_t *rdram, uint32_t address)
         {
             for (uint32_t i = 0; i < 4u; ++i)
             {
                 const uint32_t model = word(mem(rdram, kRigs + kRigSize * i + kRigModel));
-                if (model && address >= model && address < model + kModelBuffer)
+                if (!model)
+                    continue;
+                if (address >= model && address < model + kModelBuffer)
                     return i;
+                for (int slot = kBody; slot <= kRightHand; ++slot)
+                    if (slotTarget(model, slot) == address)
+                        return i;
             }
             return 4u;
         }
@@ -1106,9 +1416,17 @@ namespace vendetta_wrestlerdraw
                 g_originalPose(rdram, ctx, runtime);
                 return;
             }
-            if (ModModel *m = modelOf(rdram, i))
-                if (const uint32_t carrier = word(mem(rdram, kRigs + kRigSize * i + kRigModel)))
-                    writeSkeleton(rdram, carrier, *m);
+            if (const uint32_t carrier = word(mem(rdram, kRigs + kRigSize * i + kRigModel)))
+            {
+                ModModel *m = modelOf(rdram, i);
+                if (m && !pointSlots(carrier, *m))
+                {
+                    m->ok = false; // the model behind drawn whole from now on (modelOf: none)
+                    m = nullptr;
+                }
+                if (!m)
+                    pointBack(carrier); // a game wrestler's own model in that buffer now, or a mod's that can't be posed
+            }
             g_originalPose(rdram, ctx, runtime);
         }
 
@@ -1142,9 +1460,8 @@ namespace vendetta_wrestlerdraw
                 lastCarrier[fighter & 3u] = carrier;
                 std::cerr << "[wrestlers] fighter " << fighter << " (record "
                           << word(mem(rdram, kFighters + kFighterSize * fighter + kFighterRecord)) << "): the model behind in "
-                          << std::hex << "0x" << carrier << std::dec << ", the mod's skeleton written there" << std::endl;
+                          << std::hex << "0x" << carrier << std::dec << ", pointed at the mod's parts" << std::endl;
             }
-            const uint8_t *game = mem(rdram, carrier);
             const uint8_t *body = mem(rdram, getRegU32(ctx, 4)); // the posed body: BODY or BODY2 (the same skeleton)
             const uint8_t *light = mem(rdram, getRegU32(ctx, 5)), *colours = mem(rdram, getRegU32(ctx, 6));
             const uint8_t *tex0 = body + (word(body) & ~3u) + 0x30u;
@@ -1167,10 +1484,10 @@ namespace vendetta_wrestlerdraw
                 const uint8_t *posed = body;
                 if (o.slot != kBody)
                 {
-                    const int32_t off = slotOffset(game, kModelBuffer, o.slot);
-                    if (off < 0)
+                    const uint32_t at = slotTarget(carrier, o.slot); // the mod's part the game posed
+                    if (!at)
                         continue;
-                    posed = mem(rdram, carrier + static_cast<uint32_t>(off));
+                    posed = mem(rdram, at);
                 }
                 uint8_t *stream = part + (word(part) & ~3u);
                 std::memcpy(stream + 0x30u, tex0, 16); // the skin's address (the slot the game uploaded to)
@@ -1301,6 +1618,7 @@ namespace vendetta_wrestlerdraw
         {
             runtime.replaceFunction(kPose, poseHook);
             runtime.replaceFunction(kSeeThrough, seeThroughHook);
+            vendetta_store::onMatchEmptied(pointAllBack);
             std::cerr << "[wrestlers] mods' own models: drawn by our code" << std::endl;
         }
         if (g_mode != Mode::Off)

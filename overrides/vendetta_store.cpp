@@ -9,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace vendetta_store
 {
@@ -25,6 +26,13 @@ namespace vendetta_store
         uint32_t g_matchCommitted = kEnd;                 // [g_matchCommitted, kEnd) is usable
         std::map<std::string, uint64_t> g_used;           // bytes by user (padding included)
         std::map<std::string, uint64_t> g_matchUsed;      // the same, this match
+        std::vector<void (*)()> g_onMatchEmptied;
+
+        void matchEmptied()
+        {
+            for (void (*callback)() : g_onMatchEmptied)
+                callback();
+        }
 
         std::string kilobytes(uint64_t bytes)
         {
@@ -134,6 +142,7 @@ namespace vendetta_store
     {
         if (!g_memory)
             return;
+        matchEmptied();
         static const bool poison = std::getenv("VENDETTA_ANIM_POISON") && *std::getenv("VENDETTA_ANIM_POISON") != '0';
         if (poison && g_matchBottom < kEnd)
         {
@@ -160,12 +169,15 @@ namespace vendetta_store
     {
         if (!g_memory || mark < g_matchBottom || mark > kEnd)
             return;
+        matchEmptied();
         static const bool poison = std::getenv("VENDETTA_ANIM_POISON") && *std::getenv("VENDETTA_ANIM_POISON") != '0';
         if (poison && mark > g_matchBottom)
             std::memset(host(g_matchBottom), 0xFF, mark - g_matchBottom);
         g_matchBottom = mark;
         g_matchUsed = g_markUsed;
     }
+
+    void onMatchEmptied(void (*callback)()) { g_onMatchEmptied.push_back(callback); }
 
     void report()
     {

@@ -85,6 +85,10 @@ namespace vendetta_store
     uint32_t matchMark();
     void rewindMatch(uint32_t mark);
 
+    // `callback` runs each time the match area is emptied (beginMatch, rewindMatch), before it is: a user that pointed
+    // the game's own data at its pieces points it back there.
+    void onMatchEmptied(void (*callback)());
+
     // Prints what the store holds, by user (the boot area once the mods are in; reportMatch the match area).
     void report();
     void reportMatch();
