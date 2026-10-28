@@ -533,10 +533,10 @@ index a932a5d..0296a8e 100644
  }
 diff --git a/ps2xIOP/src/emulator/core/spu2.cpp b/ps2xIOP/src/emulator/core/spu2.cpp
 new file mode 100644
-index 0000000..effc6de
+index 0000000..ae230d9
 --- /dev/null
 +++ b/ps2xIOP/src/emulator/core/spu2.cpp
-@@ -0,0 +1,772 @@
+@@ -0,0 +1,795 @@
 +#include "spu2.h"
 +#include "spu2_gaussian.h"
 +
@@ -553,6 +553,9 @@ index 0000000..effc6de
 +        constexpr uint32_t kVolumeBlock = 0x760u; // core 0's MVOL / EVOL / AVOL / BVOL; core 1's at +0x28
 +        constexpr uint32_t kVolumeStride = 0x28u;
 +        constexpr size_t kInputStartFrames = 512u; // AutoDMA frames held before the input plays (one transfer)
++        // The core's input buffer is two halves of 256 frames in sound memory; a transfer's last block goes into
++        // a half as the other one plays, so the transfer ends with about one half still to play.
++        constexpr size_t kInputHalfFrames = 256u;
 +
 +        bool voiceLogEnabled()
 +        {
@@ -1308,13 +1311,33 @@ index 0000000..effc6de
 +        if (pending > 48000u * 2u) // over a second queued (the input stopped being played): keep the newest
 +            core.inputRead = core.input.size() - 48000u * 2u;
 +    }
++
++    // An AutoDMA transfer is paced by the chip taking it in, not by its own length: timed from the transfer's start,
++    // the driver's few cycles between one transfer's end and the next start added up, and every ~9 transfers the
++    // input ran one frame dry (a 0 sample, a click). Timed from what is still to play, a late start is made up.
++    uint64_t Spu2::inputTakenCycles(int coreIndex, uint64_t iopCycle) const
++    {
++        const Core &core = m_cores[coreIndex & 1];
++        size_t pending = (core.input.size() - core.inputRead) / 2u;
++        if (!core.inputPlaying && pending < kInputStartFrames)
++            return 0u; // not playing: the halves are free
++        // the chip plays in batches: frames due by iopCycle but not played yet are as good as played
++        if (iopCycle >= m_nextSampleCycle)
++        {
++            const uint64_t owed = (iopCycle - m_nextSampleCycle) / kIopCyclesPerSample + 1u;
++            pending = owed >= pending ? 0u : pending - static_cast<size_t>(owed);
++        }
++        if (pending <= kInputHalfFrames)
++            return 0u;
++        return static_cast<uint64_t>(pending - kInputHalfFrames) * kIopCyclesPerSample;
++    }
 +}
 diff --git a/ps2xIOP/src/emulator/core/spu2.h b/ps2xIOP/src/emulator/core/spu2.h
 new file mode 100644
-index 0000000..86f5209
+index 0000000..7266806
 --- /dev/null
 +++ b/ps2xIOP/src/emulator/core/spu2.h
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,137 @@
 +#pragma once
 +
 +#include "ps2x/iop/spu2_host_samples.h"
@@ -1354,6 +1377,8 @@ index 0000000..86f5209
 +        [[nodiscard]] bool autoDmaEnabled(int core) const;
 +        // AutoDMA: the core's sound-data input, 48 kHz stereo frames (L, R interleaved)
 +        void queueInput(int core, const int16_t *frames, size_t frameCount);
++        // AutoDMA: the IOP cycles from iopCycle until a transfer just queued is taken in (0 = at once)
++        [[nodiscard]] uint64_t inputTakenCycles(int core, uint64_t iopCycle) const;
 +
 +        // plays up to the IOP cycle count, appending the output frames (L, R interleaved)
 +        void advanceTo(uint64_t iopCycle, std::vector<int16_t> &out);
@@ -1773,7 +1798,7 @@ index 0000000..87f67a6
 +    }
 +}
 diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
-index e5f63a9..8be3ae6 100644
+index e5f63a9..fa9d86b 100644
 --- a/ps2xIOP/src/emulator/iop_emulator.cpp
 +++ b/ps2xIOP/src/emulator/iop_emulator.cpp
 @@ -16,14 +16,22 @@
@@ -1829,24 +1854,29 @@ index e5f63a9..8be3ae6 100644
              totalInstructions = 0;
              eeCycleCarry = 0;
              activeCpu = nullptr;
-@@ -177,7 +198,16 @@ namespace ps2x::iop::detail
+@@ -177,7 +198,20 @@ namespace ps2x::iop::detail
          void schedulePendingDma()
          {
              if (const auto dma = memory.takeDmaStart())
+-                pendingDmaInterrupts[dma->irq] = totalCycles + dma->delayCycles;
 +            {
 +                // A new completion: the floor must stay at or below it, and the idle skip must look again.
 +                // (Replacing an irq's earlier entry with a later one leaves the floor low; that only costs one
 +                // walk, which then sets it exactly.)
-                 pendingDmaInterrupts[dma->irq] = totalCycles + dma->delayCycles;
-+                dmaDueFloor = std::min(dmaDueFloor, totalCycles + dma->delayCycles);
-+                idleKnown = false;
++                uint64_t delayCycles = dma->delayCycles;
 +                if (!dma->pcm.empty())
++                {
 +                    memory.spu2().queueInput(dma->core, dma->pcm.data(), dma->pcm.size() / 2u);
++                    delayCycles = memory.spu2().inputTakenCycles(dma->core, totalCycles); // AutoDMA: as the chip takes it
++                }
++                pendingDmaInterrupts[dma->irq] = totalCycles + delayCycles;
++                dmaDueFloor = std::min(dmaDueFloor, totalCycles + delayCycles);
++                idleKnown = false;
 +            }
          }
  
          bool readRam(uint32_t address, void *destination, size_t size) const
-@@ -238,6 +268,42 @@ namespace ps2x::iop::detail
+@@ -238,6 +272,42 @@ namespace ps2x::iop::detail
          };
  
          ImportDisposition dispatchImport(const IopImportCall &call, CpuState &cpu)
@@ -1889,7 +1919,7 @@ index e5f63a9..8be3ae6 100644
          {
              const uint32_t a0 = cpu.gpr[4];
              auto setV0 = [&](uint32_t value)
-@@ -252,6 +318,7 @@ namespace ps2x::iop::detail
+@@ -252,6 +322,7 @@ namespace ps2x::iop::detail
              {
                  if (const auto callback = cdvd.takeCompletionCallback())
                  {
@@ -1897,7 +1927,7 @@ index e5f63a9..8be3ae6 100644
                      pendingGuestCallbacks.emplace(
                          totalCycles + kCdvdCompletionCycles,
                          ScheduledGuestCallback{
-@@ -358,8 +425,158 @@ namespace ps2x::iop::detail
+@@ -358,8 +429,158 @@ namespace ps2x::iop::detail
              return ImportDisposition::Missing;
          }
  
@@ -2056,7 +2086,7 @@ index e5f63a9..8be3ae6 100644
              if (cpu.stopped)
                  return false;
              if (cpu.pc == kThreadReturnSentinel || cpu.pc == kCallReturnSentinel)
-@@ -377,8 +594,18 @@ namespace ps2x::iop::detail
+@@ -377,8 +598,18 @@ namespace ps2x::iop::detail
              }
              if (checkInterrupt(cpu))
                  return true;
@@ -2076,7 +2106,7 @@ index e5f63a9..8be3ae6 100644
              {
                  const ImportDisposition disposition = dispatchImport(*import, cpu);
                  ++totalInstructions;
-@@ -399,6 +626,8 @@ namespace ps2x::iop::detail
+@@ -399,6 +630,8 @@ namespace ps2x::iop::detail
  
          uint32_t runCpu(CpuState &cpu, uint32_t instructionBudget)
          {
@@ -2085,7 +2115,7 @@ index e5f63a9..8be3ae6 100644
              CpuState *previous = activeCpu;
              activeCpu = &cpu;
              const uint64_t start = totalInstructions;
-@@ -406,12 +635,17 @@ namespace ps2x::iop::detail
+@@ -406,12 +639,17 @@ namespace ps2x::iop::detail
              {
                  if (!step(cpu))
                      break;
@@ -2105,7 +2135,7 @@ index e5f63a9..8be3ae6 100644
              return static_cast<uint32_t>(totalInstructions - start);
          }
  
-@@ -483,22 +717,32 @@ namespace ps2x::iop::detail
+@@ -483,22 +721,32 @@ namespace ps2x::iop::detail
          // Not that good to use exception handling for control flow but will do for now
          void servicePendingDmaInterrupts()
          {
@@ -2139,7 +2169,7 @@ index e5f63a9..8be3ae6 100644
              try
              {
                  for (const int irq : completed)
-@@ -514,7 +758,9 @@ namespace ps2x::iop::detail
+@@ -514,7 +762,9 @@ namespace ps2x::iop::detail
  
          void servicePendingGuestCallbacks()
          {
@@ -2150,7 +2180,7 @@ index e5f63a9..8be3ae6 100644
                  return;
  
              std::vector<ScheduledGuestCallback> callbacks;
-@@ -553,28 +799,98 @@ namespace ps2x::iop::detail
+@@ -553,28 +803,98 @@ namespace ps2x::iop::detail
              servicingGuestCallbacks = false;
          }
  
@@ -2256,7 +2286,7 @@ index e5f63a9..8be3ae6 100644
                      const uint64_t before = totalCycles;
                      runCpu(next->cpu, static_cast<uint32_t>(std::min<uint64_t>(kDefaultSlice, target - totalCycles)));
                      kernel.endTimeslice(*next, kThreadReturnSentinel);
-@@ -588,6 +904,44 @@ namespace ps2x::iop::detail
+@@ -588,6 +908,44 @@ namespace ps2x::iop::detail
              }
          }
  
@@ -2301,7 +2331,7 @@ index e5f63a9..8be3ae6 100644
          ModuleLoadResult loadImage(std::string path, std::span<const uint8_t> image, const void *arguments, uint32_t argumentSize)
          {
              ModuleLoadResult result{true, -1, -1};
-@@ -664,6 +1018,7 @@ namespace ps2x::iop::detail
+@@ -664,6 +1022,7 @@ namespace ps2x::iop::detail
  
          bool stopModule(int32_t moduleId, int32_t *result)
          {
@@ -2309,7 +2339,7 @@ index e5f63a9..8be3ae6 100644
              auto it = modules.find(moduleId);
              if (it == modules.end())
                  return false;
-@@ -696,10 +1051,35 @@ namespace ps2x::iop::detail
+@@ -696,10 +1055,35 @@ namespace ps2x::iop::detail
          IopLoadcore loadcore;
          std::map<int, Module> modules;
          std::map<int, uint64_t> pendingDmaInterrupts;
@@ -2345,7 +2375,7 @@ index e5f63a9..8be3ae6 100644
          uint64_t totalInstructions = 0;
          uint64_t eeCycleCarry = 0;
          CpuState *activeCpu = nullptr;
-@@ -724,35 +1104,75 @@ namespace ps2x::iop::detail
+@@ -724,35 +1108,75 @@ namespace ps2x::iop::detail
          m_impl->reset();
      }
  
@@ -2422,7 +2452,7 @@ index e5f63a9..8be3ae6 100644
      bool IopEmulator::hasRpcServer(uint32_t sid) const noexcept
      {
          return m_impl->rpc.hasServer(sid);
-@@ -760,16 +1180,19 @@ namespace ps2x::iop::detail
+@@ -760,16 +1184,19 @@ namespace ps2x::iop::detail
  
      void IopEmulator::onSifTransfer(const SifTransfer &transfer)
      {
@@ -2442,7 +2472,7 @@ index e5f63a9..8be3ae6 100644
          return m_impl->memory.freeAllocation(address);
      }
  
-@@ -781,12 +1204,14 @@ namespace ps2x::iop::detail
+@@ -781,12 +1208,14 @@ namespace ps2x::iop::detail
  
      bool IopEmulator::writeMemory(uint32_t address, const void *source, size_t size)
      {
@@ -2457,7 +2487,7 @@ index e5f63a9..8be3ae6 100644
          return isMemoryRange(address, size) &&
                 m_impl->memory.zeroRam(address, size);
      }
-@@ -828,3 +1253,14 @@ namespace ps2x::iop::detail
+@@ -828,3 +1257,14 @@ namespace ps2x::iop::detail
      }
  
  }
