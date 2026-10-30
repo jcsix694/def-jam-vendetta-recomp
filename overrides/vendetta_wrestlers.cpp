@@ -89,6 +89,7 @@ namespace vendetta_wrestlers
         {
             uint32_t render = 0, icon = 0, shade = 0, logo = 0; // vendetta_pictures ids (0 = none)
             uint32_t gameRender = 0, gameIcon = 0;              // the "based on" attire's, when a file can't be shown
+            int32_t gameLogo = -1;                              // a game wrestler's logo named in attire.json (-1 = none)
         };
 
         struct Wrestler
@@ -108,8 +109,8 @@ namespace vendetta_wrestlers
         std::vector<ModelFile> g_modelFiles;          // by record - 63 (an empty model: none of its own)
         constexpr const char *kModelNames[] = {"model.wrs", "model.glb", "model.gltf"};
         // the files that make an attire folder count (or its textures folder)
-        constexpr const char *kAttireFiles[] = {"wrestler.json", "render.png", "icon.png",  "logo.png",
-                                                "model.wrs",     "model.glb",  "model.gltf"};
+        constexpr const char *kAttireFiles[] = {"wrestler.json", "attire.json", "render.png", "icon.png", "logo.png",
+                                                "model.wrs",     "model.glb",   "model.gltf"};
         constexpr size_t kMaxAttireFolders = 9; // looked at, to tell about the ones not used (3 at most for now)
         std::vector<std::pair<std::string, std::string>> g_gameNames; // the game's records' full and short names, upper
                                                                        // case, as the game has them (kept at start-up)
@@ -125,6 +126,7 @@ namespace vendetta_wrestlers
             bool noLogo = false;         // a new identity (names or pictures) without a logo of its own: no logo
             uint32_t unlockIndex = 0;    // its +0x18: the logo and the story row go by it
             ModelFile model;             // empty: the game's model
+            bool gameModel = false;      // a game wrestler's model named in attire.json (+0x1C written)
             size_t slotFile = SIZE_MAX;  // its moveset's entry in g_slotFiles
         };
         std::map<uint32_t, Replaced> g_replaced; // by record (base + attire; records 63+: an added attire)
@@ -625,6 +627,110 @@ namespace vendetta_wrestlers
             return problems.empty();
         }
 
+        // The parts an attire takes from a game wrestler's attire instead of a file of its own: attire.json's
+        // "model", "render", "icon", "logo", each { "game wrestler": "<full or short name>", "attire": n } (n from 1,
+        // 1 when left out). Each part goes by the folders in order (the attire's, then the wrestler's): in each, the
+        // part's own file wins, else attire.json's name; the first folder with either decides. The game keeps the four
+        // as values of the named record (+0x10 render, +0x14 icon, +0x18 the unlock index the logo goes by, +0x1C the
+        // model's DATA.BIN entry), so a part named is that value copied; nothing of the game goes into the mod.
+        struct GamePicks
+        {
+            int32_t model = -1, render = -1, icon = -1, logo = -1; // the named game record, -1 = none named
+
+            bool any() const { return model >= 0 || render >= 0 || icon >= 0 || logo >= 0; }
+        };
+
+        GamePicks readPicks(const vendetta_mods::Mod &mod, const std::string &attireFolder, const std::string &folder,
+                            const std::string &label)
+        {
+            GamePicks picks;
+            std::error_code ec;
+            const std::array<std::pair<const char *, int32_t GamePicks::*>, 4> parts{
+                {{"model", &GamePicks::model}, {"render", &GamePicks::render}, {"icon", &GamePicks::icon}, {"logo", &GamePicks::logo}}};
+            std::array<bool, 4> decided{};
+            for (const std::string &f : {attireFolder, folder})
+            {
+                if (f.empty())
+                    continue;
+                vendetta_mods::Json json;
+                bool haveJson = false;
+                if (std::filesystem::is_regular_file(mod.folder / (f + "/attire.json"), ec))
+                {
+                    std::string error;
+                    haveJson = readJson(mod.folder / (f + "/attire.json"), json, error);
+                    if (!haveJson)
+                        vendetta_mods::problem() << label << ": " << f << "/attire.json " << error << " - not used" << std::endl;
+                }
+                for (size_t i = 0; i < parts.size(); ++i)
+                {
+                    if (decided[i])
+                        continue;
+                    const std::string part = parts[i].first;
+                    bool file = false;
+                    if (part == "model")
+                    {
+                        for (const char *modelName : kModelNames)
+                            file = file || std::filesystem::is_regular_file(mod.folder / (f + "/" + modelName), ec);
+                    }
+                    else
+                        file = std::filesystem::is_regular_file(mod.folder / (f + "/" + part + ".png"), ec);
+                    const vendetta_mods::Json *named = haveJson ? json.find(part) : nullptr;
+                    if (file)
+                    {
+                        decided[i] = true;
+                        if (named)
+                            vendetta_mods::problem() << label << ": " << f << " has its own " << part
+                                                     << " and attire.json names a game wrestler's: its own is used" << std::endl;
+                        continue;
+                    }
+                    if (!named)
+                        continue;
+                    decided[i] = true;
+                    const vendetta_mods::Json *who = named->isObject() ? named->find("game wrestler") : nullptr;
+                    const vendetta_mods::Json *which = named->isObject() ? named->find("attire") : nullptr;
+                    uint32_t base = 0, count = 0;
+                    if (!who || !who->isString() || (which && !isNumber(which)))
+                    {
+                        vendetta_mods::problem() << label << ": " << f << "/attire.json: \"" << part
+                                                 << "\" should be { \"game wrestler\": \"<name>\", \"attire\": <number> } - not used" << std::endl;
+                        continue;
+                    }
+                    if (!gameWrestler(who->text, base, count))
+                    {
+                        vendetta_mods::problem() << label << ": " << f << "/attire.json: \"" << part << "\": the game has no wrestler called \""
+                                                 << who->text << "\" - not used" << std::endl;
+                        continue;
+                    }
+                    const double n = which ? which->number : 1.0;
+                    if (n < 1.0 || n > static_cast<double>(count) || n != static_cast<double>(static_cast<uint32_t>(n)))
+                    {
+                        vendetta_mods::problem() << label << ": " << f << "/attire.json: \"" << part << "\": " << who->text << " has "
+                                                 << count << " attire" << (count == 1u ? "" : "s") << " in the game - not used" << std::endl;
+                        continue;
+                    }
+                    picks.*(parts[i].second) = static_cast<int32_t>(base + static_cast<uint32_t>(n) - 1u);
+                }
+            }
+            return picks;
+        }
+
+        // What a game record's part is: its render / icon number, its model's DATA.BIN entry, its logo (the logo
+        // table's entry by its unlock index; 12 = none)
+        constexpr uint32_t kLogoTable = 0x282580u, kLogoTableSize = 60u;
+        uint32_t gameValue(int32_t record, uint32_t field) { return read32(kGameCharacters + kRecordSize * static_cast<uint32_t>(record) + field); }
+        uint32_t gameLogo(int32_t record)
+        {
+            const uint32_t unlock = gameValue(record, 0x18u);
+            return unlock < kLogoTableSize ? read32(kLogoTable + 4u * unlock) : kNoLogo;
+        }
+        std::string pickText(int32_t record)
+        {
+            uint32_t base = 0, count = 0;
+            const std::string name = guestString(read32(kGameCharacters + kRecordSize * static_cast<uint32_t>(record)));
+            gameWrestler(name, base, count);
+            return count > 1u ? name + "'s attire " + std::to_string(static_cast<uint32_t>(record) - base + 1u) : name + "'s";
+        }
+
         // The mods' wrestlers: their records, character records, sizes and voices (the tables already copied).
         void readWrestlers()
         {
@@ -696,6 +802,7 @@ namespace vendetta_wrestlers
                         uint32_t looksBase = 0, looksCount = 0, voiceBase = 0, voiceCount = 0;
                         int32_t voiceRow = -1; // his own voice's row ("voice"), else a game wrestler's ("sounds like")
                         bool ownModel = false;
+                        GamePicks picks; // the parts named from game wrestlers (attire.json)
                     };
                     std::vector<Info> infos(attires);
                     WrestlerFiles files(mod, "[wrestlers] " + mod.name + ": ");
@@ -742,9 +849,14 @@ namespace vendetta_wrestlers
                         // behind it, whatever "based on" says (only for the game's own work: its bones posed, its
                         // shadow; and the pictures when the mod brings none, and the whole model if the mod's can't be
                         // used). An attire without one, beside attires with one, also gets Briggs'.
-                        info.ownModel = modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k]));
+                        // a game wrestler's model named in attire.json: its record is the one this attire looks like
+                        info.picks = readPicks(mod, attireFolders[k], item.text, "[wrestlers] " + mod.name + ": " + info.name);
+                        info.ownModel = info.picks.model < 0 && (modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k])));
                         const std::string named = text(j, "based on", "");
-                        const std::string basedOn = info.ownModel || (anyModel && named.empty()) ? std::string("Briggs") : named;
+                        const std::string basedOn =
+                            info.picks.model >= 0 && named.empty() ? guestString(read32(kGameCharacters + kRecordSize * info.picks.model))
+                            : info.ownModel || (anyModel && named.empty() && info.picks.model < 0) ? std::string("Briggs")
+                                                                                                    : named;
                         if (info.ownModel && !named.empty() && upper(named) != "BRIGGS" && told.insert(where + "#based").second)
                             vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name << ": \"based on\": \"" << named
                                                      << "\" isn't used: with a model of its own, Briggs' model stands behind it"
@@ -840,7 +952,11 @@ namespace vendetta_wrestlers
                         w.names.insert(upper(info.name));
                         w.names.insert(upper(info.full));
                         const uint32_t record = g_endRecord++;
-                        const uint32_t looks = info.looksBase + std::min(k, info.looksCount - 1u);
+                        // the record it looks like: a game model named (its render and icon come with it), else "based
+                        // on"'s attire (Briggs' behind a model of its own)
+                        const GamePicks &picks = info.picks;
+                        const uint32_t looks = picks.model >= 0 ? static_cast<uint32_t>(picks.model)
+                                                                : info.looksBase + std::min(k, info.looksCount - 1u);
                         const uint32_t entry = vendetta_store::kCharacterTable + kRecordSize * record;
                         std::memcpy(guest(entry), guest(kGameCharacters + kRecordSize * looks), kRecordSize);
                         write32(entry + 0x00u, guestText(info.full));
@@ -848,10 +964,22 @@ namespace vendetta_wrestlers
                         write32(entry + 0x08u, guestText(info.height));
                         write32(entry + 0x0Cu, guestText(info.weight));
                         write32(entry + 0x18u, kFirstLogoIndex + record - kFirstNewRecord);
+                        // a game wrestler's render / icon named: its number
+                        if (picks.render >= 0)
+                            write32(entry + 0x10u, gameValue(picks.render, 0x10u));
+                        if (picks.icon >= 0)
+                            write32(entry + 0x14u, gameValue(picks.icon, 0x14u));
+                        for (const auto &[part, picked] : {std::pair<const char *, int32_t>{"model", picks.model}, {"render", picks.render},
+                                                           {"icon", picks.icon}, {"logo", picks.logo}})
+                            if (picked >= 0)
+                                std::cerr << "[wrestlers] " << mod.name << ": " << info.name << " (record " << record << "): its " << part
+                                          << " " << pickText(picked) << " (from the game)" << std::endl;
                         // its pictures: the attire's folder first, then the wrestler's
                         AttirePictures pictures;
                         pictures.gameRender = read32(entry + 0x10u);
                         pictures.gameIcon = read32(entry + 0x14u);
+                        if (picks.logo >= 0)
+                            pictures.gameLogo = static_cast<int32_t>(gameLogo(picks.logo));
                         const auto picture = [&](const char *fileName) -> std::filesystem::path
                         {
                             std::error_code ec;
@@ -861,12 +989,12 @@ namespace vendetta_wrestlers
                             return {};
                         };
                         const uint32_t pictureNumber = kPictureBase + record - kFirstNewRecord;
-                        if (const std::filesystem::path png = picture("render.png"); !png.empty())
+                        if (const std::filesystem::path png = picks.render >= 0 ? std::filesystem::path() : picture("render.png"); !png.empty())
                         {
                             pictures.render = vendetta_pictures::add(png, 128u, 256u, 4u);
                             write32(entry + 0x10u, pictureNumber);
                         }
-                        if (const std::filesystem::path png = picture("icon.png"); !png.empty())
+                        if (const std::filesystem::path png = picks.icon >= 0 ? std::filesystem::path() : picture("icon.png"); !png.empty())
                         {
                             pictures.icon = vendetta_pictures::add(png, 64u, 64u, 4u);
                             pictures.shade = vendetta_pictures::add(png, 64u, 64u, 4u, vendetta_pictures::Kind::Shadow);
@@ -878,7 +1006,7 @@ namespace vendetta_wrestlers
                                 vendetta_pictures::want(pictures.shade);
                             }
                         }
-                        if (const std::filesystem::path png = picture("logo.png"); !png.empty())
+                        if (const std::filesystem::path png = picks.logo >= 0 ? std::filesystem::path() : picture("logo.png"); !png.empty())
                             pictures.logo = vendetta_pictures::add(png, 128u, 64u, 4u);
                         g_attirePictures.push_back(pictures);
                         // its own model: the attire's folder first, then the wrestler's; its textures folder likewise
@@ -888,7 +1016,7 @@ namespace vendetta_wrestlers
                             model.wrestler = info.name;
                             for (const std::string &folder : {attireFolders[k], item.text})
                             {
-                                if (folder.empty())
+                                if (folder.empty() || picks.model >= 0)
                                     continue;
                                 if (model.model.empty())
                                     for (const char *modelName : kModelNames)
@@ -903,7 +1031,7 @@ namespace vendetta_wrestlers
                             if (!model.model.empty())
                                 std::cerr << "[wrestlers] " << mod.name << ": " << info.name << " (record " << record << "): its own model "
                                           << model.model.filename().string() << std::endl;
-                            else if (anyModel)
+                            else if (anyModel && picks.model < 0)
                                 vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name << ": attire " << k + 1
                                                          << " has no model of its own (another attire has): Briggs' model shows"
                                                          << std::endl;
@@ -1183,13 +1311,42 @@ namespace vendetta_wrestlers
                                 parts.push_back("moves");
                             }
                         }
+                        // the parts named from game wrestlers (attire.json): a render / icon is its number (the story's
+                        // row too), a model its DATA.BIN entry, a logo the one its unlock index gives
+                        const GamePicks picks = readPicks(mod, attireFolder, folder, here);
+                        if (picks.render >= 0)
+                        {
+                            write32(entry + 0x10u, gameValue(picks.render, 0x10u));
+                            if (row)
+                                write32(row + 0x30u, gameValue(picks.render, 0x10u));
+                            parts.push_back("render " + pickText(picks.render));
+                        }
+                        if (picks.icon >= 0)
+                        {
+                            write32(entry + 0x14u, gameValue(picks.icon, 0x14u));
+                            if (row)
+                                write32(row + 0x34u, gameValue(picks.icon, 0x14u));
+                            parts.push_back("icon " + pickText(picks.icon));
+                        }
+                        if (picks.logo >= 0)
+                            parts.push_back("logo " + pickText(picks.logo));
+                        if (picks.model >= 0)
+                        {
+                            write32(entry + 0x1Cu, gameValue(picks.model, 0x1Cu));
+                            rep.gameModel = true;
+                            parts.push_back("model " + pickText(picks.model));
+                        }
                         // the pictures: drawn from the mod's files over the game's stand-ins, as a new wrestler's
-                        const std::string render = find("render.png"), icon = find("icon.png"), logo = find("logo.png");
-                        if (!render.empty() || !icon.empty() || !logo.empty() || (isAdded && identity))
+                        const std::string render = picks.render >= 0 ? std::string() : find("render.png");
+                        const std::string icon = picks.icon >= 0 ? std::string() : find("icon.png");
+                        const std::string logo = picks.logo >= 0 ? std::string() : find("logo.png");
+                        if (!render.empty() || !icon.empty() || !logo.empty() || picks.logo >= 0 || (isAdded && (identity || picks.any())))
                         {
                             AttirePictures pictures;
                             pictures.gameRender = read32(entry + 0x10u);
                             pictures.gameIcon = read32(entry + 0x14u);
+                            if (picks.logo >= 0)
+                                pictures.gameLogo = static_cast<int32_t>(gameLogo(picks.logo));
                             rep.pictures = static_cast<uint32_t>(g_attirePictures.size());
                             const uint32_t number = kPictureBase + rep.pictures;
                             if (!render.empty())
@@ -1222,7 +1379,6 @@ namespace vendetta_wrestlers
                                 if (id && n == 1u)
                                     vendetta_pictures::want(id);
                             g_attirePictures.push_back(pictures);
-                            identity = identity || !render.empty() || !icon.empty();
                             if (!render.empty() || !icon.empty() || !logo.empty())
                                 parts.push_back("pictures");
                             if (isAdded)
@@ -1232,13 +1388,14 @@ namespace vendetta_wrestlers
                                 write32(entry + 0x18u, rep.unlockIndex);
                             }
                         }
-                        rep.noLogo = identity && logo.empty();
+                        identity = identity || !render.empty() || !icon.empty() || picks.render >= 0 || picks.icon >= 0;
+                        rep.noLogo = identity && logo.empty() && picks.logo < 0;
                         // the model: the attire's folder first, then the folder's; its textures folder likewise
                         rep.model.modName = mod.name;
                         rep.model.wrestler = shown;
                         for (const std::string &f : {attireFolder, folder})
                         {
-                            if (f.empty())
+                            if (f.empty() || picks.model >= 0)
                                 continue;
                             if (rep.model.model.empty())
                                 for (const char *modelName : kModelNames)
@@ -1319,7 +1476,7 @@ namespace vendetta_wrestlers
                         const auto first = g_replaced.find(base);
                         if (const auto own = g_replaced.find(record); own != g_replaced.end() && first != g_replaced.end())
                         {
-                            if (own->second.model.model.empty())
+                            if (own->second.model.model.empty() && !own->second.gameModel)
                                 own->second.model = first->second.model;
                             if (!own->second.wwaz && first->second.slotFile != SIZE_MAX)
                                 g_slotFiles[first->second.slotFile].records.push_back(record);
@@ -1564,13 +1721,14 @@ namespace vendetta_wrestlers
                 (!byRecord && index >= kFirstLogoIndex && index < kFirstLogoIndex + g_attirePictures.size()))
             {
                 const uint32_t attire = index - (byRecord ? kFirstNewRecord : kFirstLogoIndex);
-                const bool own = g_attirePictures[attire].logo && vendetta_pictures::available();
-                setReturnU32(ctx, own ? kPictureBase + attire : kNoLogo);
+                const AttirePictures &pictures = g_attirePictures[attire];
+                const bool own = pictures.logo && vendetta_pictures::available();
+                setReturnU32(ctx, own ? kPictureBase + attire : pictures.gameLogo >= 0 ? static_cast<uint32_t>(pictures.gameLogo) : kNoLogo);
                 returnToCaller(ctx);
                 return;
             }
-            // a replaced attire (by record, or by its unlock index): its own logo, none for a new identity without one,
-            // else the game's
+            // a replaced attire (by record, or by its unlock index): its own logo, a game wrestler's named, none for a
+            // new identity without one, else the game's
             const Replaced *rep = nullptr;
             if (byRecord)
             {
@@ -1584,9 +1742,10 @@ namespace vendetta_wrestlers
             if (rep)
             {
                 const bool own = rep->pictures != ~0u && g_attirePictures[rep->pictures].logo && vendetta_pictures::available();
-                if (own || rep->noLogo)
+                const int32_t named = rep->pictures != ~0u ? g_attirePictures[rep->pictures].gameLogo : -1;
+                if (own || named >= 0 || rep->noLogo)
                 {
-                    setReturnU32(ctx, own ? kPictureBase + rep->pictures : kNoLogo);
+                    setReturnU32(ctx, own ? kPictureBase + rep->pictures : named >= 0 ? static_cast<uint32_t>(named) : kNoLogo);
                     returnToCaller(ctx);
                     return;
                 }

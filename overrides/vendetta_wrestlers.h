@@ -30,6 +30,12 @@
 //     "moveset": { all 128 slots: "none", "game move <number> <name>", a mod's move by its name, or
 //                  { "move": ..., "flags": 0-15 } } }
 //   render.png, icon.png, logo.png      the select pictures (the big render, the grid icon, the name logo)
+//   attire.json     a game wrestler's model, render, icon or logo in place of a file of its own, each named:
+//                   { "model": { "game wrestler": "Spider", "attire": 2 }, "render": { ... }, "icon": { ... },
+//                     "logo": { "game wrestler": "Method Man" } } ("attire" 1 when left out). Only the name is in the
+//                   mod; the game's own is used. A file of the part beside it wins. A named model brings that
+//                   attire's render and icon too, unless they are named or given; no logo (a file or a name) = the
+//                   name typed by the game, as for every wrestler without a logo.
 //   attires\1, attires\2, attires\3    its attires, as many as there are folders, in order to the first missing
 //                   or empty one (none: one attire from the files above). An attire folder can hold any of the files
 //                   above and its own model: model.wrs (the game's own format, as adjmk writes it), model.glb or
