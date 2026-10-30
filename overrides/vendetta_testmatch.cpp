@@ -21,8 +21,8 @@
 // The Ladder, "You've unlocked ...").
 // "record" = a character record (0-62, or a record a mod adds), "attire" = added to it (the menus give the grid slot's
 // first record + the attire); "control" = human / cpu / dummy (a computer player that never presses anything: no
-// attacks, blocks or reversals); "level" = the computer's skill 0-2; "arena" = the stage 0-11 as Choose Stage numbers
-// them.
+// attacks, blocks or reversals); "level" = the computer's skill 0-2; "arena" = the stage as Choose Stage numbers them:
+// 0-11 the game's, 12 on the mods' new arenas in load order (one past the last: stage 0).
 //
 // How (the game's own way in, nothing of the menus touched):
 // - The front end FUN_0013fa98 runs one screen routine a picture by the screen number 0x29E46C (block 0x29E468 + 4).
@@ -62,6 +62,11 @@
 namespace ps2_stubs
 {
     void padScriptHold(bool held); // VENDETTA_PADSCRIPT's clock held or running (the runtime's pad code)
+}
+
+namespace vendetta_arenas
+{
+    uint32_t stageCount(); // the game's 12 stages, then the mods' new arenas (vendetta_arenas.cpp)
 }
 
 namespace vendetta_testmatch
@@ -187,7 +192,7 @@ namespace vendetta_testmatch
             out.count = 4;
         else if (m && m->isString() && m->text != "1-on-1")
             std::cerr << "[testmatch] \"match\" is \"1-on-1\" or \"4-way\": a 1-on-1" << std::endl;
-        out.arena = std::clamp(number(json.find("arena"), 0), 0, 11);
+        out.arena = std::clamp(number(json.find("arena"), 0), 0, 0xFFFF); // checked against the stages when the match starts
         const auto *fighters = json.find("fighters");
         if (!fighters || !fighters->isArray() || fighters->items.size() != size_t(out.count))
         {
@@ -285,6 +290,12 @@ namespace vendetta_testmatch
                            p < count ? vendetta_wrestlers::choiceBase(uint32_t(g_setup.fighters[p].record)) : 0xFFFFFFFFu);
             Ps2FastWrite32(rdram, fe + 0x44 + 4u * p, p < count ? uint32_t(g_setup.fighters[p].attire) : 0u);
             Ps2FastWrite32(rdram, fe + 0x770 + 0x4Cu * p, 0u); // no profile: nothing is saved
+        }
+        if (uint32_t(g_setup.arena) >= vendetta_arenas::stageCount())
+        {
+            std::cerr << "[testmatch] \"arena\" " << g_setup.arena << " is past the last stage ("
+                      << vendetta_arenas::stageCount() - 1u << "): stage 0" << std::endl;
+            g_setup.arena = 0;
         }
         Ps2FastWrite32(rdram, fe + 0x54, uint32_t(g_setup.arena));
         Ps2FastWrite8(rdram, kCpuLevel, uint8_t(level));
