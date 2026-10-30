@@ -116,6 +116,30 @@ namespace vendetta_arenas
         constexpr uint32_t kSetUp = 0x1A1C38u;        // FUN_001a1c38(venue, scene): a venue's set-up, at each venue load
         constexpr uint32_t kMatchSetUp = 0x140298u;   // FUN_00140298(front end, match): Battle's stage -> the match's venue
         constexpr uint32_t kSounds = 0x1B0958u;       // FUN_001b0958(venue, ...): the match's sounds, the set 0x2598C8[venue]
+        // The arenas' sound sets: 13 records of 0x30 bytes (+4 Flex's welcome line, a selector bit of FLEX group Q1; +0x10
+        // engine variable 6; +0x14 read by nothing in the game, now the "NU" test's word (config/patches.toml); +0x18 the
+        // crowd bank's name, char[10]; +0x22 the effects bank's; +0x2C the floor off the ring), picked by the venue
+        // through 0x2598C8 (29 venues, then a spare 0 word: venue 29 gives set 0, which no venue uses)
+        constexpr uint32_t kSoundSets = 0x260228u, kSoundSetBytes = 0x30u, kSoundSetCount = 13u;
+        constexpr uint32_t kVenueSets = 0x2598C8u;
+        constexpr uint32_t kSpareVenue = 29u;
+        constexpr uint32_t kCommentaryOff = 0x554E0000u; // a set's +0x14 with "NU" as letters 3-4: Flex's commentary off
+        constexpr uint32_t kCommentary = 0x29AC24u;    // Flex's commentary on (1) or off (0), set by the sound set-up
+        constexpr uint32_t kFlexLine = 0x1C2B08u;      // FUN_001c2b08(player or -1, event): one of Flex's lines, none while
+                                                       // the commentary 0x29AC24 is off (0x1C2B34)
+        constexpr uint32_t kWelcomeLine = 0x11u;       // its event 0x11: the welcome line, at the fight's start (FUN_001c5960)
+        constexpr uint32_t kChants = 0x1C3750u;        // FUN_001c3750: the crowd's chants (none in sets 11 / 12, 0x1C3798)
+        // Where a match's venue comes from in each mode. Battle: FUN_00140298 (matchSetUp below) writes the load list and
+        // the match block. Story: the fight block (story + 0x330) holds it at + 0x9C (written only by FUN_00170360, the
+        // next fight); FUN_00187e28 copies it into its load list before the load and into the match block after it.
+        // Survival: FUN_00145630 writes the match block's venue (+0xC), then its load list's (-1 keeps the arena), then
+        // loads (0x145CA8). The match block's venue is read only in the match (0x119FF4 the sounds, 0x124388 / 0x1243E8
+        // the fly-in, 0x124540 Survival's intro flag), after the match init.
+        constexpr uint32_t kLoader = 0x165838u;        // FUN_00165838(load list): a match's loads (list + 0 = the venue)
+        constexpr uint32_t kFromBattle = 0x13FED0u;    // its return address in Battle (the call at 0x13FEC8)
+        constexpr uint32_t kFromSurvival = 0x145CB0u;  // in Survival (the call at 0x145CA8)
+        constexpr uint32_t kMatchInit = 0x119D70u;     // FUN_00119d70: the match init, every match
+        constexpr uint32_t kMatchVenue = 0x2361D4u;    // the match block's venue
         // The ring draw's 16 pieces' spots on the floor {x, 0, z} (posts, pads, turnbuckles 0-11 = ids 81-92, the rope sides
         // 12-15): read only by the ring draw FUN_001a2de8, for the fade near the camera (0x1A2F8C) and the far-to-near
         // order (0x1A3284)
@@ -246,6 +270,14 @@ namespace vendetta_arenas
             // arena.json: "sounds" (a game arena whose sound set it uses), "fly-in" (its camera path: {"frames",
             // "keys": [{"frame", "eye": [x, y, z], "target": [x, y, z], "roll", "fov"}]}); missing = the venue it was made from
             uint32_t soundsVenue = ~0u;
+            // "sounds" as the game's pieces mixed: {"crowd", "arena sounds", "flex"}; a piece left out is the made-from
+            // arena's
+            enum class Flex { MadeFrom, Arena, NoWelcomeLine, Silent };
+            bool mixed = false;
+            int crowd = -1;              // 0 big, 1 small indoors, 2 small outdoors, 3 none; -1 the made-from arena's
+            uint32_t arenaSounds = ~0u;  // the game arena whose own sounds (effects bank, floor, loop) it has; ~0u made-from
+            Flex flex = Flex::MadeFrom;
+            uint32_t flexArena = ~0u;    // Flex::Arena: the game arena his welcome line names
             std::vector<uint8_t> flyIn; // the path as the game keeps it: {s32 last frame, u32 keys, keys of 0x24 bytes}
             // Choose Stage: picture.png (the big picture), thumbnail.png, name.png (the name strip), each optional
             uint32_t picture = 0, thumbnail = 0;
@@ -2785,16 +2817,139 @@ namespace vendetta_arenas
                       << std::endl;
         }
 
-        // FUN_001b0958(venue, ...): a mod arena's sounds are the sound set of the game arena its arena.json names
+        // A mixed sound set, put in for the match: the record of the set the arena's own sounds come from, with its crowd
+        // bank, Flex's welcome line and the commentary word changed; or set 0's record as a copy of it when that set is 11
+        // or 12 and there is a crowd (their numbers turn the crowd's chants off; neither has a loop, so nothing tied to a
+        // set's number is lost). Put back at the next match's sound start-up.
+        uint32_t g_changedSet = ~0u;
+        uint8_t g_savedSet[kSoundSetBytes] = {};
+        const ModArena *g_mixed = nullptr; // the mod arena whose mix is in (for Flex's welcome line and the chants)
+        bool g_mixedCrowdless = false;
+        bool g_chantsTold = false;         // the chants' line written this match
+
+        uint8_t *soundSet(uint8_t *rdram, uint32_t set) { return rdram + kSoundSets + kSoundSetBytes * set; }
+
+        void restoreSoundSet(uint8_t *rdram)
+        {
+            if (g_changedSet != ~0u)
+                std::memcpy(soundSet(rdram, g_changedSet), g_savedSet, kSoundSetBytes);
+            g_changedSet = ~0u;
+            g_mixed = nullptr;
+            g_mixedCrowdless = false;
+            g_chantsTold = false;
+        }
+
+        // The mix put in; returns the venue to hand the start-up (it looks the set up by it)
+        uint32_t mixSoundSet(uint8_t *rdram, const ModArena &m)
+        {
+            using Flex = ModArena::Flex;
+            static const char *const banks[] = {"CRBIG", "CRSMINT", "CRSMEXT", "CRNULL"};
+            static const char *const crowds[] = {"a big crowd", "a small crowd indoors", "a small crowd outdoors", "no crowd"};
+            const uint32_t arenaVenue = m.arenaSounds != ~0u ? m.arenaSounds : m.venue;
+            const uint32_t base = word(rdram + kVenueSets + 4u * m.venue), set = word(rdram + kVenueSets + 4u * arenaVenue);
+            if (base >= kSoundSetCount || set >= kSoundSetCount)
+                return arenaVenue; // not the game's tables: left as they are
+            // everything read before anything is written (the sets can be the same)
+            char crowd[10] = {};
+            if (m.crowd >= 0)
+                std::memcpy(crowd, banks[m.crowd], std::strlen(banks[m.crowd]));
+            else
+                std::memcpy(crowd, soundSet(rdram, base) + 0x18u, sizeof(crowd));
+            uint32_t welcome = word(soundSet(rdram, base) + 4u), commentary = word(soundSet(rdram, base) + 0x14u);
+            if (m.flex == Flex::Arena)
+            {
+                const uint32_t flexSet = word(rdram + kVenueSets + 4u * m.flexArena);
+                if (flexSet < kSoundSetCount)
+                    welcome = word(soundSet(rdram, flexSet) + 4u);
+                commentary = 0u;
+            }
+            else if (m.flex == Flex::NoWelcomeLine)
+                commentary = 0u;
+            else if (m.flex == Flex::Silent)
+                commentary = kCommentaryOff;
+            const bool crowdless = std::memcmp(crowd, "CRNULL", 6) == 0;
+            const bool asSetZero = (set == 11u || set == 12u) && !crowdless && word(rdram + kVenueSets + 4u * kSpareVenue) == 0u;
+            const uint32_t slot = asSetZero ? 0u : set;
+            uint8_t *record = soundSet(rdram, slot);
+            std::memcpy(g_savedSet, record, kSoundSetBytes);
+            g_changedSet = slot;
+            if (asSetZero)
+                std::memcpy(record, soundSet(rdram, set), kSoundSetBytes);
+            std::memcpy(record + 0x18u, crowd, sizeof(crowd));
+            std::memcpy(record + 4u, &welcome, 4);
+            std::memcpy(record + 0x14u, &commentary, 4);
+            g_mixed = &m;
+            g_mixedCrowdless = crowdless;
+            std::string flex;
+            switch (m.flex)
+            {
+            case Flex::MadeFrom: flex = "as in " + venueName(m.venue); break;
+            case Flex::Arena: flex = "the welcome line for " + venueName(m.flexArena); break;
+            case Flex::NoWelcomeLine: flex = "no welcome line"; break;
+            case Flex::Silent: flex = "silent"; break;
+            }
+            std::cerr << "[arenas] " << m.what << ": its sounds mixed: "
+                      << (m.crowd >= 0 ? std::string(crowds[m.crowd]) : "the crowd of " + venueName(m.venue)) << " ("
+                      << std::string(crowd, strnlen(crowd, sizeof(crowd))) << "), the arena sounds of " << venueName(arenaVenue)
+                      << " (set " << set << (asSetZero ? ", put in as set 0" : "") << "), Flex " << flex << std::endl;
+            return asSetZero ? kSpareVenue : arenaVenue;
+        }
+
+        // FUN_001b0958(venue, ...): a mod arena's sounds are the sound set of the game arena its arena.json names, or that
+        // set's pieces mixed
         PS2Runtime::RecompiledFunction g_originalSounds = nullptr;
         void sounds(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
-            if (g_current && g_current->soundsVenue != ~0u && getRegU32(ctx, 4) == g_current->venue)
+            restoreSoundSet(rdram);
+            if (g_current && g_current->mixed && getRegU32(ctx, 4) == g_current->venue)
+                SET_GPR_U32(ctx, 4, mixSoundSet(rdram, *g_current));
+            else if (g_current && g_current->soundsVenue != ~0u && getRegU32(ctx, 4) == g_current->venue)
             {
                 std::cerr << "[arenas] " << g_current->what << ": the sounds of venue " << g_current->soundsVenue << std::endl;
                 SET_GPR_U32(ctx, 4, g_current->soundsVenue);
             }
             g_originalSounds(rdram, ctx, runtime);
+        }
+
+        // FUN_001c2b08(player, event): a mixed set whose Flex has no welcome line leaves that one line out (event 0x11, at
+        // the fight's start); his other lines as usual. Silent needs nothing here: the commentary is off, and this routine
+        // plays nothing then.
+        PS2Runtime::RecompiledFunction g_originalFlexLine = nullptr;
+        void flexLine(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_mixed && getRegU32(ctx, 5) == kWelcomeLine)
+            {
+                const bool leftOut = g_mixed->flex == ModArena::Flex::NoWelcomeLine;
+                std::cerr << "[arenas] " << g_mixed->what << ": Flex's welcome line "
+                          << (leftOut ? "left out (his commentary on)"
+                                      : Ps2FastRead32(rdram, kCommentary) ? "asked for (his commentary on)"
+                                                                          : "not played (his commentary off)")
+                          << std::endl;
+                if (leftOut)
+                {
+                    SET_GPR_U32(ctx, 2, 0u);
+                    ctx->pc = getRegU32(ctx, 31);
+                    return;
+                }
+            }
+            g_originalFlexLine(rdram, ctx, runtime);
+        }
+
+        // FUN_001c3750: the crowd's chants follow the crowd: none without one (the game's rule for its two crowdless sets,
+        // which it tests by their numbers, so a mixed set's number can't tell)
+        PS2Runtime::RecompiledFunction g_originalChants = nullptr;
+        void chants(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_mixed && g_mixedCrowdless)
+            {
+                if (!g_chantsTold) // the game asks for a chant every picture
+                    std::cerr << "[arenas] " << g_mixed->what << ": the crowd's chants left out (no crowd)" << std::endl;
+                g_chantsTold = true;
+                SET_GPR_U32(ctx, 2, 1u); // as the game's own return for sets 11 / 12
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            g_originalChants(rdram, ctx, runtime);
         }
 
         // FUN_00140298(front end, match): Battle's match, the stage picked on Choose Stage made its venue (front end
@@ -2827,6 +2982,48 @@ namespace vendetta_arenas
                       << " loaded behind it" << std::endl;
         }
 
+        // The mod arena a venue's fights show in Story and Survival: its stage's replacement, and for Def Jam's four story
+        // versions (24-27, the boss fights) the arena that replaced Def Jam; null for the game's own
+        ModArena *replacementFor(uint32_t venue)
+        {
+            const uint32_t stage = venue >= 24u && venue <= 27u ? 10u : venue;
+            for (ModArena &m : g_modArenas)
+                if (!m.isNew && m.stage == stage)
+                    return &m;
+            return nullptr;
+        }
+
+        // FUN_00165838(load list): Story's and Survival's loads (Battle's list holds the mod's venue already): a venue
+        // whose replacement was made from another venue, or one of Def Jam's story versions while Def Jam is replaced, loads
+        // the mod's venue behind it. Only the list is changed, a copy: the story's fight block and Survival's own records
+        // keep the game's venue (a fight loaded again is changed again; nothing of it reaches a save).
+        PS2Runtime::RecompiledFunction g_originalLoader = nullptr;
+        void loader(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t list = getRegU32(ctx, 4), from = getRegU32(ctx, 31);
+            const uint32_t venue = Ps2FastRead32(rdram, list);
+            if (from != kFromBattle && venue < 28u)
+                if (ModArena *m = replacementFor(venue); m && m->venue != venue)
+                {
+                    Ps2FastWrite32(rdram, list, m->venue);
+                    g_pending = m;
+                    std::cerr << "[arenas] " << m->what << ": " << (from == kFromSurvival ? "Survival" : "the story")
+                              << " loads venue " << venue << ": venue " << m->venue << " loaded behind it" << std::endl;
+                }
+            g_originalLoader(rdram, ctx, runtime);
+        }
+
+        // FUN_00119d70 (every match, before anything reads the match block's venue): the story and Survival write their
+        // own venue there (the story after its load), so it becomes the loaded mod arena's (its sounds, its fly-in)
+        PS2Runtime::RecompiledFunction g_originalMatchInit = nullptr;
+        void matchInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t venue = Ps2FastRead32(rdram, kMatchVenue);
+            if (g_current && venue != g_current->venue && venue < 28u && replacementFor(venue) == g_current)
+                Ps2FastWrite32(rdram, kMatchVenue, g_current->venue);
+            g_originalMatchInit(rdram, ctx, runtime);
+        }
+
         void setUp(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t venue = getRegU32(ctx, 4);
@@ -2851,8 +3048,8 @@ namespace vendetta_arenas
                 static std::unordered_set<const ModArena *> told;
                 if (told.insert(g_current).second)
                     vendetta_mods::problem() << "[arenas] " << g_current->what << ": made from another arena (venue "
-                                             << g_current->venue << "): it replaces its arena in Battle only for now, here the "
-                                             << "game's own arena is used" << std::endl;
+                                             << g_current->venue << "), but venue " << venue << " was loaded (a load our code "
+                                             << "doesn't know): the game's own arena is used there" << std::endl;
                 g_current = nullptr;
             }
             if (g_current && !loadModArena(rdram, *g_current))
@@ -2883,7 +3080,7 @@ namespace vendetta_arenas
                 name = name.substr(4);
             static const std::pair<const char *, uint32_t> names[] = {
                 {"bounty club", 0}, {"junkyard", 1}, {"warehouse", 2}, {"grimeyville", 3}, {"dragon house", 4},
-                {"da bridge", 5}, {"club luda", 6}, {"face club", 7}, {"face club after hours", 8}, {"sanctuary", 9},
+                {"da bridge", 5}, {"club luda", 6}, {"face club", 7}, {"face club after hours", 8}, {"after hours", 8}, {"sanctuary", 9},
                 {"def jam", 10}, {"def jam vendetta", 11}};
             for (const auto &[n, v] : names)
                 if (name == n)
@@ -2891,8 +3088,67 @@ namespace vendetta_arenas
             return ~0u;
         }
 
-        // arena.json: the sounds (a game arena named) and the fly-in (camera keys). Missing (the file or a key) or
-        // unusable: those of the arena its model was made from (the venue loaded behind it), with a mods.log line.
+        // arena.json's "sounds" as the game's pieces: {"crowd": "big" | "small indoors" | "small outdoors" | "none",
+        // "arena sounds": a game arena (its effects bank: its background recordings, its loop, its floor outside), "flex": a
+        // game arena (his welcome line for it, then his commentary) | "no welcome line" | "silent" (nothing from him all
+        // match)}. A piece left out or unusable: the made-from arena's, with a mods.log line.
+        void readSoundPieces(ModArena &m, const vendetta_mods::Json &sounds, const std::string &base)
+        {
+            m.mixed = true;
+            auto lower = [](std::string text) {
+                std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                return text;
+            };
+            static const char *const crowds[] = {"big", "small indoors", "small outdoors", "none"};
+            if (const vendetta_mods::Json *crowd = sounds.find("crowd"))
+            {
+                for (int k = 0; k < 4 && crowd->isString(); ++k)
+                    if (lower(crowd->text) == crowds[k])
+                        m.crowd = k;
+                if (m.crowd < 0)
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"crowd\" is not big, small indoors, "
+                                             << "small outdoors or none: the crowd of " << base << std::endl;
+            }
+            else
+                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"sounds\" has no \"crowd\": the crowd of "
+                                         << base << std::endl;
+            if (const vendetta_mods::Json *arena = sounds.find("arena sounds"))
+            {
+                const uint32_t venue = arena->isString() ? venueNamed(arena->text) : ~0u;
+                if (venue == ~0u)
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"arena sounds\" is not one of the "
+                                             << "game's arenas: those of " << base << std::endl;
+                else
+                    m.arenaSounds = venue;
+            }
+            else
+                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"sounds\" has no \"arena sounds\": those of "
+                                         << base << std::endl;
+            if (const vendetta_mods::Json *flex = sounds.find("flex"))
+            {
+                const std::string text = flex->isString() ? lower(flex->text) : std::string();
+                const uint32_t venue = flex->isString() ? venueNamed(flex->text) : ~0u;
+                if (text == "no welcome line")
+                    m.flex = ModArena::Flex::NoWelcomeLine;
+                else if (text == "silent")
+                    m.flex = ModArena::Flex::Silent;
+                else if (venue != ~0u)
+                {
+                    m.flex = ModArena::Flex::Arena;
+                    m.flexArena = venue;
+                }
+                else
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"flex\" is not one of the game's "
+                                             << "arenas, \"no welcome line\" or \"silent\": Flex as in " << base << std::endl;
+            }
+            else
+                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"sounds\" has no \"flex\": Flex as in "
+                                         << base << std::endl;
+        }
+
+        // arena.json: the sounds (a game arena named, or its pieces mixed) and the fly-in (camera keys). Missing (the file
+        // or a key) or unusable: those of the arena its model was made from (the venue loaded behind it), with a mods.log
+        // line.
         void readArenaJson(ModArena &m)
         {
             const std::string base = "the arena it was made from (" + venueName(m.venue) + ")";
@@ -2911,7 +3167,9 @@ namespace vendetta_arenas
                                          << "): the sounds and the fly-in of " << base << std::endl;
                 return;
             }
-            if (const vendetta_mods::Json *sounds = json.find("sounds"))
+            if (const vendetta_mods::Json *sounds = json.find("sounds"); sounds && sounds->isObject())
+                readSoundPieces(m, *sounds, base);
+            else if (sounds)
             {
                 const uint32_t venue = sounds->isString() ? venueNamed(sounds->text) : ~0u;
                 if (venue == ~0u)
@@ -3132,7 +3390,9 @@ namespace vendetta_arenas
                               << " (made from venue " << m.venue << "; "
                               << m.pictures.size()
                               << " textures of its own; " << (m.flyIn.empty() ? "the arena's fly-in" : "its own fly-in")
-                              << ", the sounds of venue " << (m.soundsVenue == ~0u ? m.venue : m.soundsVenue) << ")" << std::endl;
+                              << (m.mixed ? std::string(", its sounds mixed from the game's pieces")
+                                          : ", the sounds of venue " + std::to_string(m.soundsVenue == ~0u ? m.venue : m.soundsVenue))
+                              << ")" << std::endl;
                     if (!isNew)
                         replacedBy[venue] = mod.name;
                     g_modArenas.push_back(std::move(m));
@@ -3154,6 +3414,16 @@ namespace vendetta_arenas
     void install(PS2Runtime &runtime)
     {
         g_runtime = &runtime;
+        // The sound set-up's "NU" test (Flex's commentary off for a crowdless set) reads a set's +0x14 since
+        // config/patches.toml: each game set gets its crowd name's first word there, so every game set keeps its
+        // commentary as before (the program's data is in place before it runs; nothing else reads +0x14)
+        for (uint32_t set = 0; set < kSoundSetCount; ++set)
+        {
+            uint8_t *record = vendetta_store::host(kSoundSets + kSoundSetBytes * set);
+            std::memcpy(record + 0x14u, record + 0x18u, 4);
+        }
+        if (std::memcmp(vendetta_store::host(kSoundSets + kSoundSetBytes * 11u) + 0x18u, "CRNULL", 6) != 0)
+            std::cerr << "[arenas] sound set 11's crowd isn't CRNULL: not the original program?" << std::endl;
         // the 3-D crowd is always read from the store (the game's own copied there at each venue's set-up)
         const uint32_t crowdAt = kCrowd - vendetta_store::kFixedArea, clipsAt = vendetta_store::kCrowdClips - vendetta_store::kFixedArea;
         const uint32_t sceneAt = vendetta_store::kArenaScene - vendetta_store::kFixedArea;
@@ -3191,6 +3461,21 @@ namespace vendetta_arenas
             runtime.replaceFunction(kPicture, picture);
         if (!g_modArenas.empty() && (g_originalMatchSetUp = runtime.lookupFunction(kMatchSetUp)) != nullptr)
             runtime.replaceFunction(kMatchSetUp, matchSetUp);
+        // Story and Survival show a replaced arena too (Battle's is matchSetUp's)
+        if (std::any_of(g_modArenas.begin(), g_modArenas.end(), [](const ModArena &m) { return !m.isNew; }) &&
+            (g_originalLoader = runtime.lookupFunction(kLoader)) != nullptr &&
+            (g_originalMatchInit = runtime.lookupFunction(kMatchInit)) != nullptr)
+        {
+            runtime.replaceFunction(kLoader, loader);
+            runtime.replaceFunction(kMatchInit, matchInit);
+        }
+        if (std::any_of(g_modArenas.begin(), g_modArenas.end(), [](const ModArena &m) { return m.mixed; }))
+        {
+            if ((g_originalFlexLine = runtime.lookupFunction(kFlexLine)) != nullptr)
+                runtime.replaceFunction(kFlexLine, flexLine);
+            if ((g_originalChants = runtime.lookupFunction(kChants)) != nullptr)
+                runtime.replaceFunction(kChants, chants);
+        }
         if (!g_modArenas.empty() && (g_originalPictureAndName = runtime.lookupFunction(kPictureAndName)) != nullptr)
             runtime.replaceFunction(kPictureAndName, pictureAndName);
         const std::string v = off ? "" : value;

@@ -193,4 +193,10 @@ instructions = [
   { address = "0x0014e8a8", value = "0x3c130335" }, # addiu $s3, $s0, 0xF48 -> lui $s3, 0x335
   { address = "0x0014ea54", value = "0x8e050f78" }, # addiu $a1, $zero, 6 -> lw $a1, 0xF78($s0): the window's last start
   { address = "0x0014ec30", value = "0x8e030f7c" }, # addiu $v1, $zero, 12 -> lw $v1, 0xF7C($s0): Random's count
+  # A mod arena's sound set mixes the game's pieces (overrides/vendetta_arenas.cpp): Flex's commentary follows its own
+  # choice, not the crowd bank's name. The sound set-up FUN_001c0968 turns the commentary (0x29AC24) off when the set's
+  # crowd name has "NU" as letters 3-4 (CRNULL); the test now reads the set's +0x14 (read by nothing else: its only
+  # reader, the routine at 0x1C1D40, is never called), which the runtime fills with each game set's crowd name's first
+  # word, so the game's sets behave as before
+  { address = "0x001c0b14", value = "0x8cc20014" }, # lw $v0, 0x18($a2) -> 0x14($a2) (FUN_001c0968, the "NU" test)
 ]
