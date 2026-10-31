@@ -23,7 +23,7 @@ public partial class SettingsViewModel : ObservableObject
         nameof(ModeIndex), nameof(Screen), nameof(Maximised), nameof(Resolution), nameof(Refresh), nameof(VsyncIndex),
         nameof(ShapeIndex), nameof(RendererIndex), nameof(ScaleIndex), nameof(FilterIndex), nameof(Sharpening),
         nameof(Volume), nameof(Reverb), nameof(Multitap), nameof(Vibration1), nameof(Vibration2), nameof(Vibration3),
-        nameof(Vibration4), nameof(HighPoly), nameof(Sharp2D), nameof(KeyboardIndex), nameof(CheckUpdates), nameof(CameraIndex),
+        nameof(Vibration4), nameof(Sharp2D), nameof(KeyboardIndex), nameof(CheckUpdates), nameof(CameraIndex),
         nameof(UnlockAll), nameof(MatchSpeedIndex), nameof(CustomSpeed), nameof(CustomMatchSpeed),
     };
 
@@ -126,7 +126,6 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _scaleIndex;
     [ObservableProperty] private int _filterIndex;
     [ObservableProperty] private double _sharpening;
-    [ObservableProperty] private bool _highPoly;
     [ObservableProperty] private bool _sharp2D;
     /// <summary>The fight camera: 0 Def Jam Vendetta (the game's own), 1 WWF No Mercy, 2 Wrestle Kingdom 2.</summary>
     [ObservableProperty] private int _cameraIndex;
@@ -311,7 +310,6 @@ public partial class SettingsViewModel : ObservableObject
             ScaleIndex = Math.Max(0, Array.IndexOf(Scales, s.Scale));
             FilterIndex = Math.Max(0, Array.IndexOf(Filters, s.Filter));
             Sharpening = s.Sharpening;
-            HighPoly = s.HighPoly;
             Sharp2D = s.Sharp2D;
             CameraIndex = Math.Max(0, Array.IndexOf(Cameras, s.Camera));
             Volume = s.Volume;
@@ -406,7 +404,6 @@ public partial class SettingsViewModel : ObservableObject
         Scale = Scales[Math.Clamp(ScaleIndex, 0, 4)],
         Filter = Filters[Math.Clamp(FilterIndex, 0, 2)],
         Sharpening = (int)Math.Round(Sharpening),
-        HighPoly = HighPoly,
         Sharp2D = Sharp2D,
         Camera = Cameras[Math.Clamp(CameraIndex, 0, 2)],
         Volume = (int)Math.Round(Volume),

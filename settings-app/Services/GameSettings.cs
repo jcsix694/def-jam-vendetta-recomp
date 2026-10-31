@@ -27,7 +27,6 @@ public sealed class GameSettings
     public int Scale = 16;                  // 1 2 4 8 16 (16 the default)
     public string Filter = "fsr";           // fsr | smooth | blocky
     public int Sharpening = 75;             // 0-100
-    public bool HighPoly = true;            // High Poly wrestlers and arenas in every match
     public bool Sharp2D = true;             // the HUD, text and menus in the 3-D's detail
     public string Camera = "vendetta";      // the fight camera: vendetta (the game's own) | nomercy | wk2
     // [sound]
@@ -74,8 +73,6 @@ public sealed class GameSettings
         "filter = \"fsr\"           # scaling to the window: \"fsr\", \"smooth\" or \"blocky\"\n" +
         "sharpening = 75          # 0-100, with \"fsr\"\n" +
         "sharp_2d = true          # the HUD, text and menus in the same detail as the 3-D (as PCSX2 upscales them); false = as on the PS2\n" +
-        "high_poly = true         # every wrestler and arena at full detail in every match; false = as on the PS2\n" +
-        "                         # (lower-detail wrestlers and arenas in 3- and 4-fighter matches)\n" +
         "camera = \"vendetta\"      # the camera in matches: \"vendetta\" (the game's own), \"nomercy\" (WWF No Mercy's\n" +
         "                         # style) or \"wk2\" (Wrestle Kingdom 2's style)\n" +
         "\n" +
@@ -138,7 +135,6 @@ public sealed class GameSettings
                     break;
                 case "graphics.filter": s.Filter = OneOf(value, s.Filter, "fsr", "smooth", "blocky"); break;
                 case "graphics.sharpening": s.Sharpening = Int(value, s.Sharpening, 0, 100); break;
-                case "graphics.high_poly": s.HighPoly = Bool(value, s.HighPoly); break;
                 case "graphics.sharp_2d": s.Sharp2D = Bool(value, s.Sharp2D); break;
                 case "graphics.camera": s.Camera = OneOf(value, s.Camera, "vendetta", "nomercy", "wk2"); break;
                 case "sound.volume": s.Volume = Int(value, s.Volume, 0, 100); break;
@@ -198,7 +194,6 @@ public sealed class GameSettings
             ("graphics", "filter", Quote(Filter)),
             ("graphics", "sharpening", Sharpening.ToString(CultureInfo.InvariantCulture)),
             ("graphics", "sharp_2d", Sharp2D ? "true" : "false"),
-            ("graphics", "high_poly", HighPoly ? "true" : "false"),
             ("graphics", "camera", Quote(Camera)),
             ("sound", "volume", Volume.ToString(CultureInfo.InvariantCulture)),
             ("sound", "reverb", Reverb ? "true" : "false"),

@@ -122,8 +122,7 @@ version. Turn both checks off under About › Check for updates automatically.
 
 - **Display:** window or borderless, which screen, VSync, and
   widescreen, 4:3 or stretched.
-- **Graphics:** graphics card or CPU, scale 1× to 16×, Sharp 2D, FSR, smooth or blocky scaling with sharpening,
-  and High Poly in every match.
+- **Graphics:** graphics card or CPU, scale 1× to 16×, Sharp 2D, and FSR, smooth or blocky scaling with sharpening.
 - **Sound:** volume and the arena reverb.
 - **Controls:** up to 4 players, each player's controller and vibration, which player the keyboard plays as, and what
   every button does.
@@ -207,7 +206,7 @@ The game reads `settings.toml` from its folder. A switch set before `run.bat` wi
 | `VENDETTA_FILTER=fsr/bilinear/nearest` | scaling to the window (`filter`), and `VENDETTA_SHARPEN=0..2` for FSR's sharpening |
 | `VENDETTA_GPU=<number or name>` | which graphics card, e.g. `nvidia` |
 | `VENDETTA_WIDESCREEN=16:9/21:9/16:10/1` | the match's view widened (`shape`) |
-| `VENDETTA_UPSCALE_SPRITES=1/0` · `VENDETTA_HIGHPOLY=1/0` | Sharp 2D (`sharp_2d`) · High Poly in every match (`high_poly`) |
+| `VENDETTA_UPSCALE_SPRITES=1/0` | Sharp 2D (`sharp_2d`) |
 | `VENDETTA_KEYBOARD=1..4/0` | the keyboard's player (`keyboard`, 0 = nobody) |
 | `VENDETTA_SPU_INTERP=linear` | the sound chip's voices interpolated linearly instead of the PS2's Gaussian |
 | `VENDETTA_CAMERA=vendetta/nomercy/wk2` | the camera style (`camera`) |

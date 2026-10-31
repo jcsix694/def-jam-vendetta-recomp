@@ -1,4 +1,4 @@
-// Def Jam Vendetta (USA, SLUS-20639) - High Poly in every match (VENDETTA_HIGHPOLY=1; settings.toml graphics.high_poly).
+// Def Jam Vendetta (USA, SLUS-20639) - High Poly in every match, always (VENDETTA_HIGHPOLY=0 only for tests).
 // Copied into ps2xRuntime/src/runner/ by tools/sync_generated.py; edit this file in the repo's overrides/ folder.
 //
 // The game keeps two of everything for its 3- and 4-fighter matches, made to fit the PS2: each wrestler's model file
@@ -19,7 +19,8 @@
 //   turned back into its main arena (17 -> 5, 20 -> 8); 24-27 stay.
 //
 // A venue reaches only the chunk lookup, the per-venue routine switches, venue -> stage and venue -> sound set, so
-// the main arena's number is all that changes. Unset or 0: the PS2's behaviour.
+// the main arena's number is all that changes. Always on: a mod's wrestlers and arenas replace only the High Poly
+// ones, so the Low Poly copies are never used. VENDETTA_HIGHPOLY=0: the PS2's behaviour, for tests.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 
@@ -88,7 +89,7 @@ namespace vendetta_highpoly
     bool enabled()
     {
         const char *value = std::getenv("VENDETTA_HIGHPOLY");
-        return value && *value && value[0] != '0';
+        return !value || !*value || value[0] != '0';
     }
 
     void install(PS2Runtime &runtime)
