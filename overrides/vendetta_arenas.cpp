@@ -266,18 +266,23 @@ namespace vendetta_arenas
             std::vector<uint8_t> file;       // model.arena, read at the arena's load (only the current arena's kept)
             uint32_t scene = 0, sceneBytes = 0, textures = 0, texturesBytes = 0;
             uint32_t people = 0, peopleBytes = 0, clips = 0, clipsBytes = 0;
+            // the stand-in in the store: the scene the game is given (kArenaScene, or the fuller list of parts after it
+            // when the file leaves parts of its venue out), its bytes from kArenaScene, and the empty parts put in for
+            // the ones left out (nothing drawn there)
+            uint32_t sceneAt = 0, standInBytes = 0, emptyFrom = 0, emptyTo = 0;
             std::map<uint32_t, std::filesystem::path> pictures; // a texture's GS address (TBP) -> its PNG
             // arena.json: "sounds" (a game arena whose sound set it uses), "fly-in" (its camera path: {"frames",
             // "keys": [{"frame", "eye": [x, y, z], "target": [x, y, z], "roll", "fov"}]}); missing = the venue it was made from
             uint32_t soundsVenue = ~0u;
             // "sounds" as the game's pieces mixed: {"crowd", "arena sounds", "flex"}; a piece left out is the made-from
             // arena's
-            enum class Flex { MadeFrom, Arena, NoWelcomeLine, Silent };
+            enum class Flex { MadeFrom, Arena, Unused, NoWelcomeLine, Silent };
             bool mixed = false;
             int crowd = -1;              // 0 big, 1 small indoors, 2 small outdoors, 3 none; -1 the made-from arena's
             uint32_t arenaSounds = ~0u;  // the game arena whose own sounds (effects bank, floor, loop) it has; ~0u made-from
             Flex flex = Flex::MadeFrom;
             uint32_t flexArena = ~0u;    // Flex::Arena: the game arena his welcome line names
+            uint32_t flexUnused = 0;     // Flex::Unused: which of his welcome lines no arena names (1, 2, 3: selectors 1, 3, 8)
             std::vector<uint8_t> flyIn; // the path as the game keeps it: {s32 last frame, u32 keys, keys of 0x24 bytes}
             // Choose Stage: picture.png (the big picture), thumbnail.png, name.png (the name strip), each optional
             uint32_t picture = 0, thumbnail = 0;
@@ -598,8 +603,16 @@ namespace vendetta_arenas
         bool inScene(const uint8_t *rdram, uint32_t object)
         {
             const uint32_t scene = Ps2FastRead32(rdram, kScenePointer);
-            const uint32_t bytes = g_current && scene == vendetta_store::kArenaScene ? g_current->sceneBytes : kSceneBytes;
-            return scene && object >= scene && object < scene + bytes;
+            if (g_current && scene == g_current->sceneAt)
+                return object >= vendetta_store::kArenaScene &&
+                       object < vendetta_store::kArenaScene + g_current->standInBytes;
+            return scene && object >= scene && object < scene + kSceneBytes;
+        }
+
+        // One of the empty parts a mod arena's stand-in has for a part of its venue the file leaves out: drawn as nothing
+        bool emptyPart(uint32_t object)
+        {
+            return g_current && object >= g_current->emptyFrom && object < g_current->emptyTo;
         }
 
         // ------------------------------------------------------------------ the textures
@@ -1442,7 +1455,7 @@ namespace vendetta_arenas
         {
             const uint32_t object = getRegU32(ctx, 4);
             const bool mod = modOnly(); // a mod's arena: always ours (the game's would draw its stand-in: nothing)
-            if (mod && object == 0u)
+            if (mod && (object == 0u || emptyPart(object)))
                 return true; // a part the arena's routine asks for and the mod hasn't: skipped (the game would draw address 0)
             if ((g_mode == Mode::Off && !mod) || !inScene(rdram, object))
                 return false;
@@ -1844,6 +1857,11 @@ namespace vendetta_arenas
         {
             const uint32_t object = getRegU32(ctx, 4), matrix = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
             const bool mod = modOnly();
+            if (mod && emptyPart(object))
+            {
+                ctx->pc = ra; // a post the mod's file leaves out: nothing drawn
+                return;
+            }
             if (g_mode == Mode::Off && !mod)
             {
                 g_originalDrawPost(rdram, ctx, runtime);
@@ -1910,6 +1928,11 @@ namespace vendetta_arenas
                 // a mod arena's part that isn't there: never the game's routine (it would read from address 0)
                 skipUnreadable(rdram, 0u, ra == kFromCrowd ? "a crowd person" : "a rope");
                 ctx->pc = ra;
+                return;
+            }
+            if (arena && mod && emptyPart(part))
+            {
+                ctx->pc = ra; // the rope the mod's file leaves out: nothing drawn
                 return;
             }
             if (!arena || part == 0u || (g_mode == Mode::Off && !mod))
@@ -2006,7 +2029,7 @@ namespace vendetta_arenas
                 const uint32_t entry = scene + 0x14u + 8u * i;
                 const int32_t id = static_cast<int32_t>(Ps2FastRead32(rdram, entry));
                 const uint32_t object = entry + 4u + Ps2FastRead32(rdram, entry + 4u);
-                if (!inScene(rdram, object))
+                if (!inScene(rdram, object) || emptyPart(object))
                     continue;
                 if (id == -1)
                 {
@@ -2523,48 +2546,162 @@ namespace vendetta_arenas
         // draw finds them at the same offset in the mod's file): the meshes' batches, the posts' vertices and triangles
         // (ids 81-92, the High Poly venues' format), the rope's batches; the directory, the lights (LIT), the picture cards
         // (BBD), the header (the rope spring) and every object's own header and setup rows kept.
+        // One object of a copied scene (part `id` at `object`) without its triangles
+        void zeroObject(uint8_t *copy, uint32_t bytes, uint32_t object, int32_t id, bool highPoly)
+        {
+            if (id < 0 || object < 0x14u || uint64_t(object) + 0x80u > bytes)
+                return; // the picture cards (-1), the lights (-2), or nothing
+            if (highPoly && id >= 81 && id <= 92)
+            {
+                const uint64_t end = uint64_t(object) + 16u + 64ull * word(copy + object) + 6ull * word(copy + object + 4u);
+                if (end <= bytes)
+                    std::memset(copy + object + 16u, 0, static_cast<size_t>(end - object - 16u));
+                return;
+            }
+            bool zeroHead = true; // a mesh: {QWC, 0x7C zero bytes}, then its stream
+            for (uint32_t k = 4; k < 0x80u && zeroHead; k += 4)
+                zeroHead = word(copy + object + k) == 0u;
+            const uint32_t qwc = word(copy + object);
+            if (zeroHead && qwc && uint64_t(object) + 0x80u + 16ull * qwc <= bytes)
+                zeroBatches(copy + object + 0x80u, 16u * qwc);
+            else if (id == 2)
+                zeroPart(copy, bytes, object); // the rope: a model part
+        }
+
         void zeroScene(uint8_t *copy, uint32_t bytes, bool highPoly)
         {
             const uint32_t count = std::min<uint32_t>(word(copy), (bytes - std::min<uint32_t>(bytes, 0x14u)) / 8u);
             for (uint32_t i = 0; i < count; ++i)
             {
                 const uint32_t entry = 0x14u + 8u * i;
-                const int32_t id = static_cast<int32_t>(word(copy + entry));
-                const uint32_t object = entry + 4u + word(copy + entry + 4u);
-                if (id < 0 || object < 0x14u || uint64_t(object) + 0x80u > bytes)
-                    continue; // the picture cards (-1), the lights (-2), or nothing
-                if (highPoly && id >= 81 && id <= 92)
-                {
-                    const uint64_t end = uint64_t(object) + 16u + 64ull * word(copy + object) + 6ull * word(copy + object + 4u);
-                    if (end <= bytes)
-                        std::memset(copy + object + 16u, 0, static_cast<size_t>(end - object - 16u));
-                    continue;
-                }
-                bool zeroHead = true; // a mesh: {QWC, 0x7C zero bytes}, then its stream
-                for (uint32_t k = 4; k < 0x80u && zeroHead; k += 4)
-                    zeroHead = word(copy + object + k) == 0u;
-                const uint32_t qwc = word(copy + object);
-                if (zeroHead && qwc && uint64_t(object) + 0x80u + 16ull * qwc <= bytes)
-                    zeroBatches(copy + object + 0x80u, 16u * qwc);
-                else if (id == 2)
-                    zeroPart(copy, bytes, object); // the rope: a model part
+                zeroObject(copy, bytes, entry + 4u + word(copy + entry + 4u), static_cast<int32_t>(word(copy + entry)),
+                           highPoly);
             }
         }
 
-        // The ids in a scene's directory whose objects lie inside it (empty: not a scene)
-        std::vector<int32_t> sceneIds(const uint8_t *scene, uint32_t bytes)
+        // A part's bytes, told from the part itself: the picture cards and the lights {"BBD " / "LIT ", the bytes after
+        // these 8}, a post (ids 81-92 in the High Poly venues) {vertices, triangles, ..} + 64 v + 6 t, a mesh {QWC, 0x7C
+        // zero bytes} + QWC quadwords, the rope a model part {stream offset, stream bytes, ..}; never past `limit` (the next
+        // part, or the scene's end), which is also the size of anything else (every game scene's parts are one of these
+        // but the four leftovers no code looks up: venue 5's 49, 249, 349 and venue 28's 1)
+        uint32_t partBytes(const uint8_t *scene, uint32_t object, uint32_t limit, int32_t id, bool highPoly)
         {
-            std::vector<int32_t> ids;
+            if (object + 16u > limit)
+                return 0u;
+            const uint32_t room = limit - object;
+            const uint8_t *p = scene + object;
+            uint64_t size = 0;
+            if (std::memcmp(p, "BBD ", 4) == 0 || std::memcmp(p, "LIT ", 4) == 0)
+                size = 8ull + word(p + 4u);
+            else if (highPoly && id >= 81 && id <= 92)
+                size = 16ull + 64ull * word(p) + 6ull * word(p + 4u);
+            else
+            {
+                bool mesh = room >= 0x80u && word(p) != 0u;
+                for (uint32_t k = 4; k < 0x80u && mesh; k += 4)
+                    mesh = word(p + k) == 0u;
+                if (mesh)
+                    size = 0x80ull + 16ull * word(p);
+                else if (id == 2)
+                    size = uint64_t(word(p) & ~3u) + word(p + 4u);
+            }
+            return size && size <= room ? static_cast<uint32_t>(size) : room;
+        }
+
+        // The parts in a scene's directory whose objects lie inside it, {id, offset} (empty: not a scene)
+        std::vector<std::pair<int32_t, uint32_t>> sceneParts(const uint8_t *scene, uint32_t bytes)
+        {
+            std::vector<std::pair<int32_t, uint32_t>> parts;
             if (bytes < 0x14u || word(scene) > (bytes - 0x14u) / 8u)
-                return ids;
+                return parts;
             for (uint32_t i = 0, count = word(scene); i < count; ++i)
             {
                 const uint32_t entry = 0x14u + 8u * i;
                 const uint32_t object = entry + 4u + word(scene + entry + 4u); // 32-bit, as the game adds it
                 if (object >= 0x14u && uint64_t(object) + 16u <= bytes)
-                    ids.push_back(static_cast<int32_t>(word(scene + entry)));
+                    parts.emplace_back(static_cast<int32_t>(word(scene + entry)), object);
             }
-            return ids;
+            return parts;
+        }
+
+        bool hasPart(const std::vector<std::pair<int32_t, uint32_t>> &parts, int32_t id)
+        {
+            return std::any_of(parts.begin(), parts.end(), [id](const auto &p) { return p.first == id; });
+        }
+
+        // The stand-in's fuller list of parts, when the mod's file leaves parts of its venue out (`left`: the venue's
+        // {id, offset in its scene}): after the stand-in scene, the scene's header with the file's own directory pointed
+        // back at its objects (each where it is, so our draw still finds it at the same offset in the file), then one
+        // entry for each part left out, pointing at an empty part of ours after the list: a copy of the venue's own part
+        // without its triangles (whatever the venue's code writes there lands where it expects; our draw draws nothing
+        // there), the picture cards as none, the lights as the venue's. False: no room (a mods.log line).
+        bool fillIn(const uint8_t *game, ModArena &m, const std::vector<std::pair<int32_t, uint32_t>> &left, bool highPoly)
+        {
+            using vendetta_store::kArenaScene;
+            uint8_t *scene = vendetta_store::host(kArenaScene);
+            const uint32_t own = std::min<uint32_t>(word(scene), (m.sceneBytes - 0x14u) / 8u);
+            const uint32_t list = (m.sceneBytes + 15u) & ~15u;
+            const uint32_t entries = own + static_cast<uint32_t>(left.size());
+            std::vector<uint32_t> starts; // the venue's parts in order, for each one's limit
+            for (const auto &[id, object] : sceneParts(game, kGameSceneBytes))
+                starts.push_back(object);
+            std::sort(starts.begin(), starts.end());
+            uint64_t at = (uint64_t(list) + 0x14u + 8ull * entries + 15u) & ~15ull;
+            std::vector<std::pair<uint32_t, uint32_t>> placed; // {where, bytes} of each empty part
+            for (const auto &[id, object] : left)
+            {
+                const auto next = std::upper_bound(starts.begin(), starts.end(), object);
+                const uint32_t bytes = id == -1 ? 16u
+                                                : partBytes(game, object, next == starts.end() ? kGameSceneBytes : *next, id,
+                                                            highPoly);
+                placed.emplace_back(static_cast<uint32_t>(at), bytes);
+                at = (at + bytes + 15u) & ~15ull;
+            }
+            if (at > vendetta_store::kArenaSceneRoom)
+            {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena is too big with the parts it leaves out put "
+                                         << "in empty (the scene up to 4 MB): the game's own arena is used" << std::endl;
+                return false;
+            }
+            std::memcpy(scene + list, scene, 0x14u); // the header (the colours, the rope spring)
+            std::memcpy(scene + list, &entries, 4);
+            for (uint32_t i = 0; i < own; ++i)
+            {
+                const uint32_t from = 0x14u + 8u * i, to = list + 0x14u + 8u * i;
+                const uint32_t object = from + 4u + word(scene + from + 4u), offset = object - (to + 4u); // 32-bit
+                std::memcpy(scene + to, scene + from, 4);
+                std::memcpy(scene + to + 4u, &offset, 4);
+            }
+            std::string ids;
+            for (size_t i = 0; i < left.size(); ++i)
+            {
+                const auto [id, object] = left[i];
+                const auto [where, bytes] = placed[i];
+                const uint32_t to = list + 0x14u + 8u * (own + static_cast<uint32_t>(i)), offset = where - (to + 4u);
+                std::memcpy(scene + to, &id, 4);
+                std::memcpy(scene + to + 4u, &offset, 4);
+                if (id == -1)
+                {
+                    const uint32_t none[4] = {0x20444242u, 8u, 0u, 0u}; // "BBD ", the bytes after, no entries, no animations
+                    std::memcpy(scene + where, none, sizeof(none));
+                }
+                else
+                {
+                    std::memcpy(scene + where, game + object, bytes);
+                    // its own sizes (the copy holds the whole part): at least a mesh head's room for the test of its kind
+                    zeroObject(scene, std::min<uint32_t>(vendetta_store::kArenaSceneRoom, where + std::max(bytes, 0x80u)),
+                               where, id, highPoly);
+                }
+                ids += (i ? ", " : "") + std::to_string(id);
+            }
+            m.sceneAt = kArenaScene + list;
+            m.emptyFrom = kArenaScene + placed.front().first;
+            m.emptyTo = kArenaScene + static_cast<uint32_t>(at);
+            m.standInBytes = static_cast<uint32_t>(at);
+            std::cerr << "[arenas] " << m.what << ": leaves out part" << (left.size() > 1 ? "s " : " ") << ids << " of "
+                      << venueName(m.venue) << ": not drawn" << (hasPart(left, -2) ? " (the lights: " + venueName(m.venue) + "'s)" : "")
+                      << std::endl;
+            return true;
         }
 
         // The mod arena's file read and its stand-in put in the store: the scene at kArenaScene, the crowd's people (each
@@ -2621,27 +2758,29 @@ namespace vendetta_arenas
                                          << "and its clips up to 3 MB each)" << instead << std::endl;
                 return false;
             }
-            // every part of the arena it was made from (that venue's scene, loaded behind it): the venue's own code looks
-            // each one up by its number and, for one that isn't there, uses address 0 (the set-up writes into 98 / 99,
-            // the ropes' bones are written into 2, the picture cards patch by slot, the lights -2 are read), so a mod
-            // may empty a part but not leave it out
+            // the parts of the arena it was made from (that venue's scene, loaded behind it) the file leaves out: what the
+            // file holds is what the match shows, but the venue's own code looks each part up by its number and, for one
+            // that isn't there, uses address 0 (the set-up writes into 98 / 99, the ropes' bones are written into 2, the
+            // picture cards patch by slot, the lights -2 are read), so each gets an empty part of ours (fillIn)
+            const bool highPoly = m.venue < 12u || m.venue >= 24u;
+            const uint8_t *game = rdram + kGameScene;
+            const auto mine = sceneParts(file.data() + m.scene, m.sceneBytes);
+            const auto theirs = sceneParts(game, kGameSceneBytes);
+            std::vector<std::pair<int32_t, uint32_t>> left;
+            for (const auto &part : theirs)
+                if (!hasPart(mine, part.first) && !hasPart(left, part.first))
+                    left.push_back(part);
+            if (theirs.empty())
             {
-                const std::vector<int32_t> mine = sceneIds(file.data() + m.scene, m.sceneBytes);
-                std::vector<int32_t> wanted = sceneIds(rdram + kGameScene, kGameSceneBytes);
-                if (wanted.empty())
-                    wanted = {2, 98, 99, -2}; // the venue's scene not readable: the parts every arena's code reaches for
+                // the venue's scene not readable (never seen): nothing to copy, so the parts every arena's code reaches for
                 std::string missing;
-                size_t count = 0;
-                for (const int32_t id : wanted)
-                    if (std::find(mine.begin(), mine.end(), id) == mine.end())
-                        missing += (count++ ? ", " : "") + std::to_string(id);
-                if (count)
+                for (const int32_t id : {2, 98, 99, -2})
+                    if (!hasPart(mine, id))
+                        missing += (missing.empty() ? "" : ", ") + std::to_string(id);
+                if (!missing.empty())
                 {
-                    vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena leaves out part"
-                                             << (count > 1 ? "s " : " ") << missing << " of "
-                                             << venueName(m.venue) << ", the arena it was made from (the game's code reaches "
-                                             << "for each part by its number: a part can be emptied, not left out)" << instead
-                                             << std::endl;
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena leaves out parts " << missing << " of "
+                                             << venueName(m.venue) << ", whose own scene can't be read" << instead << std::endl;
                     return false;
                 }
             }
@@ -2650,7 +2789,12 @@ namespace vendetta_arenas
             uint8_t *scene = vendetta_store::host(vendetta_store::kArenaScene);
             std::memcpy(scene, m.file.data() + m.scene, m.sceneBytes);
             if (!g_fullStandIn)
-                zeroScene(scene, m.sceneBytes, m.venue < 12u || m.venue >= 24u);
+                zeroScene(scene, m.sceneBytes, highPoly);
+            m.sceneAt = vendetta_store::kArenaScene;
+            m.standInBytes = m.sceneBytes;
+            m.emptyFrom = m.emptyTo = 0u;
+            if (!left.empty() && !fillIn(game, m, left, highPoly))
+                return false;
             // the crowd: its people (each model without its triangles) and their clips; none = no one ("AUD ", 8, 0)
             uint8_t *people = vendetta_store::host(kCrowd);
             bool crowd = m.peopleBytes >= 0x10u;
@@ -2863,6 +3007,14 @@ namespace vendetta_arenas
                     welcome = word(soundSet(rdram, flexSet) + 4u);
                 commentary = 0u;
             }
+            else if (m.flex == Flex::Unused)
+            {
+                // a sound set's + 4 is one bit a welcome line (1 << its selector in FLEX group Q1); selectors 1, 3 and 8
+                // have recordings no set names
+                static const uint32_t selectors[] = {1u, 3u, 8u};
+                welcome = 1u << selectors[m.flexUnused - 1u];
+                commentary = 0u;
+            }
             else if (m.flex == Flex::NoWelcomeLine)
                 commentary = 0u;
             else if (m.flex == Flex::Silent)
@@ -2885,6 +3037,7 @@ namespace vendetta_arenas
             {
             case Flex::MadeFrom: flex = "as in " + venueName(m.venue); break;
             case Flex::Arena: flex = "the welcome line for " + venueName(m.flexArena); break;
+            case Flex::Unused: flex = "unused welcome line " + std::to_string(m.flexUnused); break;
             case Flex::NoWelcomeLine: flex = "no welcome line"; break;
             case Flex::Silent: flex = "silent"; break;
             }
@@ -3056,7 +3209,7 @@ namespace vendetta_arenas
                 g_current = nullptr;
             if (g_current)
             {
-                SET_GPR_U32(ctx, 5, vendetta_store::kArenaScene);
+                SET_GPR_U32(ctx, 5, g_current->sceneAt);
                 redirectFlyIn(rdram, *g_current);
                 if (venue < 12u)
                     followPosts(rdram, *g_current);
@@ -3090,8 +3243,8 @@ namespace vendetta_arenas
 
         // arena.json's "sounds" as the game's pieces: {"crowd": "big" | "small indoors" | "small outdoors" | "none",
         // "arena sounds": a game arena (its effects bank: its background recordings, its loop, its floor outside), "flex": a
-        // game arena (his welcome line for it, then his commentary) | "no welcome line" | "silent" (nothing from him all
-        // match)}. A piece left out or unusable: the made-from arena's, with a mods.log line.
+        // game arena (his welcome line for it, then his commentary) | "unused line 1" .. "unused line 3" (a welcome line
+        // recorded for no arena: selectors 1, 3, 8) | "no welcome line" | "silent" (nothing from him all match)}. A piece left out or unusable: the made-from arena's, with a mods.log line.
         void readSoundPieces(ModArena &m, const vendetta_mods::Json &sounds, const std::string &base)
         {
             m.mixed = true;
@@ -3132,6 +3285,11 @@ namespace vendetta_arenas
                     m.flex = ModArena::Flex::NoWelcomeLine;
                 else if (text == "silent")
                     m.flex = ModArena::Flex::Silent;
+                else if (text == "unused line 1" || text == "unused line 2" || text == "unused line 3")
+                {
+                    m.flex = ModArena::Flex::Unused;
+                    m.flexUnused = static_cast<uint32_t>(text.back() - '0');
+                }
                 else if (venue != ~0u)
                 {
                     m.flex = ModArena::Flex::Arena;
@@ -3139,7 +3297,7 @@ namespace vendetta_arenas
                 }
                 else
                     vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"flex\" is not one of the game's "
-                                             << "arenas, \"no welcome line\" or \"silent\": Flex as in " << base << std::endl;
+                                             << "arenas, \"unused line 1\" to \"3\", \"no welcome line\" or \"silent\": Flex as in " << base << std::endl;
             }
             else
                 vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json's \"sounds\" has no \"flex\": Flex as in "
