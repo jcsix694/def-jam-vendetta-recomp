@@ -12,9 +12,10 @@
 //                  "height": "6'1\"", "weight": "225lbs",
 //                  "size": "normal",   short / normal / tall (the game's 0.95 / 1.0 / 1.05)
 //                  "based on": "Briggs",   the game wrestler whose model it wears (and, for now, whose pictures
-//                                      it shows); not used when it has a model of its own: Briggs' always stands
-//                                      behind that (his pictures when the mod brings none, his model if the mod's
-//                                      can't be used)
+//                                      it shows); not used when it has a model of its own: Briggs' stands behind
+//                                      that (his pictures when the mod brings none), or, for a model whose rig is
+//                                      another game model's (Capone's), that model (vendetta_wrestlerdraw.cpp picks
+//                                      it; it is drawn if the mod's can't be used)
 //                  "sounds like": "Spider",   whose voice it uses (intro line, win line, grunts); "based on" if
 //                                      left out
 //                  "voice": { ... } },   or a voice of its own instead, made from parts: "intro line" and

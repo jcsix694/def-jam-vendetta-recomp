@@ -845,10 +845,12 @@ namespace vendetta_wrestlers
                             good = false;
                             break;
                         }
-                        // a model of its own (the attire's folder, else the wrestler's): Briggs' model always stands
-                        // behind it, whatever "based on" says (only for the game's own work: its bones posed, its
-                        // shadow; and the pictures when the mod brings none, and the whole model if the mod's can't be
-                        // used). An attire without one, beside attires with one, also gets Briggs'.
+                        // a model of its own (the attire's folder, else the wrestler's): Briggs' model stands behind
+                        // it, whatever "based on" says (only for the game's own work: its bones posed, its shadow; and
+                        // the pictures when the mod brings none, and the whole model if the mod's can't be used); a
+                        // model whose rig is another game model's (Capone's) gets that model behind it instead, picked
+                        // at start by vendetta_wrestlerdraw.cpp. An attire without one, beside attires with one, also
+                        // gets Briggs'.
                         // a game wrestler's model named in attire.json: its record is the one this attire looks like
                         info.picks = readPicks(mod, attireFolders[k], item.text, "[wrestlers] " + mod.name + ": " + info.name);
                         info.ownModel = info.picks.model < 0 && (modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k])));
@@ -859,7 +861,7 @@ namespace vendetta_wrestlers
                                                                                                     : named;
                         if (info.ownModel && !named.empty() && upper(named) != "BRIGGS" && told.insert(where + "#based").second)
                             vendetta_mods::problem() << "[wrestlers] " << mod.name << ": " << info.name << ": \"based on\": \"" << named
-                                                     << "\" isn't used: with a model of its own, Briggs' model stands behind it"
+                                                     << "\" isn't used: with a model of its own, Briggs' model (or the game model with its rig) stands behind it"
                                                      << std::endl;
                         if (!gameWrestler(basedOn, info.looksBase, info.looksCount))
                         {

@@ -34,13 +34,14 @@ namespace vendetta_store
     // the report. Returns the guest address (>= 0x02000000), or 0 with a message when the store is full.
     uint32_t allocate(Area area, uint32_t size, const char *user, uint32_t alignment = 16, uint32_t phase = 0);
 
-    // The fixed area: the store's first 20 MB (0x02000000-0x033FFFFF), for data the game's code finds at an address
+    // The fixed area: the store's first 88 MB (0x02000000-0x077FFFFF), for data the game's code finds at an address
     // patched into it before translation (config: [patches]), so the address can't move. Each user keeps to its own
     // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp); 0x1000-0xD2CF the clip
     // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp); the roster tables below
-    // (vendetta_wrestlers.cpp); from 0x905500 the arena's crowd and stand-in scene below (vendetta_arenas.cpp). Returns the guest address of `offset`, its memory committed, or 0.
+    // (vendetta_wrestlers.cpp); from 0x1310000 the arena's fly-in and Choose Stage tables, from 0x1405500 its crowd and
+    // stand-in scene (vendetta_arenas.cpp). Returns the guest address of `offset`, its memory committed, or 0.
     constexpr uint32_t kFixedArea = 0x02000000u;
-    constexpr uint32_t kFixedSize = 0x01400000u;
+    constexpr uint32_t kFixedSize = 0x05800000u;
     uint32_t fixed(uint32_t offset, uint32_t size, const char *user);
 
     // The roster tables, moved here so new wrestlers can follow the game's own (vendetta_wrestlers.cpp fills them at
@@ -56,11 +57,12 @@ namespace vendetta_store
 
     // The arena (vendetta_arenas.cpp): the 3-D crowd the game's crowd code reads (the people (AUD) and their clips (PAK);
     // its luis patched, each copy keeping the original's low 16 bits) and a mod arena's stand-in scene (its parts
-    // without their triangles: the game reads the scene through FUN_001a1c38's argument), 3 / 3 / 4 MB of room.
-    constexpr uint32_t kCrowdPeople = 0x02905500u; // was 0xBD5500 (1.3 MB)
-    constexpr uint32_t kCrowdClips = 0x02C0A500u;  // was 0xD1A500 (800 KB)
-    constexpr uint32_t kArenaScene = 0x02F10000u;  // the game's own scene stays in its buffer at 0xB1C500
-    constexpr uint32_t kCrowdRoom = 0x00300000u, kArenaSceneRoom = 0x00400000u;
+    // without their triangles: the game reads the scene through FUN_001a1c38's argument), 16 / 16 / 32 MB of room (the
+    // game's biggest: 1.3 MB of people, 800 KB of clips, a 740 KB scene). Only what an arena uses is ever touched.
+    constexpr uint32_t kCrowdPeople = 0x03405500u; // was 0xBD5500 (1.3 MB)
+    constexpr uint32_t kCrowdClips = 0x0440A500u;  // was 0xD1A500 (800 KB)
+    constexpr uint32_t kArenaScene = 0x05410000u;  // the game's own scene stays in its buffer at 0xB1C500
+    constexpr uint32_t kCrowdRoom = 0x01000000u, kArenaSceneRoom = 0x02000000u;
     constexpr uint32_t kArenaFlyIn = 0x03310000u;  // a mod arena's fly-in camera path (the game's path entry pointed here)
     constexpr uint32_t kArenaFlyInRoom = 0x00010000u;
     // Choose Stage's places (patched luis): the stage at each place, each stage's picture id and thumbnail, each stage's

@@ -23,21 +23,33 @@
 // see-through parts (ALPHA1 / 2, drawn on the main processor), the body points.
 //
 // A mod wrestler with a model of its own (vendetta_wrestlers.h: model.wrs, as adjmk writes the game's format; glTF to
-// come) is always drawn by our code, whatever the switch: the game still loads a game model behind it (its "based on",
-// else Briggs') and poses it; before each pose (FUN_001b1b20) our code writes the mod file's skeleton into that copy
-// (every bone's inverse bind and rest matrix of BODY, BODY2, FACE and both hands, and the face, lip, eye and hand
-// templates), so the game poses the mod's own face and hands; the body's part call then draws the mod's body, hands
-// and face with those posed bones and the game's lights, the hands' and face's calls draw nothing for it, and the
-// game's see-through parts of the model behind (FUN_001b2088) are not drawn. The shadow is the game's (the model
-// behind's: every game model's is the same); a shadow or a Low Poly body in the mod's file is ignored. The skin: the
-// mod file's own (decoded from its upload packet), or textures/skin.png at any size, as a host image bound to the
-// skin's address (GS register 0x71) around the mod's triangles. A file that can't be used leaves the game's model.
+// come) is always drawn by our code, whatever the switch: the game still loads a game model behind it and poses it.
+// The model behind is one whose rig has the mod's parents (chosen at start, the record's + 0x1C changed when needed):
+// a replaced attire's own game model, a new attire's Briggs', or, when that rig differs from the mod's, Briggs' and
+// then the first game model whose rig matches (Capone's for a model built on his: his body bone 41 hangs from bone 1,
+// every other model's from bone 0). The model behind's slot words are pointed at the mod's own parts and data (placed
+// in the store), so the game poses the mod's own skeleton, face and hands; the body's part call then draws the mod's
+// body, hands and face with those posed bones and the game's lights, the hands' and face's calls draw nothing for it.
+// The mod's own see-through parts (ALPHA1 / ALPHA2, when its file has them) are posed and mounted by the game's code
+// too and drawn by our port of the game's see-through draw (FUN_001b49a0) in FUN_001b2088's place, with the mod's skin.
+// The shadow is the game's (the model behind's: every game model's is the same); a shadow or a Low Poly body in the
+// mod's file is ignored. The skin: the mod file's own (decoded from its upload packet), or textures/skin.png at any
+// size, as a host image bound to the skin's address (GS register 0x71) around the mod's triangles. A file that can't
+// be used leaves the game's model.
 // A skin with pixels not solid (PNG transparency): the body's call draws only the solid pixels (alpha test), and the
 // triangles touching the others are drawn again, blended and sorted far to near, in the see-through pass's slot: fully
 // clear = a hole, partly clear = see-through.
 //
+// VENDETTA_SEETHROUGH_CHECK=1  the game's see-through draw (FUN_001b49a0) checked against our port: before each call ours
+//                              is worked out, after it the game's packet (0x1E15300) and the vertices it wrote are
+//                              compared, byte for byte ([wrestlers] see-through check lines); a mod fighter's own
+//                              see-through parts are then drawn by the game's code (with the model behind's skin), so
+//                              they are checked too
+//
 // VENDETTA_WRESTLERDRAW=1      our draw (sampling the skin the game uploaded)
-// VENDETTA_WRESTLERDRAW=ab[:N] the game's draw and ours in turn, N seconds each (default 2): pictures compared
+// VENDETTA_WRESTLERDRAW=ab[:N] the game's draw and ours in turn, N seconds each (default 2): pictures compared; a mod
+//                              model too (the game's turn: its parts, posed as ever, drawn by the game's routines with
+//                              the model behind's skin)
 // VENDETTA_WRESTLERDRAW=flip   ours, and F9 (with the game's window in front) swaps between the game's draw and ours; the
 //                              window title says which ("Wrestlers: ours" / "Wrestlers: the game's")
 // VENDETTA_WRESTLERDRAW=check  the game draws; its GS packets (tapped in the GS front end) are compared with ours,
@@ -55,6 +67,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -80,6 +93,9 @@ namespace vendetta_wrestlerdraw
         constexpr float kNearZ = 1048574.0f;      // VU 0x34.w
         constexpr float kCentre = 2048.0f;        // VU 0x34.x / y
         constexpr float kGuard = 2047.0f;         // VU 0x33.w
+        // a part's VIF stream at most this long: a sanity bound only (the game's biggest body's is about 200 KB), far
+        // above any real model, so a mod part's size is never limited by it
+        constexpr uint32_t kMaxStreamBytes = 0x4000000u; // 64 MB
 
         enum class Mode
         {
@@ -389,7 +405,7 @@ namespace vendetta_wrestlerdraw
             const uint32_t bytes = word(p + 4);
             uint32_t setupRows = 0;
             std::vector<Batch> batches;
-            if (bytes == 0u || bytes > 0x100000u || !readStream(stream, bytes, setupRows, batches))
+            if (bytes == 0u || bytes > kMaxStreamBytes || !readStream(stream, bytes, setupRows, batches))
             {
                 ++g_stats.unreadable;
                 return false;
@@ -588,6 +604,11 @@ namespace vendetta_wrestlerdraw
             return ours;
         }
 
+        // A mod model drawn by our code now: always, but in VENDETTA_WRESTLERDRAW=ab the game's turns leave the drawing
+        // to the game's own routines (FUN_001b93a0, FUN_001b2088) on the same posed parts, the mod's, with the skin the
+        // game uploads (the model behind's): for a mod whose file is the model behind's, the game's own picture)
+        bool modTurn() { return g_mode != Mode::Ab || oursNow(); }
+
         void logStats()
         {
             if (!g_log)
@@ -629,7 +650,7 @@ namespace vendetta_wrestlerdraw
             // the rows ours would write, against the game's
             const uint8_t *p = mem(rdram, part);
             const uint32_t at = part + (word(p) & ~3u), bytes = word(p + 4);
-            if (bytes != 0u && bytes <= 0x100000u)
+            if (bytes != 0u && bytes <= kMaxStreamBytes)
             {
                 std::vector<uint8_t> copy(mem(rdram, at), mem(rdram, at) + bytes);
                 writeRows(rdram, part, lightMatrix, colours, copy.data());
@@ -695,7 +716,13 @@ namespace vendetta_wrestlerdraw
         constexpr uint32_t kFighters = 0x22FE08u, kFighterSize = 0xCD8u, kFighterRecord = 0x34u;
         constexpr uint32_t kModelBuffer = 0x96000u; // a fighter's model buffer (0x8C4500 + n x 0x96000)
         constexpr uint32_t kSkinImageBase = 0x50000000u; // our host image ids for the mods' skins
-        constexpr int kBody = 1, kBody2 = 2, kFace = 3, kLeftHand = 4, kRightHand = 5, kTexture = 18;
+        constexpr int kBody = 1, kBody2 = 2, kFace = 3, kLeftHand = 4, kRightHand = 5, kAlpha1 = 6, kAlpha2 = 7,
+                      kTexture = 18;
+        constexpr uint32_t kRigLights = 0x328u, kRigColours = 0x32Cu, kRigFlags = 0x344u; // + 0x344 bit 0: High Poly
+        constexpr uint32_t kRecordSize = 0x20u, kRecordModel = 0x1Cu; // a character record: + 0x1C its DATA.BIN entry
+        constexpr uint32_t kGameCharacters = 0x27E100u;  // the game's own character table (the game reads the store's copy)
+        constexpr uint32_t kGameModelRecords = 59u;      // records 0-58 (59-62 have no model)
+        constexpr uint32_t kDataTable = 0x256F40u, kDataEntries = 293u; // DATA.BIN's table: {first sector, sectors}
 
         PS2Runtime::RecompiledFunction g_originalPose = nullptr, g_originalSeeThrough = nullptr;
 
@@ -704,7 +731,9 @@ namespace vendetta_wrestlerdraw
         // (FUN_001b1b20 the parts, FUN_001b22e8 / 2620 / 2848 the body and its template, FUN_001b2998 the face, hands
         // and slots 9-17, FUN_001b3400 the body points), so the mod's BODY (for BODY2 too), FACE, hands, templates and
         // motions, with any number of bones past the game's, sit in the store's match area and the model behind's words
-        // are rewritten to reach them; its see-through parts (6 / 7, hidden for a mod) point at none (every reader checks)
+        // are rewritten to reach them; its see-through parts (6 / 7) point at the mod's own when it has them and they are
+        // safe for the game's posing (checkAlpha, and ALPHA2 against the face's template), else at none (every reader
+        // checks)
         constexpr int kFirstPointed = 1, kLastPointed = 17;
         constexpr uint32_t kChannelRoom = 25u; // the game's sample buffers (0x1E146B0 + 0x190 n; the rig's 0x190): 25 channels
         constexpr uint32_t kBodyBones = 42u, kFaceBones = 11u, kHandBones = 13u; // the game's rig: the clips, the body
@@ -733,6 +762,7 @@ namespace vendetta_wrestlerdraw
             bool pointable[32] = {};     // slots 1-17: checked, the game may read the mod's own
             uint32_t placedAt[32] = {};  // their guest addresses in the store's match area (0: not placed this match)
             std::string what;            // "[wrestlers] <mod>: <wrestler>: <file>", for mods.log
+            std::string behind = "Briggs'"; // whose game model stands behind it ("Briggs'", "Capone's"), for mods.log
             bool ok = false;
             uint32_t image = 0;
             bool cutout = false;           // its skin has pixels not solid: the alpha test on, those drawn see-through
@@ -796,6 +826,282 @@ namespace vendetta_wrestlerdraw
             send(packet);
             g_stats.seeThrough += list.tris.size();
             list.tris.clear();
+        }
+
+        // ------------------------------------------------------------------ the see-through parts (ALPHA1 / ALPHA2)
+        //
+        // FUN_001b2088(fighter), High Poly only (rig + 0x344 bit 0): the skin uploaded again to the other slot, then for
+        // ALPHA1 (slot 6) and ALPHA2 (slot 7) FUN_001b44d0 writes the skin's TEX0 into the part (+0x0C / +0x10) and
+        // FUN_001b49a0(part, rig + 0x328, rig + 0x32C) draws it on the main processor. A part: +0x00 bones, +0x04
+        // vertices, +0x08 triangles, the bones from +0x20 (0x190 each: +0x00 child, +0x04 sibling, +0x10 rest local,
+        // +0x50 current local, +0x90 inverse bind, +0xD0 world, +0x110 inverse bind x world, +0x150 that x the camera),
+        // then the vertices (0x48 each: +0x00 position, +0x0C normal, +0x18 u, +0x1C v, +0x20 bone A, +0x24 bone B or -1,
+        // +0x28 / +0x2C their weights; the routine writes +0x30 x, +0x34 y, +0x38 z, +0x3C-0x44 the colour), then the
+        // triangles (3 x u32 vertex numbers). Posing (FUN_001b4620: from FUN_001b22e8 / 2620 with the body's template
+        // cut to 9 bones, from FUN_001b2998 with the face's) and mounting (FUN_001b4950 from FUN_001b1b20: ALPHA1 on the
+        // scaled world, ALPHA2 on body bone 7) are the game's.
+        // alphaPacket is FUN_001b49a0 (0x1B49A0-0x1B52E4) operation by operation in its order (the recomp's FPU: plain
+        // IEEE single, div.s by 0 an infinity, cvt.w.s truncating and saturating), with FUN_001b53d0's cull and sort
+        // (centroid x 1536-2560, y 1824-2272, every z 0-1048574; far to near, ties in triangle order), but with no room
+        // limit (the game's node list at 0x1E24D00 runs into its GIF buffer after 264 triangles).
+        constexpr uint32_t kThird = 0x295394u;                       // gp - 0x71DC: the centroid's 1/3 (0x3EAAAA9F)
+        constexpr uint32_t kCullX0 = 0x29A2F4u, kCullX1 = 0x29A2F8u; // gp - 0x227C / - 0x2278
+        constexpr uint32_t kCullY0 = 0x29A2ECu, kCullY1 = 0x29A2F0u; // gp - 0x2284 / - 0x2280
+        constexpr uint32_t kCullZ = 0x29A2E8u;                       // gp - 0x2288
+        constexpr uint32_t kListHead = 0x25D178u, kListTail = 0x25D188u; // the sort list's end nodes (+0x04 their keys)
+        constexpr uint32_t kAlphaPacket = 0x1E15300u;                // FUN_001b49a0's GIF packet
+        constexpr uint32_t kAlphaDraw = 0x1B49A0u;
+        constexpr uint32_t kAlpha1Posed = 9u; // the body's template count FUN_001b22e8 / 2620 set for ALPHA1's posing
+        constexpr uint64_t kAlphaTagHigh = 0x312DC000ull; // the triangles' tag: PRE, PRIM 0x25B, PACKED, NREG 3
+        constexpr uint64_t kAlphaRegs = 0x412ull;         // ST, RGBAQ, XYZF2
+
+        float fpuDiv(float a, float b) { return b == 0.0f ? std::copysign(INFINITY, a * 0.0f) : a / b; }
+
+        struct AlphaVertex // what FUN_001b49a0 writes into a vertex at + 0x30
+        {
+            float x, y, z, c[3];
+        };
+
+        // An ALPHA part's triangles as FUN_001b49a0 draws them: 3 quadwords a vertex (ST, RGBAQ, XYZF2: two words a
+        // quadword) into `q`, far to near; `out` (if given) every vertex's results. Returns the triangles drawn.
+        uint32_t alphaPacket(uint8_t *rdram, uint32_t part, uint32_t lightAt, uint32_t colourAt, std::vector<uint64_t> &q,
+                             std::vector<AlphaVertex> *out = nullptr)
+        {
+            const uint8_t *p = mem(rdram, part);
+            const uint32_t bones = word(p), vertices = word(p + 4), triangles = word(p + 8);
+            const uint8_t *bone0 = p + 0x20, *vertex0 = bone0 + 0x190u * bones, *triangle0 = vertex0 + 0x48u * vertices;
+            float L[16], C[16];
+            std::memcpy(L, mem(rdram, lightAt), 64);
+            std::memcpy(C, mem(rdram, colourAt), 64);
+            std::vector<AlphaVertex> v(vertices);
+            for (uint32_t i = 0; i < vertices; ++i)
+            {
+                const uint8_t *r = vertex0 + 0x48u * i;
+                const float px = real(r), py = real(r + 4), pz = real(r + 8);
+                const float n0 = real(r + 0xC), n1 = real(r + 0x10), n2 = real(r + 0x14);
+                const int32_t a = static_cast<int32_t>(word(r + 0x20)), b = static_cast<int32_t>(word(r + 0x24));
+                AlphaVertex &o = v[i];
+                float d0, d1, d2;
+                if (b == -1)
+                {
+                    // one bone (0x1B4A30-0x1B4C8C)
+                    float M[16], N[16];
+                    std::memcpy(M, bone0 + 0x190u * uint32_t(a) + 0x150u, 64);
+                    std::memcpy(N, bone0 + 0x190u * uint32_t(a) + 0x110u, 64);
+                    const float x = ((px * M[0] + py * M[4]) + pz * M[8]) + M[12];
+                    const float y = ((px * M[1] + py * M[5]) + pz * M[9]) + M[13];
+                    o.z = ((px * M[2] + py * M[6]) + pz * M[10]) + M[14];
+                    const float w = ((px * M[3] + py * M[7]) + pz * M[11]) + M[15];
+                    const float k = fpuDiv(1.0f, w);
+                    o.y = y * k;
+                    o.x = x * k;
+                    const float m0 = (n0 * N[0] + n1 * N[4]) + n2 * N[8];
+                    const float m1 = (n0 * N[1] + n1 * N[5]) + n2 * N[9];
+                    const float m2 = (n0 * N[2] + n1 * N[6]) + n2 * N[10];
+                    d0 = (m0 * L[0] + m1 * L[4]) + m2 * L[8];
+                    d2 = (m0 * L[2] + m1 * L[6]) + m2 * L[10];
+                    d1 = (m0 * L[1] + m1 * L[5]) + m2 * L[9];
+                }
+                else
+                {
+                    // two bones (0x1B4C90-0x1B5068): each bone's projected x, y times (1 / w) x its weight, z times
+                    // its weight, then added; the normals blended the same way before the lights
+                    const float wa = real(r + 0x28), wb = real(r + 0x2C);
+                    float MA[16], MB[16], NA[16], NB[16];
+                    std::memcpy(MA, bone0 + 0x190u * uint32_t(a) + 0x150u, 64);
+                    std::memcpy(MB, bone0 + 0x190u * uint32_t(b) + 0x150u, 64);
+                    std::memcpy(NA, bone0 + 0x190u * uint32_t(a) + 0x110u, 64);
+                    std::memcpy(NB, bone0 + 0x190u * uint32_t(b) + 0x110u, 64);
+                    float xa = ((px * MA[0] + py * MA[4]) + pz * MA[8]) + MA[12];
+                    float ya = ((px * MA[1] + py * MA[5]) + pz * MA[9]) + MA[13];
+                    float za = ((px * MA[2] + py * MA[6]) + pz * MA[10]) + MA[14];
+                    za = za * wa;
+                    const float wA = ((px * MA[3] + py * MA[7]) + pz * MA[11]) + MA[15];
+                    const float ka = fpuDiv(1.0f, wA) * wa;
+                    ya = ya * ka;
+                    xa = xa * ka;
+                    const float wB = ((px * MB[3] + py * MB[7]) + pz * MB[11]) + MB[15];
+                    float xb = ((px * MB[0] + py * MB[4]) + pz * MB[8]) + MB[12];
+                    float yb = ((px * MB[1] + py * MB[5]) + pz * MB[9]) + MB[13];
+                    float zb = ((px * MB[2] + py * MB[6]) + pz * MB[10]) + MB[14];
+                    const float kb = fpuDiv(1.0f, wB) * wb;
+                    xb = xb * kb;
+                    yb = yb * kb;
+                    zb = zb * wb;
+                    o.x = xa + xb;
+                    o.y = ya + yb;
+                    o.z = za + zb;
+                    const float a0 = (n0 * NA[0] + n1 * NA[4]) + n2 * NA[8];
+                    const float a1 = (n0 * NA[1] + n1 * NA[5]) + n2 * NA[9];
+                    const float a2 = (n0 * NA[2] + n1 * NA[6]) + n2 * NA[10];
+                    const float b0 = (n0 * NB[0] + n1 * NB[4]) + n2 * NB[8];
+                    const float b1 = (n0 * NB[1] + n1 * NB[5]) + n2 * NB[9];
+                    const float b2 = (n0 * NB[2] + n1 * NB[6]) + n2 * NB[10];
+                    const float m0 = a0 * wa + b0 * wb;
+                    const float m1 = a1 * wa + b1 * wb;
+                    const float m2 = a2 * wa + b2 * wb;
+                    d0 = (m0 * L[0] + m1 * L[4]) + m2 * L[8];
+                    d2 = (m0 * L[2] + m1 * L[6]) + m2 * L[10];
+                    d1 = (m0 * L[1] + m1 * L[5]) + m2 * L[9];
+                }
+                // c.lt.s with 0: a negative light term is 0 (a -0 stays)
+                if (d0 < 0.0f)
+                    d0 = 0.0f;
+                if (d1 < 0.0f)
+                    d1 = 0.0f;
+                if (d2 < 0.0f)
+                    d2 = 0.0f;
+                for (int c = 0; c < 3; ++c)
+                    o.c[c] = ((d0 * C[c] + d1 * C[4 + c]) + d2 * C[8 + c]) + C[12 + c];
+            }
+            if (out)
+                *out = v;
+            // FUN_001b53d0, one call a triangle: kept unless its centroid is off the screen's double or any z is outside
+            // 0-1048574; inserted before the first node with a larger key (the centroid's z): a stable sort
+            const float third = real(mem(rdram, kThird));
+            const float x0 = real(mem(rdram, kCullX0)), x1 = real(mem(rdram, kCullX1));
+            const float y0 = real(mem(rdram, kCullY0)), y1 = real(mem(rdram, kCullY1)), zMax = real(mem(rdram, kCullZ));
+            const float headKey = real(mem(rdram, kListHead + 4u)), tailKey = real(mem(rdram, kListTail + 4u));
+            struct Node
+            {
+                float key;
+                uint32_t triangle;
+            };
+            std::vector<Node> kept;
+            kept.reserve(triangles);
+            for (uint32_t t = 0; t < triangles; ++t)
+            {
+                const uint8_t *tri = triangle0 + 12u * t;
+                const AlphaVertex &a = v[word(tri)], &b = v[word(tri + 4)], &c = v[word(tri + 8)];
+                const float cx = ((a.x + b.x) + c.x) * third;
+                const float cz = ((a.z + b.z) + c.z) * third;
+                const float cy = ((a.y + b.y) + c.y) * third;
+                if (cx < x0 || x1 < cx || cy < y0 || y1 < cy)
+                    continue;
+                if (zMax < a.z || a.z < 0.0f || zMax < b.z || b.z < 0.0f || zMax < c.z || c.z < 0.0f)
+                    continue;
+                // past the list's end node (NaN, or not below its key): the game drops it; below the first node's key
+                // (never: every z is >= 0 and its key is 0) it would be counted but not sent
+                if (cz < headKey || !(cz < tailKey))
+                    continue;
+                kept.push_back({cz, t});
+            }
+            std::stable_sort(kept.begin(), kept.end(), [](const Node &l, const Node &r) { return l.key < r.key; });
+            // the packet's vertices (0x1B51F0-0x1B52E4): ST (u, v, 1.0), RGBAQ (the colour truncated, alpha 0x80),
+            // XYZF2 (x x 16, y x 16 truncated, z truncated << 4)
+            q.reserve(q.size() + 18u * kept.size());
+            for (const Node &n : kept)
+            {
+                const uint8_t *tri = triangle0 + 12u * n.triangle;
+                for (int k = 0; k < 3; ++k)
+                {
+                    const uint32_t i = word(tri + 4 * k);
+                    const uint8_t *r = vertex0 + 0x48u * i;
+                    const AlphaVertex &o = v[i];
+                    auto cvt = [](float f) { return static_cast<uint32_t>(ps2FpuCvtWS(f)); };
+                    q.push_back(uint64_t(word(r + 0x18)) | (uint64_t(word(r + 0x1C)) << 32));
+                    q.push_back(0x3F800000ull);
+                    q.push_back(uint64_t(cvt(o.c[0])) | (uint64_t(cvt(o.c[1])) << 32));
+                    q.push_back(uint64_t(cvt(o.c[2])) | (0x80ull << 32));
+                    q.push_back(uint64_t(cvt(o.x * 16.0f)) | (uint64_t(cvt(o.y * 16.0f)) << 32));
+                    q.push_back(uint64_t(cvt(o.z) << 4));
+                }
+            }
+            return static_cast<uint32_t>(kept.size());
+        }
+
+        // A mod's see-through part drawn in FUN_001b2088's place: the packet FUN_001b49a0 would send (TEX0, then the
+        // triangles, PRIM 0x25B), with the skin of the mod's body (its TEX0 and host image, as its own triangles have) and
+        // the GS state the game has set for its see-through parts (ALPHA_2 0x44, TEST_2 0x5001B)
+        void drawAlpha(uint8_t *rdram, uint32_t part, uint32_t rig, const SeeThroughList &list)
+        {
+            std::vector<uint64_t> q;
+            const uint32_t n = alphaPacket(rdram, part, word(mem(rdram, rig + kRigLights)), word(mem(rdram, rig + kRigColours)), q);
+            const uint32_t context = list.tex0Reg == 0x06u ? 0u : 1u;
+            Packet packet;
+            packet.ad(list.tex0Reg, list.tex0);
+            const uint32_t tbp = static_cast<uint32_t>(list.tex0) & 0x3FFFu;
+            if (list.image)
+                packet.ad(0x71u, uint64_t(tbp) | (uint64_t(list.image) << 32));
+            const uint64_t high = context ? kAlphaTagHigh : kAlphaTagHigh & ~(0x200ull << 15); // PRIM's CTXT
+            size_t i = 0;
+            do
+            {
+                // one tag a run of triangles (NLOOP has 15 bits; the game's own parts fit one)
+                const size_t run = std::min<size_t>(n - i, 0x2000u);
+                packet.tag(uint64_t(3u * run) | (high << 32), kAlphaRegs);
+                packet.q.insert(packet.q.end(), q.begin() + 18 * i, q.begin() + 18 * (i + run));
+                i += run;
+                if (packet.q.size() * 8u >= kPacketBytes)
+                    send(packet);
+            } while (i < n);
+            if (list.image)
+                packet.ad(0x71u, uint64_t(tbp)); // unbound
+            send(packet);
+            g_stats.seeThrough += n;
+        }
+
+        // VENDETTA_SEETHROUGH_CHECK=1: FUN_001b49a0 hooked; ours worked out before the game's call, its packet and the
+        // vertices it wrote compared after
+        PS2Runtime::RecompiledFunction g_originalAlphaDraw = nullptr;
+        bool g_alphaCheck = false;
+        struct
+        {
+            uint64_t parts = 0, same = 0, different = 0, triangles = 0, vertices = 0, verticesDifferent = 0;
+            int reports = 0;
+            Clock::time_point last = Clock::now();
+        } g_alphaChecked;
+
+        void alphaCheckHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t part = getRegU32(ctx, 4), lights = getRegU32(ctx, 5), colours = getRegU32(ctx, 6);
+            const uint32_t ra = getRegU32(ctx, 31), sp = getRegU32(ctx, 29);
+            const uint8_t *p = mem(rdram, part);
+            // ours in the game's form: tag (A+D), TEX0_2 from the part, the triangles' tag (EOP), the vertices
+            std::vector<uint64_t> ours = {0x1000000000000001ull, 0xEull,
+                                          uint64_t(word(p + 0xC)) | (uint64_t(word(p + 0x10)) << 32), 7ull, 0ull, kAlphaRegs};
+            std::vector<AlphaVertex> outs;
+            const uint32_t n = alphaPacket(rdram, part, lights, colours, ours, &outs);
+            ours[4] = uint64_t(3u * n) | 0x8000ull | (kAlphaTagHigh << 32);
+            g_originalAlphaDraw(rdram, ctx, runtime);
+            if (ctx->pc != ra || getRegU32(ctx, 29) != sp)
+                return; // the call was left early (a scheduler checkpoint): not compared
+            const uint32_t bones = word(p), vertices = word(p + 4);
+            const uint8_t *game = mem(rdram, kAlphaPacket);
+            const bool same = std::memcmp(ours.data(), game, ours.size() * 8u) == 0;
+            uint32_t vertexDiffs = 0;
+            for (uint32_t i = 0; i < vertices; ++i)
+                vertexDiffs += std::memcmp(&outs[i], p + 0x20 + 0x190u * bones + 0x48u * i + 0x30, sizeof(AlphaVertex)) != 0;
+            ++g_alphaChecked.parts;
+            ++(same ? g_alphaChecked.same : g_alphaChecked.different);
+            g_alphaChecked.triangles += n;
+            g_alphaChecked.vertices += vertices;
+            g_alphaChecked.verticesDifferent += vertexDiffs;
+            if ((!same || vertexDiffs) && g_alphaChecked.reports < 6)
+            {
+                ++g_alphaChecked.reports;
+                size_t at = 0;
+                while (at < ours.size() && std::memcmp(&ours[at], game + 8u * at, 8) == 0)
+                    ++at;
+                uint64_t theirs = 0;
+                if (at < ours.size())
+                    std::memcpy(&theirs, game + 8u * at, 8);
+                std::cerr << "[wrestlers] see-through check: part 0x" << std::hex << part << ": first different word " << std::dec
+                          << at << " of " << ours.size() << " (ours 0x" << std::hex << (at < ours.size() ? ours[at] : 0ull)
+                          << ", the game's 0x" << theirs << std::dec << "), " << vertexDiffs << " of " << vertices
+                          << " vertices different" << std::endl;
+            }
+            if (Clock::now() - g_alphaChecked.last >= std::chrono::seconds(5))
+            {
+                g_alphaChecked.last = Clock::now();
+                std::cerr << "[wrestlers] see-through check, 5 s: " << g_alphaChecked.parts << " parts (" << g_alphaChecked.triangles
+                          << " triangles): " << g_alphaChecked.same << " packets the same as the game's byte for byte, "
+                          << g_alphaChecked.different << " different; vertices: " << g_alphaChecked.vertices << ", "
+                          << g_alphaChecked.verticesDifferent << " different" << std::endl;
+                const int reports = g_alphaChecked.reports;
+                g_alphaChecked = {};
+                g_alphaChecked.reports = reports;
+            }
         }
 
         GSGpuRenderer *gpu() { return g_runtime ? g_runtime->gs().gpuRendererForSettings() : nullptr; }
@@ -922,7 +1228,7 @@ namespace vendetta_wrestlerdraw
             const uint32_t bytes = word(p + 4);
             uint32_t setupRows = 0;
             std::vector<Batch> batches;
-            if (bytes == 0u || bytes > 0x100000u || stream < p || stream + bytes > end ||
+            if (bytes == 0u || bytes > kMaxStreamBytes || stream < p || stream + bytes > end ||
                 !readStream(stream, bytes, setupRows, batches) || setupRows < 7u)
                 return false;
             auto inSetup = [&](uint32_t address) { // a palette: 8 rows from its address
@@ -1026,6 +1332,196 @@ namespace vendetta_wrestlerdraw
             return parent;
         }
 
+        // A mod's see-through part (ALPHA1 slot 6 / ALPHA2 slot 7) checked whole, so the game's posing and mounting and
+        // our draw stay inside it: its bones, vertices and triangles inside the part; every bone link -1 or one of its
+        // bones (FUN_001b4880 follows any other value), every bone reached once from bone 0, no deeper than the walk
+        // allows; every vertex's bones its own (B -1: one bone), every triangle's vertices its own; ALPHA1 at least the
+        // 9 bones the body's template poses in it. nullptr, or what is wrong.
+        const char *checkAlpha(const uint8_t *p, uint32_t size, int slot)
+        {
+            if (size < 0x20u)
+                return "it is cut short";
+            const uint32_t bones = word(p), vertices = word(p + 4), triangles = word(p + 8);
+            if (bones == 0u || 0x20ull + 0x190ull * bones + 0x48ull * vertices + 12ull * triangles > size)
+                return "its data runs past the part";
+            if (slot == kAlpha1 && bones < kAlpha1Posed)
+                return "it has fewer bones than the 9 the game poses in it";
+            std::vector<uint8_t> seen(bones, 0);
+            std::vector<std::pair<uint32_t, uint32_t>> stack{{0u, 1u}};
+            uint32_t reached = 0;
+            while (!stack.empty())
+            {
+                const auto [b, depth] = stack.back();
+                stack.pop_back();
+                if (seen[b]++)
+                    return "its bones link in a loop";
+                if (depth > kWalkDepth)
+                    return "its bones nest deeper than the game's walk allows (512)";
+                ++reached;
+                for (int link = 0; link < 2; ++link)
+                {
+                    const int32_t next = static_cast<int32_t>(word(p + 0x20 + 0x190 * b + 4 * link));
+                    if (next == -1)
+                        continue;
+                    if (next < 0 || uint32_t(next) >= bones)
+                        return "a bone links to a bone it doesn't have";
+                    stack.push_back({static_cast<uint32_t>(next), depth + 1u});
+                }
+            }
+            if (reached != bones)
+                return "some bones aren't linked to the rest";
+            const uint8_t *vertex0 = p + 0x20 + 0x190u * bones;
+            for (uint32_t i = 0; i < vertices; ++i)
+            {
+                const int32_t a = static_cast<int32_t>(word(vertex0 + 0x48u * i + 0x20));
+                const int32_t b = static_cast<int32_t>(word(vertex0 + 0x48u * i + 0x24));
+                if (a < 0 || uint32_t(a) >= bones || (b != -1 && (b < 0 || uint32_t(b) >= bones)))
+                    return "a vertex hangs from a bone it doesn't have";
+            }
+            const uint8_t *triangle0 = vertex0 + 0x48u * vertices;
+            for (uint32_t k = 0; k < 3u * triangles; ++k)
+                if (word(triangle0 + 4u * k) >= vertices)
+                    return "a triangle uses a vertex it doesn't have";
+            return nullptr;
+        }
+
+        // ---- the model behind: one whose rig has the mod's parents
+
+        // A model's rig: per part (BODY, FACE, the hands) the parents of the game's rig's bones (42, 11, 13, 13); a part
+        // missing, or with fewer bones, left empty
+        struct Rig
+        {
+            std::vector<int32_t> parents[6];
+        };
+
+        // The rig read from a WRS (`read(offset, bytes, to)` reads its bytes). False: not a WRS.
+        template <class Read>
+        bool readRig(Read read, Rig &rig)
+        {
+            uint8_t head[0x90];
+            if (!read(0u, 0x90u, head) || std::memcmp(head, "WRS ", 4) != 0)
+                return false;
+            for (int slot : {kBody, kFace, kLeftHand, kRightHand})
+            {
+                const int32_t w = static_cast<int32_t>(word(head + 0x10 + 4 * slot));
+                const int64_t at = 0x10 + 4 * slot + int64_t(w);
+                uint8_t top[0x10];
+                if (w == -1 || at <= 0 || at > 0x10000000 || !read(uint32_t(at), 0x10u, top))
+                    continue;
+                const uint32_t bones = word(top + 8);
+                if (bones < standardBones(slot) || bones > 0x10000u)
+                    continue;
+                std::vector<uint8_t> part(0x10u + 0x190u * bones);
+                if (!read(uint32_t(at), uint32_t(part.size()), part.data()))
+                    continue;
+                rig.parents[slot] = parents(part.data(), bones);
+                rig.parents[slot].resize(standardBones(slot));
+            }
+            return true;
+        }
+
+        // The check pointSlots makes: every part both have, the game's rig's bones hanging from the same bones
+        bool sameRig(const Rig &mod, const Rig &game)
+        {
+            for (int slot : {kBody, kFace, kLeftHand, kRightHand})
+                if (!mod.parents[slot].empty() && !game.parents[slot].empty() && mod.parents[slot] != game.parents[slot])
+                    return false;
+            return true;
+        }
+
+        // A game model's rig, by its DATA.BIN entry (read from the game's DATA\DATA.BIN through the table at 0x256F40,
+        // as FUN_00165838 loads it); nullptr: not readable
+        const Rig *gameRig(uint8_t *rdram, uint32_t entry)
+        {
+            static std::unordered_map<uint32_t, std::unique_ptr<Rig>> cache;
+            if (const auto found = cache.find(entry); found != cache.end())
+                return found->second.get();
+            std::unique_ptr<Rig> rig;
+            if (entry > 0u && entry < kDataEntries)
+            {
+                const uint32_t sector = word(mem(rdram, kDataTable + 8u * entry)), sectors = word(mem(rdram, kDataTable + 8u * entry + 4u));
+                std::ifstream in(PS2Runtime::getIoPaths().elfDirectory / "DATA" / "DATA.BIN", std::ios::binary);
+                auto read = [&](uint32_t offset, uint32_t bytes, uint8_t *to) {
+                    if (!in.is_open() || uint64_t(offset) + bytes > uint64_t(sectors) * 2048u)
+                        return false;
+                    in.clear();
+                    in.seekg(static_cast<std::streamoff>(uint64_t(sector) * 2048u + offset));
+                    in.read(reinterpret_cast<char *>(to), bytes);
+                    return static_cast<bool>(in);
+                };
+                auto made = std::make_unique<Rig>();
+                if (readRig(read, *made))
+                    rig = std::move(made);
+            }
+            return (cache[entry] = std::move(rig)).get();
+        }
+
+        // "Briggs'" / "Capone's": the game wrestler whose model a DATA.BIN entry is (the first record wearing it)
+        std::string modelOwner(uint8_t *rdram, uint32_t entry)
+        {
+            for (uint32_t record = 0; record < kGameModelRecords; ++record)
+                if (word(mem(rdram, kGameCharacters + kRecordSize * record + kRecordModel)) == entry)
+                {
+                    std::string name = vendetta_wrestlers::gameFullName(record);
+                    for (size_t i = 0; i < name.size(); ++i) // BRIGGS -> Briggs, GHOSTFACE KILLAH -> Ghostface Killah
+                        if (i > 0 && std::isalpha(static_cast<unsigned char>(name[i - 1])) && name[i - 1] != '\'')
+                            name[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(name[i])));
+                    if (!name.empty())
+                        return name + (name.back() == 's' || name.back() == 'S' ? "'" : "'s");
+                }
+            return "the game's";
+        }
+
+        // At start: each record with a mod model of the game's format gets a model behind whose rig has the mod's
+        // parents (the record's + 0x1C, which FUN_00165838 loads at each match): the one it has (a replaced attire's own,
+        // a new attire's Briggs') when it matches, else Briggs', else the first game model in record order that does
+        // (Capone's for a model built on his rig). None matches: it stays, and the match says so (pointSlots).
+        void chooseModelsBehind(uint8_t *rdram)
+        {
+            for (uint32_t record = 0; record < vendetta_wrestlers::endRecord(); ++record)
+            {
+                const vendetta_wrestlers::ModelFile *files = vendetta_wrestlers::modelFile(record);
+                if (!files || files->model.extension() != ".wrs")
+                    continue;
+                std::ifstream in(files->model, std::ios::binary);
+                const std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                Rig mod;
+                auto read = [&](uint32_t offset, uint32_t bytes, uint8_t *to) {
+                    if (uint64_t(offset) + bytes > file.size())
+                        return false;
+                    std::memcpy(to, file.data() + offset, bytes);
+                    return true;
+                };
+                if (!readRig(read, mod))
+                    continue; // not readable: the match's read says what is wrong
+                const uint32_t field = vendetta_store::kCharacterTable + kRecordSize * record + kRecordModel;
+                const uint32_t now = word(mem(rdram, field));
+                const Rig *own = gameRig(rdram, now);
+                if (!own || sameRig(mod, *own))
+                    continue;
+                uint32_t found = 0;
+                for (uint32_t r = 0; r < kGameModelRecords && !found; ++r)
+                {
+                    const uint32_t entry = word(mem(rdram, kGameCharacters + kRecordSize * r + kRecordModel));
+                    if (entry != 0u && entry != now)
+                        if (const Rig *rig = gameRig(rdram, entry); rig && sameRig(mod, *rig))
+                            found = entry;
+                }
+                const std::string what = "[wrestlers] " + files->modName + ": " + files->wrestler + " (record " +
+                                         std::to_string(record) + "): " + files->model.filename().string();
+                if (!found)
+                {
+                    std::cerr << what << ": its rig is no game model's (" << modelOwner(rdram, now) << " model stays behind it)"
+                              << std::endl;
+                    continue;
+                }
+                std::memcpy(mem(rdram, field), &found, 4);
+                const std::string owner = modelOwner(rdram, found);
+                std::cerr << what << ": its rig matches " << owner << " model, not " << modelOwner(rdram, now) << ": " << owner
+                          << " model stands behind it" << std::endl;
+            }
+        }
+
         // A template's keyed channels (its bones not skipped: rotation, position), or ~0u when it isn't one (a u32 count
         // of 32-byte bones {flags, rotation, position}: flags 1 rotation keyed, 2 position keyed, 4 skipped)
         uint32_t templateChannels(const uint8_t *t, uint32_t size, uint32_t least, uint32_t most)
@@ -1098,7 +1594,7 @@ namespace vendetta_wrestlerdraw
                                     : nullptr;
                 if (wrong)
                 {
-                    vendetta_mods::problem() << m.what << ": " << t.name << ": " << wrong << ": Briggs' are used" << std::endl;
+                    vendetta_mods::problem() << m.what << ": " << t.name << ": " << wrong << ": " << m.behind << " are used" << std::endl;
                     continue;
                 }
                 if (t.motion >= 0 && !m.at(t.motion))
@@ -1110,12 +1606,13 @@ namespace vendetta_wrestlerdraw
         }
 
         // A mod's model read and checked: the game's format (WRS); glTF to come. Anything wrong: a line in mods.log and
-        // the model behind it (Briggs') is used instead, the whole match.
-        std::unique_ptr<ModModel> loadModel(const vendetta_wrestlers::ModelFile &files)
+        // the model behind it (`behind`: "Briggs'", or whose it is) is used instead, the whole match.
+        std::unique_ptr<ModModel> loadModel(const vendetta_wrestlers::ModelFile &files, const std::string &behind)
         {
             auto m = std::make_unique<ModModel>();
+            m->behind = behind;
             const std::string what = "[wrestlers] " + files.modName + ": " + files.wrestler + ": " + files.model.filename().string();
-            const char *const instead = ": Briggs' model is used instead";
+            const std::string instead = ": " + behind + " model is used instead";
             if (files.model.extension() != ".wrs")
             {
                 vendetta_mods::problem() << what << ": glTF models are not read yet" << instead << std::endl;
@@ -1178,6 +1675,16 @@ namespace vendetta_wrestlerdraw
                 }
             }
             checkPointed(*m);
+            // its own see-through parts, when it has them: posed and mounted by the game's code, drawn by ours
+            for (int slot : {kAlpha1, kAlpha2})
+                if (const uint8_t *a = m->at(slot))
+                {
+                    if (const char *wrong = checkAlpha(a, m->partSize[slot], slot))
+                        vendetta_mods::problem() << what << ": its see-through part " << (slot == kAlpha1 ? "ALPHA1" : "ALPHA2")
+                                                 << ": " << wrong << ": not drawn" << std::endl;
+                    else
+                        m->pointable[slot] = true;
+                }
             if (gpu() && !makeSkin(*m, files)) // (the CPU renderer has no host images: the model behind's skin there)
             {
                 vendetta_mods::problem() << what << ": no skin can be read (none in textures\\ and the file's own is damaged)"
@@ -1200,7 +1707,9 @@ namespace vendetta_wrestlerdraw
                 return nullptr;
             auto found = g_models.find(record);
             if (found == g_models.end())
-                found = g_models.emplace(record, loadModel(*files)).first;
+                found = g_models.emplace(record, loadModel(*files, modelOwner(rdram, word(mem(rdram, vendetta_store::kCharacterTable +
+                                                                                          kRecordSize * record + kRecordModel)))))
+                            .first;
             return found->second->ok ? found->second.get() : nullptr;
         }
 
@@ -1286,8 +1795,10 @@ namespace vendetta_wrestlerdraw
         // there: BODY and BODY2 at the mod's BODY, its FACE and hands (every bone's current local preset to its rest
         // local, so a bone no template reaches holds its rest pose under its parent), the body's template cut to the
         // rig's 42 (the SHADOW, the model behind's own, is posed with it too), the other templates and the motions whole,
-        // the see-through parts at none. Before a model behind's words first change: the rig's bones must have the same
-        // parents in the mod's parts as in the game's. False: the model can't be posed (a line in mods.log).
+        // the see-through parts at the mod's own (ALPHA2 only with at least the bones the face's template poses in it:
+        // FUN_001b2998 poses it with that template, FUN_001b4620 bone by bone for its count) or at none. Before a model
+        // behind's words first change: the rig's bones must have the same parents in the mod's parts as in the game's
+        // (chooseModelsBehind picked a model behind that has). False: the model can't be posed (a line in mods.log).
         bool pointSlots(uint32_t carrier, ModModel &m)
         {
             if (!g_pointed.count(carrier))
@@ -1302,10 +1813,25 @@ namespace vendetta_wrestlerdraw
                         if (pm[k] != pg[k])
                         {
                             vendetta_mods::problem() << m.what << ": its bone " << k << (slot == kBody ? " of the body" : slot == kFace ? " of the face" : " of a hand")
-                                                     << " hangs from another bone than in the game's rig: Briggs' model is used instead" << std::endl;
+                                                     << " hangs from another bone than in " << m.behind << " rig: " << m.behind
+                                                     << " model is used instead" << std::endl;
                             return false;
                         }
                 }
+            if (!m.placedAt[kBody] && m.pointable[kAlpha2])
+            {
+                // the face's template the game will pose ALPHA2 with: the mod's (if pointed) or the model behind's
+                uint32_t poses = m.pointable[9] ? word(m.at(9)) : 0u;
+                if (const uint32_t game = slotTarget(carrier, 9))
+                    poses = std::max(poses, word(vendetta_store::host(game)));
+                if (word(m.at(kAlpha2)) < poses)
+                {
+                    m.pointable[kAlpha2] = false;
+                    vendetta_mods::problem() << m.what << ": its see-through part ALPHA2 has " << word(m.at(kAlpha2))
+                                             << " bones, fewer than the " << poses << " the face's template poses in it: not drawn"
+                                             << std::endl;
+                }
+            }
             if (!m.placedAt[kBody])
             {
                 uint64_t total = 0;
@@ -1317,7 +1843,8 @@ namespace vendetta_wrestlerdraw
                                           : 0u;
                 if (!base)
                 {
-                    vendetta_mods::problem() << m.what << ": no room for it in the game's memory: Briggs' model is used instead" << std::endl;
+                    vendetta_mods::problem() << m.what << ": no room for it in the game's memory: " << m.behind << " model is used instead"
+                                             << std::endl;
                     return false;
                 }
                 uint32_t at = base;
@@ -1341,13 +1868,18 @@ namespace vendetta_wrestlerdraw
                     std::cerr << ", the face's " << word(m.at(kFace) + 8);
                 if (m.at(kLeftHand) && m.at(kRightHand))
                     std::cerr << ", the hands' " << word(m.at(kLeftHand) + 8) << " / " << word(m.at(kRightHand) + 8);
-                std::cerr << "; " << m.partSize[14] << " bytes of face expressions), the model behind pointed at it" << std::endl;
+                std::cerr << "; " << m.partSize[14] << " bytes of face expressions";
+                for (int slot : {kAlpha1, kAlpha2})
+                    if (m.pointable[slot])
+                        std::cerr << "; see-through " << (slot == kAlpha1 ? "ALPHA1" : "ALPHA2") << " " << word(m.at(slot)) << " bones, "
+                                  << word(m.at(slot) + 8) << " triangles";
+                std::cerr << "), " << m.behind << " model behind pointed at it" << std::endl;
             }
             Pointed &pointed = g_pointed[carrier];
             for (int slot = kFirstPointed; slot <= kLastPointed; ++slot)
             {
                 const int from = slot == kBody2 ? kBody : slot;
-                const bool none = slot == 6 || slot == 7;
+                const bool none = (slot == kAlpha1 || slot == kAlpha2) && !m.pointable[slot];
                 if (!none && !m.pointable[from])
                     continue;
                 const uint32_t at = slotField(carrier, slot);
@@ -1365,8 +1897,8 @@ namespace vendetta_wrestlerdraw
                             m.pointable[slot + 5] = false; // its motion only with it
                         vendetta_mods::problem() << m.what << ": "
                                                  << (slot == 8 ? "the body's" : slot == 9 ? "the face's" : slot == 10 ? "the lips'" : "the eyes'")
-                                                 << " template keys the game's rig differently from the game's animations: Briggs' is used"
-                                                 << std::endl;
+                                                 << " template keys the game's rig differently from the game's animations: "
+                                                 << m.behind << " is used" << std::endl;
                         continue;
                     }
                 }
@@ -1430,18 +1962,32 @@ namespace vendetta_wrestlerdraw
             g_originalPose(rdram, ctx, runtime);
         }
 
-        // FUN_001b2088(fighter): the model behind a mod model has no see-through parts on screen; the mod model's own
-        // (its triangles touching partly clear skin) are drawn here instead, High Poly or not
+        // FUN_001b2088(fighter) for a mod model: its own see-through parts (ALPHA1, then ALPHA2), as the game draws a game
+        // model's, High Poly only (the game's test at 0x1B20B8), each the part the model behind's slot word reaches (the
+        // mod's, posed this picture by the game); then its triangles touching partly clear skin, High Poly or not
         void seeThroughHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t fighter = getRegU32(ctx, 4);
-            if (modelOf(rdram, fighter))
+            if (ModModel *m = modTurn() ? modelOf(rdram, fighter) : nullptr)
             {
                 SeeThroughList &list = g_seeThrough[fighter & 3u];
                 list.noPass = false;
+                const uint32_t rig = kRigs + kRigSize * (fighter & 3u);
+                const uint32_t carrier = word(mem(rdram, rig + kRigModel));
+                if (!g_alphaCheck && carrier && (word(mem(rdram, rig + kRigFlags)) & 1u))
+                    for (int slot : {kAlpha1, kAlpha2})
+                        if (m->placedAt[slot] && slotTarget(carrier, slot) == m->placedAt[slot])
+                            drawAlpha(rdram, m->placedAt[slot], rig, list);
                 if (list.pending)
                     drawSeeThrough(list, kSeeThroughTest);
                 list.pending = false;
+                if (g_alphaCheck)
+                {
+                    // the check: the game's own routine draws the mod's parts (the model behind's skin), its FUN_001b49a0
+                    // compared with ours
+                    g_originalSeeThrough(rdram, ctx, runtime);
+                    return;
+                }
                 ctx->pc = getRegU32(ctx, 31);
                 return;
             }
@@ -1515,7 +2061,7 @@ namespace vendetta_wrestlerdraw
                 return;
             }
             // a mod fighter's own model: drawn at the body's call, nothing at the hands' and face's
-            if (const uint32_t fighter = fighterOf(rdram, part); fighter < 4u)
+            if (const uint32_t fighter = fighterOf(rdram, part); fighter < 4u && modTurn())
                 if (ModModel *m = modelOf(rdram, fighter))
                 {
                     if (ra == kFromBody)
@@ -1581,7 +2127,8 @@ namespace vendetta_wrestlerdraw
         bool modModels = false;
         for (uint32_t record = 0; record < vendetta_wrestlers::endRecord(); ++record) // new and replaced attires
             modModels = modModels || vendetta_wrestlers::modelFile(record) != nullptr;
-        if ((v.empty() || v == "0") && !modModels)
+        g_alphaCheck = std::getenv("VENDETTA_SEETHROUGH_CHECK") && *std::getenv("VENDETTA_SEETHROUGH_CHECK") != '0';
+        if ((v.empty() || v == "0") && !modModels && !g_alphaCheck)
             return;
         if (v.empty() || v == "0")
             g_mode = Mode::Off;
@@ -1607,15 +2154,22 @@ namespace vendetta_wrestlerdraw
         g_originalDrawPart = runtime.lookupFunction(kDrawPart);
         g_originalPose = runtime.lookupFunction(kPose);
         g_originalSeeThrough = runtime.lookupFunction(kSeeThrough);
-        if (!g_originalDrawPart || !g_originalPose || !g_originalSeeThrough)
+        g_originalAlphaDraw = runtime.lookupFunction(kAlphaDraw);
+        if (!g_originalDrawPart || !g_originalPose || !g_originalSeeThrough || !g_originalAlphaDraw)
         {
             vendetta_mods::problem() << "[wrestlers] the game's fighter draw routines not found: off" << std::endl;
             g_mode = Mode::Off;
             return;
         }
         runtime.replaceFunction(kDrawPart, drawPartHook);
+        if (g_alphaCheck)
+        {
+            runtime.replaceFunction(kAlphaDraw, alphaCheckHook);
+            std::cerr << "[wrestlers] VENDETTA_SEETHROUGH_CHECK: the game's see-through draw checked against ours" << std::endl;
+        }
         if (modModels)
         {
+            chooseModelsBehind(runtime.memory().getRDRAM());
             runtime.replaceFunction(kPose, poseHook);
             runtime.replaceFunction(kSeeThrough, seeThroughHook);
             vendetta_store::onMatchEmptied(pointAllBack);
