@@ -188,6 +188,13 @@ namespace vendetta_arenas
 
         Mode g_mode = Mode::Off;
         bool g_vramTextures = false; // ours samples the game's uploaded textures, not host images
+        // the marked check (VENDETTA_ARENADRAW=check with VENDETTA_ARENA_FULLSTANDIN=1 on a marked arena): our marked
+        // block's triangles with their state, and the game's from its scenery draws, compared as two sets
+        bool g_markCollecting = false, g_sceneryTap = false;
+        uint64_t g_markEarly = 0; // scenery draws the scheduler left early (their rest read when it runs)
+        std::vector<GsTriangle> g_markOurs, g_markGame;
+        std::vector<int32_t> g_markOursPart; // the part each of ours came from
+        GsReader g_markOurReader, g_markGameReader;
         double g_abSeconds = 2.0;
         bool g_log = false;
         PS2Runtime *g_runtime = nullptr;
@@ -257,6 +264,44 @@ namespace vendetta_arenas
         // the scene, its textures, the crowd's people and their clips, each part as the game keeps it) and an optional
         // textures\ folder (PNGs at any size; pictures.json names each one's GS address, else a PNG named "@<address>",
         // the address in hexadecimal). It keeps every part of the arena it was made from (it may empty one).
+        // A piece's marks (the file's part -3, "DRAW"): how our code draws it, whatever the venue it was made from.
+        // Every clock follows the match's step (0 paused, 0.45 in the slow motion), as the venues' own do.
+        struct MarkFrame
+        {
+            uint32_t picture = 0, palette = 0; // its GS addresses (TBP, CBP)
+            int32_t steps = 1;                 // how many steps it shows (the first frame one more, as the game's)
+        };
+        struct MarkCopy
+        {
+            float at[3] = {};        // a camera-facing piece's place for this copy
+            float start = 0.0f;      // its flip clock's first value
+            float clock = 0.0f;
+        };
+        // One material slot of a piece showing pictures in turn (a piece can have several: a big screen's)
+        struct MarkFlip
+        {
+            uint32_t slot = 0, width = 0, height = 0, bpp = 0;
+            float length = 0.0f, start = 0.0f, clock = 0.0f;
+            std::vector<MarkFrame> frames;
+            bool shown = false;     // a frame patched in (from the second picture on, as the game's)
+            uint64_t shownTex0 = 0;
+        };
+        struct Mark
+        {
+            int32_t part = 0;
+            enum class Blend { Solid, SeeThrough, Glow } blend = Blend::Solid;
+            bool writesDepth = false;                // see-through with depth written (the Warehouse's way)
+            bool scrolls = false;                    // its texture moves: (u, v) a step, wrapped 0-1
+            float speed[2] = {}, counter[2] = {};
+            bool slides = false;                     // it slides there and back along `unit` up to `distance`
+            float unit[3] = {}, distance = 0.0f, slideSpeed = 0.0f, travelled = 0.0f;
+            bool faces = false;                      // camera-facing: drawn at each copy, turned about y to the camera
+            std::vector<MarkCopy> copies;
+            std::vector<MarkFlip> flips;             // slots showing pictures in turn (camera-facing: the first, a
+                                                     // clock a copy)
+            uint32_t object = 0;                     // its object in the stand-in (0: not there)
+        };
+
         struct ModArena
         {
             std::string what;                // "<mod>: <folder>", for messages
@@ -288,6 +333,10 @@ namespace vendetta_arenas
             uint32_t picture = 0, thumbnail = 0;
             std::filesystem::path name;
             bool isNew = false; // a new place on Choose Stage (stage 12 and on), not a replacement
+            // the file's marks (part -3): every mesh part drawn by our code by its own marks (no mark = solid), the
+            // venue's own scenery draws answered with nothing; none = drawn by part number as the venue draws it
+            bool marked = false;
+            std::vector<Mark> marks;
         };
         std::vector<ModArena> g_modArenas;
         ModArena *g_current = nullptr; // the mod arena loaded now (its stand-in in the store), or none
@@ -1127,9 +1176,19 @@ namespace vendetta_arenas
         std::vector<TriangleSource> g_ourWindowObject, g_ourPreviousObject;
         bool g_checkStarted = false;
 
+        bool markCheck();
+
         void gifTap(void *, uint8_t path, const uint8_t *data, uint32_t bytes)
         {
             (void)path; // every path: ours must be among what the game drew
+            if (markCheck())
+            {
+                // every packet read (the state it sets); the triangles kept while a scenery draw of the venue runs
+                g_markGameReader.track = true;
+                g_markGameReader.out = g_sceneryTap ? &g_markGame : nullptr;
+                g_markGameReader.feed(data, bytes);
+                return;
+            }
             if (!g_checkStarted)
                 return;
             GsReader reader;
@@ -1143,7 +1202,13 @@ namespace vendetta_arenas
             if (packet.q.empty())
                 return;
             packet.end();
-            if (g_mode == Mode::Check)
+            if (g_mode == Mode::Check && g_markCollecting)
+            {
+                g_markOurReader.track = true;
+                g_markOurReader.out = &g_markOurs;
+                g_markOurReader.feed(reinterpret_cast<const uint8_t *>(packet.q.data()), static_cast<uint32_t>(packet.q.size() * 8u));
+            }
+            else if (g_mode == Mode::Check)
             {
                 GsReader reader;
                 reader.out = &g_ourTriangles;
@@ -1161,21 +1226,30 @@ namespace vendetta_arenas
         // {TEX0, register} from 0x40. Kernel 0x10 (the shadow floor, object 99): TEX0 at 0x39 (the shadow picture),
         // the colour at 0x3A (integers), the camera matrix at 0x3B-0x3E, the shadow matrix at 0x3F-0x42 (s, t =
         // (p x it).xy / w), the GIF tags at 0x43 / 0x44.
+        // A marked piece's draw: its own matrix and colour scale (not the ones the game wrote into the object), a flip's
+        // picture in one slot, the blend bit (ABE) from its marks and context 2 (a file's tag can't change them)
+        struct DrawWith
+        {
+            const float *matrix = nullptr, *scale = nullptr;
+            const std::vector<std::pair<uint32_t, uint64_t>> *slots = nullptr; // {a slot's guest address, its TEX0}
+            int abe = -1;          // 0 / 1; -1: the tag's
+        };
+
         // The VU's rounding (toward zero) while our draw does the kernel's maths, the caller's after
-        void drawOurs(uint8_t *rdram, const Mesh &mesh, bool scrolled, float du, float dv)
+        void drawOurs(uint8_t *rdram, const Mesh &mesh, bool scrolled, float du, float dv, const DrawWith *with = nullptr)
         {
             const VuRounding rounding;
             const bool shadow = mesh.kernel == 0x10u;
             auto vu = [&](uint32_t address) { return mesh.table + (address - 0x39u) * 16u; };
             float m[16], m2[16] = {}, scale[4] = {};
             for (int i = 0; i < 16; ++i)
-                m[i] = readFloat(rdram, vu(0x3Bu) + 4u * i);
+                m[i] = with && with->matrix ? with->matrix[i] : readFloat(rdram, vu(0x3Bu) + 4u * i);
             if (shadow)
                 for (int i = 0; i < 16; ++i)
                     m2[i] = readFloat(rdram, vu(0x3Fu) + 4u * i);
             else
                 for (int i = 0; i < 4; ++i)
-                    scale[i] = readFloat(rdram, vu(0x3Fu) + 4u * i);
+                    scale[i] = with && with->scale ? with->scale[i] : readFloat(rdram, vu(0x3Fu) + 4u * i);
             float shadowColour[4] = {};
             if (shadow)
                 for (int i = 0; i < 4; ++i)
@@ -1183,12 +1257,16 @@ namespace vendetta_arenas
 
             uint64_t tagLo;
             std::memcpy(&tagLo, guest(rdram, vu(shadow ? 0x43u : 0x39u)), 8); // the strips' GIF tag
-            const uint64_t primBits = ((tagLo >> 47) & 0x7FFull) & ~7ull;      // IIP TME FGE ABE AA1 FST CTXT FIX
-            const uint64_t prim = primBits | 3ull;                             // triangles
+            // a marked piece: ABE from its marks, context 2
+            auto marked = [&](uint64_t bits) {
+                return with && with->abe >= 0 ? (bits & ~0x40ull) | (with->abe ? 0x40ull : 0ull) | 0x200ull : bits;
+            };
+            const uint64_t primBits = marked(((tagLo >> 47) & 0x7FFull) & ~7ull); // IIP TME FGE ABE AA1 FST CTXT FIX
+            const uint64_t prim = primBits | 3ull;                                 // triangles
             uint64_t fanLo = 0;
             if (mesh.fanTag)
                 std::memcpy(&fanLo, guest(rdram, mesh.fanTag), 8);
-            const uint64_t fanPrim = mesh.fanTag ? (fanLo >> 47) & 0x7FFull : (primBits | 5ull); // the fan's PRIM
+            const uint64_t fanPrim = mesh.fanTag ? marked((fanLo >> 47) & 0x7FFull) : (primBits | 5ull); // the fan's PRIM
 
             const bool host = !g_vramTextures && gpu() != nullptr;
             // kept from draw to draw (the game thread only): no allocation once they have grown
@@ -1245,6 +1323,10 @@ namespace vendetta_arenas
                     const uint8_t *slot = slotBytes(rdram, mesh, batch);
                     std::memcpy(&tex0, slot, 8);
                     std::memcpy(&reg, slot + 8, 8);
+                    if (with && with->slots)
+                        for (const auto &[at, value] : *with->slots)
+                            if (batch.slot == at)
+                                tex0 = value;
                     // The kernel sends the slot's quadword as an A+D write. Where an earlier batch's vertices lie (the
                     // 6 batches above), its register byte is 0x00 (PRIM, which the next tag sets again) or 0xE4 (no
                     // register): the TEX0 stays the last batch's, and the card shows that picture.
@@ -1659,8 +1741,399 @@ namespace vendetta_arenas
             g_check = {};
         }
 
+        // ------------------------------------------------------------------ a marked arena, drawn by its marks
+        //
+        // The venue's routine keeps running (its 3-D crowd, its uploads, its GS state and syncs); its scenery draws are
+        // answered with nothing, and the first of each picture (part 0's, after the crowd, in every venue) draws every
+        // marked piece instead, in the venue's order of kinds: solid, see-through, glowing, then the camera-facing copies
+        // (as its picture card loop draws them, last). Each kind's GS state is the game's own (ALPHA_2, ZBUF_2), ZBUF_2
+        // 0x80 put back after; nothing else is written. Clocks: scrolls and slides before the draws, the flips' frames
+        // patched after them (shown from the next picture, as the game's), a camera-facing copy's frame at its draw.
+        constexpr uint32_t kArenaModuleFrom = 0x1A3A58u, kArenaModuleTo = 0x1AFAB4u; // the venue routines
+        constexpr uint32_t kArenaPass = 0x1A2150u;    // FUN_001a2150(step): the arena pass (mode 1) of a match picture
+        constexpr uint32_t kHeading = 0x258084u;      // the camera's heading (a camera-facing card's turn)
+        constexpr uint32_t kArenaColour = 0x1430D60u; // the colour scale every scenery draw is given (1, 1, 1, 1)
+        PS2Runtime::RecompiledFunction g_originalArenaPass = nullptr;
+        bool g_markPicture = false; // a new picture: its first scenery call draws the marked arena
+        float g_markStep = 0.0f;    // the picture's step (the venue routine's f12)
+        uint64_t frameTex0(uint32_t width, uint32_t height, uint32_t bpp, uint32_t tbp, uint32_t cbp);
+
+        bool markCheck() { return g_mode == Mode::Check && g_fullStandIn && g_current && g_current->marked; }
+
+        // FUN_001b6520 / FUN_001b6598: out = A x B (rows), each product rounded, summed x, y, z, w in that order
+        void gameMul(float out[16], const float A[16], const float B[16])
+        {
+            float r[16];
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4; ++j)
+                {
+                    float acc = B[j] * A[4 * i];
+                    acc = acc + B[4 + j] * A[4 * i + 1];
+                    acc = acc + B[8 + j] * A[4 * i + 2];
+                    r[4 * i + j] = acc + B[12 + j] * A[4 * i + 3];
+                }
+            std::memcpy(out, r, sizeof(r));
+        }
+
+        // FUN_001b67d0 with the identity: the turn about y, its cosine the VU0 polynomial at 0x25D570 (pi/2 at gp -
+        // 0x71CC), its sine +/- sqrt|1 - cos^2| (valid over -pi to pi)
+        float fromBits(uint32_t bits)
+        {
+            float f;
+            std::memcpy(&f, &bits, 4);
+            return f;
+        }
+
+        void gameTurnY(float angle, float R[16])
+        {
+            const float kHalfPi = fromBits(0x3FC90FDBu);
+            const float kx = fromBits(0x362E9C14u), ky = fromBits(0xB94FB21Fu);
+            const float kz = fromBits(0x3C08873Eu), kw = fromBits(0xBE2AAAA4u);
+            const bool negative = angle < 0.0f;
+            const float x = negative ? kHalfPi + angle : kHalfPi - angle;
+            const float x2 = x * x;
+            float tw = kw * x;
+            tw = tw * x2;
+            float tz = kz * x;
+            tz = tz * x2;
+            tz = tz * x2;
+            float ty = ky * x;
+            ty = ty * x2;
+            ty = ty * x2;
+            ty = ty * x2;
+            float tx = kx * x;
+            tx = tx * x2;
+            tx = tx * x2;
+            tx = tx * x2;
+            tx = tx * x2;
+            float c = x + tw;
+            c = c + tz;
+            c = c + ty;
+            c = c + tx;
+            const float q = std::sqrt(std::fabs(1.0f - c * c));
+            const float sn = negative ? 0.0f - q : 0.0f + q, cs = 0.0f + c;
+            const float rot[16] = {cs, 0, 0.0f - sn, 0, 0, 1, 0, 0, sn, 0, cs, 0, 0, 0, 0, 1};
+            const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            gameMul(R, id, rot);
+        }
+
+        // FUN_001b3688: the frame a clock shows (whole steps counted down the frames; past them all, the first)
+        const MarkFrame &frameAt(const MarkFlip &k, float clock)
+        {
+            int32_t n = static_cast<int32_t>(ps2FpuCvtWS(clock));
+            for (const MarkFrame &f : k.frames)
+            {
+                n -= f.steps;
+                if (n <= 0)
+                    return f;
+            }
+            return k.frames.front();
+        }
+
+        // a flip clock one step on (the length taken off once past it, as the venue's loop does)
+        float flipOn(const MarkFlip &k, float clock, float step)
+        {
+            clock = clock + step;
+            if (k.length < clock)
+                clock = clock - k.length;
+            return clock;
+        }
+
+        uint64_t flipTex0(const MarkFlip &k, float clock)
+        {
+            const MarkFrame &f = frameAt(k, clock);
+            return frameTex0(k.width, k.height, k.bpp, f.picture, f.palette);
+        }
+
+        // A piece's object in the stand-in (the first directory entry with its number; 0 = not there)
+        uint32_t markObject(const uint8_t *rdram, Mark &k)
+        {
+            if (k.object)
+                return k.object == ~0u ? 0u : k.object;
+            k.object = ~0u;
+            const uint32_t scene = Ps2FastRead32(rdram, kScenePointer);
+            const uint32_t count = std::min<uint32_t>(Ps2FastRead32(rdram, scene), 4096u);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const uint32_t entry = scene + 0x14u + 8u * i;
+                if (static_cast<int32_t>(Ps2FastRead32(rdram, entry)) == k.part)
+                {
+                    const uint32_t object = entry + 4u + Ps2FastRead32(rdram, entry + 4u);
+                    if (!emptyPart(object))
+                        k.object = object;
+                    break;
+                }
+            }
+            if (k.object == ~0u)
+                vendetta_mods::problem() << "[arenas] " << g_current->what << ": marked part " << k.part
+                                         << " isn't in the arena: not drawn" << std::endl;
+            return k.object == ~0u ? 0u : k.object;
+        }
+
+        void drawMarked(uint8_t *rdram, const float camera[16])
+        {
+            ModArena &m = *g_current;
+            const float step = g_markStep;
+            // the scrolls and slides, before the draws (the venue's counters, the same way)
+            for (Mark &k : m.marks)
+            {
+                if (k.scrolls)
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        if (k.speed[c] == 0.0f)
+                            continue;
+                        k.counter[c] = k.counter[c] + k.speed[c] * step;
+                        if (k.speed[c] < 0.0f)
+                            while (k.counter[c] < 0.0f)
+                                k.counter[c] = k.counter[c] + 1.0f;
+                        else
+                            while (1.0f < k.counter[c])
+                                k.counter[c] = k.counter[c] - 1.0f;
+                    }
+                if (k.slides)
+                {
+                    const float there = k.distance + k.distance;
+                    k.travelled = k.travelled + k.slideSpeed * step;
+                    while (there < k.travelled)
+                        k.travelled = k.travelled - there;
+                }
+            }
+            float colour[4];
+            for (int i = 0; i < 4; ++i)
+                colour[i] = readFloat(rdram, kArenaColour + 4u * i);
+            // each kind's GS state, written when it changes (the game's values)
+            Packet state;
+            int written = -1;
+            auto setState = [&](const Mark &k) {
+                const int kind = static_cast<int>(k.blend) * 2 + (k.writesDepth ? 1 : 0);
+                if (kind == written)
+                    return;
+                written = kind;
+                state.ad(0x43u, k.blend == Mark::Blend::Glow ? 0x8000000068ull : 0x44ull); // ALPHA_2
+                state.ad(0x4Fu, k.blend == Mark::Blend::Solid || k.writesDepth ? 0x80ull : 0x100000080ull); // ZBUF_2
+                send(state);
+            };
+            std::vector<std::pair<uint32_t, uint64_t>> slots;
+            auto drawPiece = [&](Mark &k, const float *matrix, const std::vector<std::pair<uint32_t, uint64_t>> &patched) {
+                const uint32_t object = markObject(rdram, k);
+                if (!object)
+                    return;
+                Mesh &mesh = meshFor(rdram, object);
+                if (!mesh.ours || mesh.kernel != 0xCu || mesh.table != object + 0xB0u)
+                {
+                    skipUnreadable(rdram, object, "a marked part");
+                    return;
+                }
+                DrawWith with;
+                with.matrix = matrix;
+                with.scale = colour;
+                with.abe = k.blend == Mark::Blend::Solid ? 0 : 1;
+                slots.clear();
+                for (const auto &[slot, tex0] : patched)
+                    slots.emplace_back(object + 0x120u + 16u * slot, tex0); // VU 0x40 + slot
+                with.slots = &slots;
+                setState(k);
+                drawOurs(rdram, mesh, k.scrolls, k.counter[0], k.counter[1], &with);
+                if (g_markCollecting)
+                    g_markOursPart.resize(g_markOurs.size(), k.part);
+            };
+            for (const Mark::Blend kind : {Mark::Blend::Solid, Mark::Blend::SeeThrough, Mark::Blend::Glow})
+                for (Mark &k : m.marks)
+                {
+                    if (k.faces || k.blend != kind)
+                        continue;
+                    float slid[16];
+                    const float *matrix = camera;
+                    if (k.slides)
+                    {
+                        // FUN_001b64c8's identity, its place row the slide's, x the camera (FUN_001b6598)
+                        const float e = k.travelled < k.distance ? k.travelled : (k.distance + k.distance) - k.travelled;
+                        float t[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+                        t[12] = k.unit[0] * e;
+                        t[13] = k.unit[1] * e;
+                        t[14] = k.unit[2] * e;
+                        gameMul(slid, t, camera);
+                        matrix = slid;
+                    }
+                    std::vector<std::pair<uint32_t, uint64_t>> patched;
+                    for (const MarkFlip &f : k.flips)
+                        if (f.shown)
+                            patched.emplace_back(f.slot, f.shownTex0);
+                    drawPiece(k, matrix, patched);
+                }
+            // the camera-facing copies, each turned about y by the camera's heading at its place
+            const float heading = readFloat(rdram, kHeading);
+            for (Mark &k : m.marks)
+            {
+                if (!k.faces)
+                    continue;
+                for (MarkCopy &c : k.copies)
+                {
+                    float card[16], matrix[16];
+                    gameTurnY(heading, card);
+                    card[12] = c.at[0];
+                    card[13] = c.at[1];
+                    card[14] = c.at[2];
+                    gameMul(matrix, card, camera);
+                    std::vector<std::pair<uint32_t, uint64_t>> patched;
+                    if (!k.flips.empty())
+                    {
+                        const MarkFlip &f = k.flips.front();
+                        patched.emplace_back(f.slot, flipTex0(f, c.clock));
+                        c.clock = flipOn(f, c.clock, step);
+                    }
+                    drawPiece(k, matrix, patched);
+                }
+            }
+            // the flips' next frames (drawn from the next picture on)
+            for (Mark &k : m.marks)
+                if (!k.faces)
+                    for (MarkFlip &f : k.flips)
+                    {
+                        f.shownTex0 = flipTex0(f, f.clock);
+                        f.shown = true;
+                        f.clock = flipOn(f, f.clock, step);
+                    }
+            state.ad(0x43u, 0x44ull);
+            state.ad(0x4Fu, 0x80ull);
+            send(state);
+        }
+
+        // The marked check's sets compared: every triangle of ours with its texture, blend (ABE, ALPHA when it blends)
+        // and depth write, against the game's own draw of the same arena (the full stand-in, its own picture cards)
+        struct MarkKey
+        {
+            GsTriangle t;
+            bool operator==(const MarkKey &o) const
+            {
+                const bool blend = (t.prim & 0x40u) != 0u;
+                return TriangleEq()(t, o.t) && t.tex0 == o.t.tex0 && (t.prim & 0x240u) == (o.t.prim & 0x240u) &&
+                       (!blend || t.alpha == o.t.alpha) && ((t.zbuf >> 32) & 1u) == ((o.t.zbuf >> 32) & 1u);
+            }
+        };
+        struct MarkKeyHash
+        {
+            size_t operator()(const MarkKey &k) const
+            {
+                return TriangleHash()(k.t) ^ static_cast<size_t>(k.t.tex0 * 0x9E3779B97F4A7C15ull) ^ (k.t.prim & 0x240u);
+            }
+        };
+
+        void compareMarked()
+        {
+            static auto last = Clock::now();
+            static uint64_t pictures = 0;
+            ++pictures;
+            if (Clock::now() - last < std::chrono::seconds(2))
+                return;
+            last = Clock::now();
+            std::unordered_map<MarkKey, int64_t, MarkKeyHash> count;
+            for (const GsTriangle &t : g_markGame)
+                ++count[{t}];
+            size_t found = 0, missing = 0, repeats = 0, degenerate = 0;
+            std::string example;
+            std::map<std::pair<int32_t, uint32_t>, size_t> where; // {part, primitive type} -> unmatched
+            g_markOursPart.resize(g_markOurs.size(), -99);
+            for (size_t i = 0; i < g_markOurs.size(); ++i)
+            {
+                const GsTriangle &t = g_markOurs[i];
+                auto it = count.find({t});
+                if (it != count.end() && it->second > 0)
+                {
+                    --it->second;
+                    ++found;
+                    continue;
+                }
+                // what an unmatched one is: a triangle the game drew too but fewer times, or one with no area
+                if (it != count.end())
+                    ++repeats;
+                const int64_t area = (int64_t(t.v[1].x) - t.v[0].x) * (int64_t(t.v[2].y) - t.v[0].y) -
+                                     (int64_t(t.v[2].x) - t.v[0].x) * (int64_t(t.v[1].y) - t.v[0].y);
+                if (area == 0)
+                    ++degenerate;
+                ++where[{g_markOursPart[i], t.prim & 7u}];
+                if (++missing == 1)
+                {
+                    char text[160];
+                    std::snprintf(text, sizeof(text), " (first: TEX0 %016llx PRIM %03x ALPHA %llx ZBUF %llx)",
+                                  static_cast<unsigned long long>(t.tex0), t.prim, static_cast<unsigned long long>(t.alpha),
+                                  static_cast<unsigned long long>(t.zbuf));
+                    example = describe(t.v[0]) + text;
+                }
+            }
+            int64_t left = 0;
+            for (const auto &[key, n] : count)
+                left += n;
+            std::cerr << "[arenas] marked check: " << pictures << " pictures, ours " << g_markOurs.size() << " triangles, the game's "
+                      << g_markGame.size() << "; " << found << " the same (texture, blend, depth write too), " << missing
+                      << " of ours not among the game's (" << repeats << " drawn by the game fewer times, " << degenerate
+                      << " with no area), " << left << " of the game's not among ours; " << g_markEarly
+                      << " draws left early" << example;
+            for (const auto &[key, n] : where)
+                std::cerr << " | part " << key.first << " " << (key.second == 5u ? "fan" : key.second == 4u ? "strip" : "list")
+                          << " " << n;
+            std::cerr << std::endl;
+            g_markEarly = 0;
+            g_markOursPart.clear();
+            g_markOurs.clear();
+            g_markGame.clear();
+            pictures = 0;
+        }
+
+        // FUN_001a2150(step): a match picture's arena pass about to run
+        void arenaPass(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            g_sceneryTap = false;
+            if (g_current && g_current->marked)
+            {
+                if (markCheck())
+                    compareMarked();
+                g_markPicture = true;
+                g_markStep = ctx->f[12];
+            }
+            g_originalArenaPass(rdram, ctx, runtime);
+        }
+
+        // A scenery draw of the venue's routine for a marked arena: nothing (the first of a picture draws the marked
+        // arena); in the marked check, the game's own draw, read
+        bool markedCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::RecompiledFunction original)
+        {
+            if (!g_current || !g_current->marked)
+                return false;
+            const uint32_t ra = getRegU32(ctx, 31);
+            if (ra < kArenaModuleFrom || ra >= kArenaModuleTo)
+                return false;
+            if (g_markPicture)
+            {
+                g_markPicture = false;
+                float camera[16];
+                std::memcpy(camera, guest(rdram, getRegU32(ctx, 5)), 64);
+                g_markCollecting = markCheck();
+                drawMarked(rdram, camera);
+                g_markCollecting = false;
+                logStats();
+            }
+            if (markCheck())
+            {
+                // the game's draw read; a call the scheduler leaves early finishes later: the tap stays on until the
+                // next draw of another kind (the shadow floor, a post, a model part) or the next picture
+                const uint32_t sp = getRegU32(ctx, 29);
+                g_sceneryTap = true;
+                original(rdram, ctx, runtime);
+                if (ctx->pc == ra && getRegU32(ctx, 29) == sp)
+                    g_sceneryTap = false;
+                else
+                    ++g_markEarly;
+                return true;
+            }
+            ctx->pc = ra;
+            return true;
+        }
+
         void draw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            if (markedCall(rdram, ctx, runtime, g_originalDraw))
+                return;
             if (checkDraw(rdram, ctx, runtime, g_originalDraw, Call::Plain))
                 return;
             if (tryDraw(rdram, ctx, Call::Plain))
@@ -1673,6 +2146,8 @@ namespace vendetta_arenas
 
         void drawScrolled(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            if (markedCall(rdram, ctx, runtime, g_originalDrawScrolled))
+                return;
             if (checkDraw(rdram, ctx, runtime, g_originalDrawScrolled, Call::Scrolled))
                 return;
             if (tryDraw(rdram, ctx, Call::Scrolled))
@@ -1685,6 +2160,7 @@ namespace vendetta_arenas
 
         void drawShadow(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            g_sceneryTap = false; // the marked check: the arena pass is over
             if (checkDraw(rdram, ctx, runtime, g_originalDrawShadow, Call::Shadow))
                 return;
             if (tryDraw(rdram, ctx, Call::Shadow))
@@ -1855,6 +2331,7 @@ namespace vendetta_arenas
 
         void drawPostHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            g_sceneryTap = false;
             const uint32_t object = getRegU32(ctx, 4), matrix = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
             const bool mod = modOnly();
             if (mod && emptyPart(object))
@@ -1919,6 +2396,7 @@ namespace vendetta_arenas
 
         void drawPartHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            g_sceneryTap = false;
             const uint32_t ra = getRegU32(ctx, 31), part = getRegU32(ctx, 4);
             const uint32_t light = getRegU32(ctx, 5), colours = getRegU32(ctx, 6);
             const bool arena = ra == kFromCrowd || ra == kFromRope || ra == kFromRopeFaded || ra == kFromRopeLowPoly;
@@ -2077,6 +2555,13 @@ namespace vendetta_arenas
                         ++images;
                 }
             }
+            // a marked arena's flipping pictures (their frames, as the picture cards' above)
+            if (host && g_current && g_current->marked)
+                for (const Mark &k : g_current->marks)
+                    for (const MarkFlip &flip : k.flips)
+                        for (const MarkFrame &f : flip.frames)
+                            if (imageFor(frameTex0(flip.width, flip.height, flip.bpp, f.picture, f.palette)))
+                                ++images;
             // the 3-D crowd's people: four model pointers each (self-relative), their skins in the part 1 just replayed
             const uint32_t people = Ps2FastRead32(rdram, kCrowd + 8u);
             if (host && Ps2FastRead32(rdram, kCrowd) == 0x20445541u && people < 0x1000u &&
@@ -2704,6 +3189,199 @@ namespace vendetta_arenas
             return true;
         }
 
+        // ------------------------------------------------------------------ the marks (part -3, "DRAW")
+        //
+        // {"DRAW", u32 the bytes after these 8, then UTF-8 JSON}: {"version": 1, "pieces": [{"part": id, "glow": bool,
+        // "see-through": bool, "writes depth": bool, "scroll": [u, v] (texture widths a step), "slide": {"by": [x, y,
+        // z], "speed": units a step} (there and back), "faces camera": bool, "copies": [{"at": [x, y, z], "start":
+        // clock}], "flips": [{"slot": n, "width": w, "height": h, "bits": 4 | 8 | 16 | 24 | 32, "length": steps,
+        // "start": clock, "frames": [{"picture": TBP, "palette": CBP, "steps": n}]}] (or one as "flip")}]}. A
+        // camera-facing piece's copies each run their own clock of its first flip. Glow over see-through over
+        // solid; a mesh part with no mark is drawn solid; the game's own parts (2, 81-92, 98, 99, below 0) take none.
+        bool reservedPart(int32_t id) { return id < 0 || id == 2 || (id >= 81 && id <= 92) || id == 98 || id == 99; }
+
+        void resetMarks(ModArena &m)
+        {
+            for (Mark &k : m.marks)
+            {
+                k.counter[0] = k.counter[1] = 0.0f;
+                k.travelled = 0.0f;
+                for (MarkFlip &f : k.flips)
+                {
+                    f.clock = f.start;
+                    f.shown = false;
+                    f.shownTex0 = 0;
+                }
+                for (MarkCopy &c : k.copies)
+                    c.clock = c.start;
+                k.object = 0;
+            }
+        }
+
+        // False: the file has no part -3 (drawn as before)
+        bool readMarks(ModArena &m)
+        {
+            m.marks.clear();
+            m.marked = false;
+            const uint8_t *scene = m.file.data() + m.scene;
+            const auto parts = sceneParts(scene, m.sceneBytes);
+            const auto draw = std::find_if(parts.begin(), parts.end(), [](const auto &p) { return p.first == -3; });
+            if (draw == parts.end())
+                return false;
+            m.marked = true;
+            const uint32_t at = draw->second;
+            auto problem = [&](const std::string &what) {
+                vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena's marks (part -3): " << what << std::endl;
+            };
+            std::vector<int32_t> marked;
+            if (uint64_t(at) + 8u > m.sceneBytes || std::memcmp(scene + at, "DRAW", 4) != 0 ||
+                uint64_t(at) + 8u + word(scene + at + 4u) > m.sceneBytes)
+                problem("not a DRAW part, or it runs past the scene: every part drawn solid");
+            else
+            {
+                const std::string text(reinterpret_cast<const char *>(scene + at + 8u), word(scene + at + 4u));
+                vendetta_mods::Json json;
+                std::string error;
+                const vendetta_mods::Json *pieces = nullptr;
+                if (!vendetta_mods::parseJson(text.substr(0, text.find('\0')), json, error) || !json.isObject() ||
+                    !(pieces = json.find("pieces")) || !pieces->isArray())
+                    problem("can't be read (" + (error.empty() ? std::string("no \"pieces\" list") : error) +
+                            "): every part drawn solid");
+                else
+                    for (const vendetta_mods::Json &p : pieces->items)
+                    {
+                        auto num = [&](const vendetta_mods::Json *j, double fallback) {
+                            return j && j->type == vendetta_mods::Json::Type::Number ? j->number : fallback;
+                        };
+                        auto yes = [&](const char *key) {
+                            const vendetta_mods::Json *j = p.find(key);
+                            return j && j->type == vendetta_mods::Json::Type::Bool && j->boolean;
+                        };
+                        const vendetta_mods::Json *partJ = p.isObject() ? p.find("part") : nullptr;
+                        if (!partJ || partJ->type != vendetta_mods::Json::Type::Number)
+                        {
+                            problem("a piece without its part number: left out");
+                            continue;
+                        }
+                        Mark k;
+                        k.part = static_cast<int32_t>(partJ->number);
+                        if (reservedPart(k.part))
+                        {
+                            problem("part " + std::to_string(k.part) + " is drawn by the game's own code (the rope, the ring, "
+                                    "the shadow, the lights, the picture cards): its marks are ignored");
+                            continue;
+                        }
+                        if (std::find(marked.begin(), marked.end(), k.part) != marked.end())
+                        {
+                            problem("part " + std::to_string(k.part) + " is marked twice: the first marks used");
+                            continue;
+                        }
+                        k.blend = yes("glow") ? Mark::Blend::Glow : yes("see-through") ? Mark::Blend::SeeThrough : Mark::Blend::Solid;
+                        k.writesDepth = k.blend == Mark::Blend::SeeThrough && yes("writes depth");
+                        if (const vendetta_mods::Json *j = p.find("scroll"); j && j->isArray() && j->items.size() >= 2)
+                        {
+                            k.speed[0] = static_cast<float>(num(&j->items[0], 0.0));
+                            k.speed[1] = static_cast<float>(num(&j->items[1], 0.0));
+                            k.scrolls = true;
+                        }
+                        if (const vendetta_mods::Json *j = p.find("slide"); j && j->isObject())
+                        {
+                            const vendetta_mods::Json *by = j->find("by");
+                            float v[3] = {};
+                            if (by && by->isArray() && by->items.size() >= 3)
+                                for (int i = 0; i < 3; ++i)
+                                    v[i] = static_cast<float>(num(&by->items[i], 0.0));
+                            k.distance = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                            k.slideSpeed = static_cast<float>(num(j->find("speed"), 0.0));
+                            if (k.distance > 0.0f && k.slideSpeed > 0.0f)
+                            {
+                                for (int i = 0; i < 3; ++i)
+                                    k.unit[i] = v[i] / k.distance;
+                                k.slides = true;
+                            }
+                            else
+                                problem("part " + std::to_string(k.part) + "'s slide has no distance or speed: it stays");
+                        }
+                        k.faces = yes("faces camera");
+                        if (const vendetta_mods::Json *j = p.find("copies"); k.faces && j && j->isArray())
+                            for (const vendetta_mods::Json &c : j->items)
+                            {
+                                MarkCopy copy;
+                                if (const vendetta_mods::Json *a = c.find("at"); a && a->isArray() && a->items.size() >= 3)
+                                    for (int i = 0; i < 3; ++i)
+                                        copy.at[i] = static_cast<float>(num(&a->items[i], 0.0));
+                                copy.start = static_cast<float>(num(c.find("start"), 0.0));
+                                k.copies.push_back(copy);
+                            }
+                        if (k.faces && k.copies.empty())
+                            k.copies.push_back({}); // one copy at the piece's own origin
+                        std::vector<const vendetta_mods::Json *> flips;
+                        if (const vendetta_mods::Json *f = p.find("flips"); f && f->isArray())
+                            for (const vendetta_mods::Json &x : f->items)
+                                flips.push_back(&x);
+                        if (const vendetta_mods::Json *f = p.find("flip"); f && f->isObject())
+                            flips.push_back(f);
+                        for (const vendetta_mods::Json *f : flips)
+                        {
+                            MarkFlip flip;
+                            flip.slot = static_cast<uint32_t>(num(f->find("slot"), 0.0));
+                            flip.width = static_cast<uint32_t>(num(f->find("width"), 0.0));
+                            flip.height = static_cast<uint32_t>(num(f->find("height"), 0.0));
+                            flip.bpp = static_cast<uint32_t>(num(f->find("bits"), 8.0));
+                            flip.start = static_cast<float>(num(f->find("start"), 0.0));
+                            double total = 0.0;
+                            if (const vendetta_mods::Json *fr = f->find("frames"); fr && fr->isArray())
+                                for (const vendetta_mods::Json &x : fr->items)
+                                {
+                                    MarkFrame frame;
+                                    frame.picture = static_cast<uint32_t>(num(x.find("picture"), 0.0));
+                                    frame.palette = static_cast<uint32_t>(num(x.find("palette"), 0.0));
+                                    frame.steps = static_cast<int32_t>(num(x.find("steps"), 1.0));
+                                    total += frame.steps;
+                                    flip.frames.push_back(frame);
+                                }
+                            flip.length = static_cast<float>(num(f->find("length"), total));
+                            if (flip.frames.empty() || !flip.width || !flip.height)
+                                problem("part " + std::to_string(k.part) + " has flipping pictures with no frames or no size: "
+                                        "left out");
+                            else
+                                k.flips.push_back(std::move(flip));
+                        }
+                        marked.push_back(k.part);
+                        m.marks.push_back(std::move(k));
+                    }
+            }
+            // every other mesh part of the file drawn solid, in the file's order (the first of two parts with one id)
+            for (const auto &[id, object] : parts)
+            {
+                if (reservedPart(id) || std::find(marked.begin(), marked.end(), id) != marked.end())
+                    continue;
+                bool mesh = uint64_t(object) + 0x80u <= m.sceneBytes && word(scene + object) != 0u;
+                for (uint32_t k = 4; k < 0x80u && mesh; k += 4)
+                    mesh = word(scene + object + k) == 0u;
+                if (!mesh)
+                    continue;
+                Mark k;
+                k.part = id;
+                marked.push_back(id);
+                m.marks.push_back(k);
+            }
+            size_t kinds[3] = {}, scrolls = 0, slides = 0, faces = 0, flips = 0;
+            for (const Mark &k : m.marks)
+            {
+                ++kinds[static_cast<int>(k.blend)];
+                scrolls += k.scrolls;
+                slides += k.slides;
+                faces += k.faces;
+                flips += !k.flips.empty();
+            }
+            std::cerr << "[arenas] " << m.what << ": drawn by its own marks: " << m.marks.size() << " pieces (" << kinds[0]
+                      << " solid, " << kinds[1] << " see-through, " << kinds[2] << " glowing; " << scrolls << " scrolling, "
+                      << slides << " sliding, " << faces << " facing the camera, " << flips << " flipping pictures)" << std::endl;
+            resetMarks(m);
+            return true;
+        }
+
         // The mod arena's file read and its stand-in put in the store: the scene at kArenaScene, the crowd's people (each
         // model without its triangles) and clips where the game's crowd code reads them. False: unusable (a mods.log line;
         // the game's own arena is used).
@@ -2785,11 +3463,20 @@ namespace vendetta_arenas
                 }
             }
             m.file = std::move(file);
+            readMarks(m);
             // the stand-in scene
             uint8_t *scene = vendetta_store::host(vendetta_store::kArenaScene);
             std::memcpy(scene, m.file.data() + m.scene, m.sceneBytes);
             if (!g_fullStandIn)
                 zeroScene(scene, m.sceneBytes, highPoly);
+            if (m.marked && !(g_fullStandIn && g_mode == Mode::Check))
+                for (const auto &[id, object] : sceneParts(scene, m.sceneBytes))
+                    if (id == -1 && uint64_t(object) + 16u <= m.sceneBytes)
+                    {
+                        // marked: the venue's picture card loop finds none (it would patch and draw the pieces itself)
+                        const uint32_t none[4] = {0x20444242u, 8u, 0u, 0u};
+                        std::memcpy(scene + object, none, sizeof(none));
+                    }
             m.sceneAt = vendetta_store::kArenaScene;
             m.standInBytes = m.sceneBytes;
             m.emptyFrom = m.emptyTo = 0u;
@@ -3698,6 +4385,8 @@ namespace vendetta_arenas
         }
         runtime.replaceFunction(kDraw, draw);
         runtime.replaceFunction(kDrawScrolled, drawScrolled);
+        if ((g_originalArenaPass = runtime.lookupFunction(kArenaPass)) != nullptr)
+            runtime.replaceFunction(kArenaPass, arenaPass);
         runtime.replaceFunction(kDrawShadow, drawShadow);
         runtime.replaceFunction(kDrawPost, drawPostHook);
         // installed before the wrestlers' draw, which hooks the same routine and passes the arena's calls on to this one

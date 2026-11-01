@@ -131,6 +131,10 @@ namespace vendetta_gsdraw
     struct GsTriangle
     {
         GsVertex v[3];
+        // with GsReader::track (the marked arena check): the state it was drawn with, its context's TEX0, ALPHA and
+        // ZBUF and the PRIM (ABE, context); 0 otherwise
+        uint64_t tex0 = 0, alpha = 0, zbuf = 0;
+        uint32_t prim = 0;
     };
 
     // The vertex queue as the GS keeps it: a list kicks every third vertex, a strip each vertex from the third, a
@@ -140,12 +144,42 @@ namespace vendetta_gsdraw
         uint32_t type = 0, count = 0;
         GsVertex queue[3], first;
         GsVertex cur;
-        std::vector<GsTriangle> *out = nullptr;
+        std::vector<GsTriangle> *out = nullptr; // null: the state is kept, no triangle collected
+        bool track = false;                    // each triangle with its state (TEX0, ALPHA, ZBUF, PRIM)
+        uint64_t tex0[2] = {}, alpha[2] = {}, zbuf[2] = {};
+        uint32_t primBits = 0;
 
         void prim(uint64_t value)
         {
             type = static_cast<uint32_t>(value & 7u);
+            primBits = static_cast<uint32_t>(value & 0x7FFu);
             count = 0;
+        }
+        void emit(const GsVertex &a, const GsVertex &b, const GsVertex &c)
+        {
+            if (!out)
+                return;
+            GsTriangle t{{a, b, c}};
+            if (track)
+            {
+                const uint32_t k = (primBits >> 9) & 1u;
+                t.tex0 = tex0[k];
+                t.alpha = alpha[k];
+                t.zbuf = zbuf[k];
+                t.prim = primBits;
+            }
+            out->push_back(t);
+        }
+        void reg(uint32_t r, uint64_t value)
+        {
+            switch (r)
+            {
+            case 0x00: prim(value); break;
+            case 0x06: case 0x07: tex0[r - 0x06] = value; break;
+            case 0x42: case 0x43: alpha[r - 0x42] = value; break;
+            case 0x4E: case 0x4F: zbuf[r - 0x4E] = value; break;
+            default: break;
+            }
         }
         void vertex(uint32_t x, uint32_t y, uint32_t z, bool adc)
         {
@@ -159,7 +193,7 @@ namespace vendetta_gsdraw
                 if (count == 3u)
                 {
                     if (!adc)
-                        out->push_back({{queue[0], queue[1], queue[2]}});
+                        emit(queue[0], queue[1], queue[2]);
                     count = 0;
                 }
                 return;
@@ -171,7 +205,7 @@ namespace vendetta_gsdraw
             queue[2] = v;
             ++count;
             if (count >= 3u && !adc && (type == 4u || type == 5u))
-                out->push_back({{type == 5u ? first : queue[0], queue[1], queue[2]}});
+                emit(type == 5u ? first : queue[0], queue[1], queue[2]);
         }
         void feed(const uint8_t *d, uint32_t bytes)
         {
@@ -203,19 +237,25 @@ namespace vendetta_gsdraw
                     case 0x2: cur.s = w[0]; cur.t = w[1]; cur.q = w[2]; break;
                     case 0x4: vertex(w[0] & 0xFFFFu, w[1] & 0xFFFFu, (w[2] >> 4) & 0xFFFFFFu, (w[3] >> 15) & 1u); break;
                     case 0x5: vertex(w[0] & 0xFFFFu, w[1] & 0xFFFFu, w[2], (w[3] >> 15) & 1u); break;
+                    case 0x6: case 0x7:
+                    {
+                        uint64_t value;
+                        std::memcpy(&value, d + o, 8);
+                        tex0[((hi >> (4u * (i % nreg))) & 0xFu) - 0x6u] = value;
+                        break;
+                    }
                     case 0xE:
                     {
                         uint64_t value;
                         std::memcpy(&value, d + o, 8);
-                        if ((w[2] & 0xFFu) == 0x00u)
-                            prim(value);
+                        reg(w[2] & 0xFFu, value);
                         break;
                     }
                     default: break;
                     }
                 }
-                if (lo & 0x8000u)
-                    break;
+                if ((lo & 0x8000u) && !track)
+                    break; // (a tracked reader reads on: one buffer can hold more than one packet)
             }
         }
     };
