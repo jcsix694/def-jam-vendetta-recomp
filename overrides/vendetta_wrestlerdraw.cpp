@@ -1741,6 +1741,11 @@ namespace vendetta_wrestlerdraw
         {
             uint32_t original[32] = {}, written[32] = {};
             bool set[32] = {};
+            // this model behind's own copies of the mod's see-through parts (ALPHA1 slot 6, ALPHA2 slot 7) and the mod
+            // they were made from: the game poses a fighter's see-through parts in its pose call but draws them later, in
+            // FUN_001b2088's pass after every fighter's pose, so two fighters wearing the same mod can't share them
+            uint32_t alpha[32] = {};
+            const void *alphaOf = nullptr;
         };
         std::unordered_map<uint32_t, Pointed> g_pointed; // by the model behind's guest address
 
@@ -1876,6 +1881,24 @@ namespace vendetta_wrestlerdraw
                 std::cerr << "), " << m.behind << " model behind pointed at it" << std::endl;
             }
             Pointed &pointed = g_pointed[carrier];
+            if (pointed.alphaOf != &m)
+            {
+                // the see-through parts: a copy of the mod's own for this model behind (made once a match)
+                pointed.alphaOf = &m;
+                for (int slot : {kAlpha1, kAlpha2})
+                {
+                    pointed.alpha[slot] = 0u;
+                    if (!m.pointable[slot])
+                        continue;
+                    const uint32_t phase = static_cast<uint32_t>(m.part[slot]) & 15u;
+                    const uint32_t base = vendetta_store::allocate(vendetta_store::Area::Match,
+                                                                   (phase + m.partSize[slot] + 15u) & ~15u, "mod see-through parts");
+                    if (!base)
+                        continue; // no room: the one placed for the model (right while one fighter wears it)
+                    std::memcpy(vendetta_store::host(base + phase), m.at(slot), m.partSize[slot]);
+                    pointed.alpha[slot] = base + phase;
+                }
+            }
             for (int slot = kFirstPointed; slot <= kLastPointed; ++slot)
             {
                 const int from = slot == kBody2 ? kBody : slot;
@@ -1884,7 +1907,8 @@ namespace vendetta_wrestlerdraw
                     continue;
                 const uint32_t at = slotField(carrier, slot);
                 uint8_t *field = vendetta_store::host(at);
-                const uint32_t now = word(field), want = none ? ~0u : m.placedAt[from] - at;
+                const uint32_t target = (slot == kAlpha1 || slot == kAlpha2) && pointed.alpha[slot] ? pointed.alpha[slot] : m.placedAt[from];
+                const uint32_t now = word(field), want = none ? ~0u : target - at;
                 if (now == want)
                     continue;
                 if (slot >= 8 && slot <= 11 && (!pointed.set[slot] || now != pointed.written[slot]))
@@ -1976,8 +2000,15 @@ namespace vendetta_wrestlerdraw
                 const uint32_t carrier = word(mem(rdram, rig + kRigModel));
                 if (!g_alphaCheck && carrier && (word(mem(rdram, rig + kRigFlags)) & 1u))
                     for (int slot : {kAlpha1, kAlpha2})
-                        if (m->placedAt[slot] && slotTarget(carrier, slot) == m->placedAt[slot])
-                            drawAlpha(rdram, m->placedAt[slot], rig, list);
+                    {
+                        // this fighter's own copy (posed in its pose call), else the one placed for the model
+                        const auto own = g_pointed.find(carrier);
+                        const uint32_t part = own != g_pointed.end() && own->second.alphaOf == m && own->second.alpha[slot]
+                                                  ? own->second.alpha[slot]
+                                                  : m->placedAt[slot];
+                        if (part && slotTarget(carrier, slot) == part)
+                            drawAlpha(rdram, part, rig, list);
+                    }
                 if (list.pending)
                     drawSeeThrough(list, kSeeThroughTest);
                 list.pending = false;
