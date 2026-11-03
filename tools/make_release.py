@@ -2,6 +2,8 @@
 # name stays the same in every release, so the README's link to releases/latest/download/<name> always works.
 #   Def Jam Vendetta Recompiled\
 #     Def Jam Vendetta Recompiled Settings.exe   the settings program with its first-run setup (.NET built in)
+#     Mod kit\adjvrmk.exe   the mod kit (its own closed program, from its latest release on its private GitHub repo:
+#                           never in this repository; VENDETTA_RELEASE_MODKIT=<exe> takes a local one instead)
 #     READ ME FIRST.txt
 #     files\                  everything else, so the top stays simple (the setup puts the game, game\, disc\ … here):
 #       python\               a portable Python (Python's own "embeddable" package; not installed on Windows)
@@ -25,6 +27,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(REPO, 'dist')
 TOP = 'Def Jam Vendetta Recompiled'
 ZIP_NAME = 'Def-Jam-Vendetta-Recompiled-Windows.zip'  # the same in every release: the README links to it
+MOD_KIT_REPO = 'jcsix694/adjvrmk'
+MOD_KIT = TOP + '/Mod kit/adjvrmk.exe'  # the same name in every release: an update replaces it, shortcuts keep working
 FILES = TOP + '/files/'
 SRC = FILES + 'source/'
 PYTHON_VERSION = '3.14.6'
@@ -67,6 +71,8 @@ If Windows says "Windows protected your PC" when you open Def Jam Vendetta Recom
 
 What's inside:
   Def Jam Vendetta Recompiled Settings.exe   settings, PLAY, and the first-run setup (.NET built in, nothing to install)
+  Mod kit\adjvrmk.exe     the mod kit: makes mods (wrestlers, arenas, animations). Open it from Settings > Mods >
+                          "Open the mod kit"; it keeps its work in this folder
   files\                  everything else (you never need to open it):
     python\               a portable Python the setup uses (not installed on Windows)
     source\               what the game is built from: this project's code, PS2Recomp, paraLLEl-GS and libraries
@@ -153,6 +159,29 @@ def add_archive(z, repo, prefix):
     return n
 
 
+def mod_kit(work):
+    """The mod kit's exe and its version: VENDETTA_RELEASE_MODKIT=<exe> (a local one, for tests: version "local"), else
+    the latest release of the kit's private repo, downloaded with gh (signed in as its owner)."""
+    local = os.environ.get('VENDETTA_RELEASE_MODKIT')
+    if local:
+        if not os.path.isfile(local):
+            raise SystemExit(f'VENDETTA_RELEASE_MODKIT: no file at {local}')
+        return local, 'local'
+    try:
+        tag = subprocess.run(['gh', 'release', 'view', '--repo', MOD_KIT_REPO, '--json', 'tagName', '-q', '.tagName'],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        folder = os.path.join(work, 'mod-kit')
+        os.makedirs(folder, exist_ok=True)
+        subprocess.run(['gh', 'release', 'download', tag, '--repo', MOD_KIT_REPO, '--pattern', 'ADJVRMK-*-win-x64.exe',
+                        '--dir', folder, '--clobber'], check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise SystemExit(f"the mod kit's latest release couldn't be fetched from {MOD_KIT_REPO} with gh: {e}")
+    found = [f for f in os.listdir(folder) if f.lower().endswith('.exe')]
+    if len(found) != 1:
+        raise SystemExit(f"the mod kit's release {tag} has {len(found)} exes, not one")
+    return os.path.join(folder, found[0]), tag
+
+
 def settings_exe(work):
     out = os.path.join(work, 'publish')
     subprocess.run(['dotnet', 'publish', os.path.join(REPO, 'settings-app'), '-c', 'Release', '-r', 'win-x64',
@@ -218,6 +247,9 @@ def main():
         pgs_patched = patched_parallel_gs(work)
         with ReleaseZip(out + '.part', 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
             z.write(exe, TOP + '/Def Jam Vendetta Recompiled Settings.exe')
+            kit, kit_version = mod_kit(work)
+            z.write(kit, MOD_KIT)
+            counts['mod kit ' + kit_version] = 1
             z.writestr(TOP + '/READ ME FIRST.txt', README.replace('\n', '\r\n'))
             with zipfile.ZipFile(pyzip) as py:
                 for n in py.namelist():
@@ -251,12 +283,16 @@ def main():
         add_manifest(out + '.part')
         os.replace(out + '.part', out)
     print(counts)
+    # the kit's version, for the release notes (release.py notes names it)
+    with open(os.path.join(DIST, 'mod-kit-version.txt'), 'w', encoding='utf-8') as f:
+        f.write(kit_version + '\n')
+    print('the mod kit:', kit_version)
 
     with zipfile.ZipFile(out) as z:
         infos = z.infolist()
         for i in infos:
             check(i.filename)
-            if i.file_size > 20 * 1024 * 1024 and not i.filename.endswith('Def Jam Vendetta Recompiled Settings.exe'):
+            if i.file_size > 20 * 1024 * 1024 and i.filename != MOD_KIT and not i.filename.endswith('Def Jam Vendetta Recompiled Settings.exe'):
                 raise SystemExit('too big: ' + i.filename)
             if i.filename.endswith('runner/register_functions.cpp'):
                 text = z.read(i).decode('utf-8', 'replace')

@@ -384,7 +384,10 @@ public partial class ModsViewModel : ObservableObject
         GameFolder.Open(dir);
     }
 
-    // --- the mod kit: it writes where it is (mod-kit.txt beside the projects) when it links to this recomp ---
+    // --- the mod kit: the one that last linked to this recomp (it writes where it is in mod-kit.txt beside the
+    // projects), else the one that comes with the game (Mod kit\adjvrmk.exe beside it, which links itself) ---
+
+    public const string ShippedModKit = "Mod kit\\adjvrmk.exe";
 
     private string? ModKit
     {
@@ -393,7 +396,10 @@ public partial class ModsViewModel : ObservableObject
             try
             {
                 var file = Path.Combine(_folder.Data, "mod-kit.txt");
-                return File.Exists(file) && File.ReadAllText(file).Trim() is { Length: > 0 } exe && File.Exists(exe) ? exe : null;
+                if (File.Exists(file) && File.ReadAllText(file).Trim() is { Length: > 0 } exe && File.Exists(exe))
+                    return exe;
+                var shipped = Path.Combine(_folder.Root, ShippedModKit);
+                return File.Exists(shipped) ? shipped : null;
             }
             catch
             {

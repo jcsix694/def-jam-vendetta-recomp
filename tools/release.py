@@ -1,8 +1,9 @@
 # The mechanical steps of a release, one command each (the version and the notes are decided before):
-#   python tools/release.py status                  this version, the last release, the commits since it
+#   python tools/release.py status                  this version, the last release, the commits since it, the mod
+#                                                   kit's latest release (what the zip will carry: the notes name it)
 #   python tools/release.py set-version X.Y.Z       the version in its one place (the settings program's project)
 #   python tools/release.py notes X.Y.Z             CHANGELOG.md's section for X.Y.Z -> dist/release-notes.md
-#   python tools/release.py check-zip X.Y.Z         dist/<zip>: its list of files, its version, its size
+#   python tools/release.py check-zip X.Y.Z         dist/<zip>: its list of files, its version, its size, the mod kit
 #   python tools/release.py publish X.Y.Z [--repo owner/name] [--zip file] [--notes file]
 #                                                   tags vX.Y.Z on this commit, pushes the tag, makes the GitHub
 #                                                   release with the notes and the zip (nothing else is pushed here)
@@ -28,6 +29,8 @@ DIST = os.path.join(REPO, 'dist')
 ZIP_NAME = 'Def-Jam-Vendetta-Recompiled-Windows.zip'
 TOP = 'Def Jam Vendetta Recompiled'
 NOTES = os.path.join(DIST, 'release-notes.md')
+MOD_KIT_REPO = 'jcsix694/adjvrmk'
+MOD_KIT = f'{TOP}/Mod kit/adjvrmk.exe'
 # --zip / --notes (testing with a throwaway repository): another file uploaded under the zip's name, other notes
 OPTIONS = {'zip': os.path.join(DIST, ZIP_NAME), 'notes': NOTES}
 
@@ -63,6 +66,9 @@ def status():
     log = run('git', 'log', '--format=%h %s', rng)
     print(f'commits since {tag or "the start"}: {len(log.splitlines())}')
     print(log)
+    kit = subprocess.run(['gh', 'release', 'view', '--repo', MOD_KIT_REPO, '--json', 'tagName,publishedAt',
+                          '-q', '.tagName + " (" + .publishedAt[:10] + ")"'], capture_output=True, text=True)
+    print(f"the mod kit's latest release (the zip carries it): {kit.stdout.strip() or 'none found: ' + kit.stderr.strip()}")
 
 
 def set_version(version):
@@ -114,12 +120,17 @@ def check_zip(version):
         missing = [l.split(' ', 2)[2] for l in listed if f'{TOP}/{l.split(" ", 2)[2]}' not in names]
         if missing:
             raise SystemExit(f'files listed but not in the zip: {missing[:5]}')
-        for needed in (f'{TOP}/Def Jam Vendetta Recompiled Settings.exe', f'{TOP}/READ ME FIRST.txt'):
+        for needed in (f'{TOP}/Def Jam Vendetta Recompiled Settings.exe', f'{TOP}/READ ME FIRST.txt', MOD_KIT):
             if needed not in names:
                 raise SystemExit(f'missing: {needed}')
     size = os.path.getsize(path)
     sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
     print(f'{ZIP_NAME}: {size / 1e6:.1f} MB, {len(listed)} files, version {version}, sha256 {sha}')
+    kit_file = os.path.join(DIST, 'mod-kit-version.txt')
+    kit = open(kit_file, encoding='utf-8').read().strip() if os.path.isfile(kit_file) else '?'
+    print(f'the mod kit inside: {kit}')
+    if os.path.isfile(NOTES) and kit not in open(NOTES, encoding='utf-8').read():
+        print(f'note: the release notes do not name the mod kit {kit}')
 
 
 def publish(version, repo):
