@@ -3153,7 +3153,7 @@ index 0f19c9f..caa28b8 100644
  #define FPU_C_F_S(a, b) (0)
  #define FPU_C_UN_S(a, b) (isnan((float)(a)) || isnan((float)(b)))
 diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
-index f247ff9..6dc4499 100644
+index f247ff9..2a0ded4 100644
 --- a/ps2xRuntime/include/runtime/ee_scheduler.h
 +++ b/ps2xRuntime/include/runtime/ee_scheduler.h
 @@ -91,6 +91,10 @@ enum class GuestInvocationKind : uint8_t
@@ -3177,16 +3177,27 @@ index f247ff9..6dc4499 100644
  };
  
  struct EeIrqHandler
-@@ -279,6 +286,8 @@ public:
+@@ -267,6 +274,8 @@ public:
+     static constexpr uint32_t kGeneratedCheckpointCycles = 32u;
+     static constexpr uint32_t kGuestDispatchCycles = 8u;
+     static constexpr uint64_t kDefaultTimeSliceCycles = 65536ull;
++    // EE time goes to the IOP in batches of this many EE cycles (512 IOP cycles, ~14 us)
++    static constexpr uint64_t kIopHandOverCycles = 4096ull;
+ 
+     explicit EeScheduler(PS2Runtime &runtime);
+     ~EeScheduler();
+@@ -279,7 +288,10 @@ public:
      void requestStop();
      void postEvent(EeEvent event);
      [[nodiscard]] bool checkpointDue(uint32_t cycles = kGeneratedCheckpointCycles) noexcept;
 +    void catchUpWithHostClock() noexcept;
 +    void catchUpBeforeDeadline() noexcept;
      void accountCycles(uint32_t cycles) noexcept;
++    uint64_t handOverUntilIopSignals(uint64_t cycles) noexcept;
      [[nodiscard]] bool isExecutingGuest() const noexcept;
  
-@@ -313,7 +322,8 @@ public:
+     // Kernel object API. All calls except postEvent/requestStop execute on the
+@@ -313,7 +325,8 @@ public:
      int pollEventFlag(int id, uint32_t bits, uint32_t mode, uint32_t &observedBits);
      void waitEventFlag(int id, uint32_t bits, uint32_t mode, uint32_t resultAddress);
  
@@ -3196,7 +3207,7 @@ index f247ff9..6dc4499 100644
      int cancelAlarm(int id);
      void queueInvocation(GuestInvocation invocation);
      [[noreturn]] void invokeCurrent(GuestInvocation invocation);
-@@ -390,6 +400,7 @@ private:
+@@ -390,6 +403,7 @@ private:
      static int waitObjectId(const EeWaitState &wait);
      void writeGuestU32(uint32_t address, uint32_t value);
      void waitForEvent();
@@ -3204,7 +3215,7 @@ index f247ff9..6dc4499 100644
      void scheduleEvent(uint64_t deadlineCycle, std::chrono::steady_clock::time_point hostDeadline, EeEvent event);
      void updateNextDeadline();
      [[nodiscard]] bool hasReadyAtOrAbovePriority(int priority) const;
-@@ -426,6 +437,12 @@ private:
+@@ -426,6 +440,12 @@ private:
      bool m_insideInterrupt = false;
      uint32_t m_pendingEeTimerInterrupts = 0;
      uint64_t m_eeCycle = 0;
@@ -3217,7 +3228,7 @@ index f247ff9..6dc4499 100644
      uint64_t m_sliceEndCycle = kDefaultTimeSliceCycles;
      std::thread::id m_executorThread{};
      std::atomic<bool> m_running{false};
-@@ -447,6 +464,19 @@ private:
+@@ -447,6 +467,19 @@ private:
      uint32_t m_gsVSyncCallback = 0;
      uint32_t m_gsVSyncCallbackGp = 0;
      uint32_t m_gsVSyncCallbackSp = 0;
@@ -5942,7 +5953,7 @@ index 0000000..beccad8
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index c5e31c4..2385387 100644
+index c5e31c4..2847dff 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,10 +1,18 @@
@@ -6157,7 +6168,7 @@ index c5e31c4..2385387 100644
              function(m_rdram, &context, &m_runtime);
              m_guestExecuting.store(false, std::memory_order_release);
              m_insideInterrupt = false;
-@@ -354,9 +481,140 @@ void EeScheduler::postEvent(EeEvent event)
+@@ -354,9 +481,139 @@ void EeScheduler::postEvent(EeEvent event)
      m_eventCv.notify_one();
  }
  
@@ -6284,10 +6295,9 @@ index c5e31c4..2385387 100644
 +        }
 +    }
 +    target = std::min({target, barrier, m_eeCycle + kResyncCycles});
-+    while (target > m_eeCycle)
++    if (target > m_eeCycle)
 +    {
-+        const uint32_t chunk = static_cast<uint32_t>(std::min<uint64_t>(target - m_eeCycle, std::numeric_limits<uint32_t>::max()));
-+        accountCycles(chunk);
++        handOverUntilIopSignals(target - m_eeCycle);
 +    }
 +}
 +
@@ -6298,15 +6308,14 @@ index c5e31c4..2385387 100644
  
      if (m_checkpointPending.load(std::memory_order_acquire) ||
          m_stopRequested.load(std::memory_order_acquire))
-@@ -393,7 +651,16 @@ void EeScheduler::accountCycles(uint32_t cycles) noexcept
+@@ -393,13 +650,50 @@ void EeScheduler::accountCycles(uint32_t cycles) noexcept
      const uint64_t elapsed = std::max<uint64_t>(1u, cycles);
      m_eeCycle += elapsed;
      m_pendingEeTimerInterrupts |= m_runtime.memory().advanceEeTimers(elapsed);
 -    m_runtime.advanceIopEeCycles(elapsed);
-+    // The IOP gets the EE's time in batches of 4096 EE cycles (512 IOP cycles, ~14 us): handing it over at every
++    // The IOP gets the EE's time in batches of kIopHandOverCycles (512 IOP cycles, ~14 us): handing it over at every
 +    // checkpoint (8-32 cycles) was a call chain and a profiler mark millions of times a second for an IOP that runs
 +    // its own work in such batches anyway (IopEmulator::runEeCycles). Nothing the EE can see is that fine.
-+    constexpr uint64_t kIopHandOverCycles = 4096u;
 +    m_iopPendingCycles += elapsed;
 +    if (m_iopPendingCycles >= kIopHandOverCycles)
 +    {
@@ -6316,7 +6325,42 @@ index c5e31c4..2385387 100644
      if (m_pendingEeTimerInterrupts != 0u)
      {
          m_checkpointPending.store(true, std::memory_order_release);
-@@ -1061,7 +1328,8 @@ int EeScheduler::setAlarm(uint16_t ticks,
+     }
+ }
+ 
++// EE time moved on in a lump with no guest code running (waking from idle, catching up with the real clock) goes to
++// the IOP in its hand-over batches, and stops as soon as the IOP has given the EE something to do (a SIF command's
++// handler queued, an event posted): on a PS2 the two run side by side and the EE answers at once. Handed over whole,
++// the IOP ran on through the lump first: EA's sound driver asks the EE for each 512-frame block (its SIF command 1,
++// answered by the EE's sound thread with the next block's data by SIF DMA), so a block was mixed from the last
++// request's data again (that block heard twice, the next one lost: a click pair at the SPU2's AutoDMA edges, in
++// matches mostly while the music streams from the disc). What is not handed over here follows at the next checkpoint
++// or idle pass. Returns the cycles handed over.
++uint64_t EeScheduler::handOverUntilIopSignals(uint64_t cycles) noexcept
++{
++    uint64_t done = 0u;
++    while (done < cycles)
++    {
++        const uint64_t step = std::min<uint64_t>(cycles - done, kIopHandOverCycles);
++        accountCycles(static_cast<uint32_t>(step));
++        done += step;
++        if (!m_pendingInvocations.empty())
++        {
++            break;
++        }
++        std::lock_guard lock(m_eventMutex);
++        if (!m_events.empty())
++        {
++            break;
++        }
++    }
++    return done;
++}
++
+ bool EeScheduler::isExecutingGuest() const noexcept
+ {
+     return m_guestExecuting.load(std::memory_order_acquire);
+@@ -1061,7 +1355,8 @@ int EeScheduler::setAlarm(uint16_t ticks,
                            uint32_t handler,
                            uint32_t argument,
                            uint32_t gp,
@@ -6326,7 +6370,7 @@ index c5e31c4..2385387 100644
  {
      assertExecutor();
      if (handler == 0u || !m_runtime.hasFunction(handler))
-@@ -1073,7 +1341,8 @@ int EeScheduler::setAlarm(uint16_t ticks,
+@@ -1073,7 +1368,8 @@ int EeScheduler::setAlarm(uint16_t ticks,
      {
          return KE_ERROR;
      }
@@ -6336,7 +6380,7 @@ index c5e31c4..2385387 100644
      const uint64_t tickCount = ticks == 0u ? 1u : static_cast<uint64_t>(ticks);
      scheduleEvent(m_eeCycle + tickCount * kAlarmTickCycles,
                    std::chrono::steady_clock::now() + std::chrono::microseconds(tickCount * kAlarmTickMicroseconds),
-@@ -1170,13 +1439,15 @@ uint32_t EeScheduler::invocationStackTop()
+@@ -1170,13 +1466,15 @@ uint32_t EeScheduler::invocationStackTop()
      {
          return existing->second;
      }
@@ -6353,7 +6397,7 @@ index c5e31c4..2385387 100644
      return top;
  }
  
-@@ -1258,6 +1529,9 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
+@@ -1258,6 +1556,9 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
      const uint32_t mask = dmac ? m_enabledDmacMask : m_enabledIntcMask;
      if (cause < 32u && (mask & (1u << cause)) == 0u)
      {
@@ -6363,7 +6407,7 @@ index c5e31c4..2385387 100644
          return;
      }
      const auto &handlers = dmac ? m_dmacHandlers : m_intcHandlers;
-@@ -1296,7 +1570,7 @@ void EeScheduler::setVSyncFlag(uint32_t flagAddress, uint32_t tickAddress)
+@@ -1296,7 +1597,7 @@ void EeScheduler::setVSyncFlag(uint32_t flagAddress, uint32_t tickAddress)
      if (tickAddress != 0u)
      {
          const uint32_t physical = tickAddress & 0x1FFFFFFFu;
@@ -6372,7 +6416,7 @@ index c5e31c4..2385387 100644
          {
              const uint64_t zero = 0u;
              std::memcpy(m_rdram + physical, &zero, sizeof(zero));
-@@ -1680,10 +1954,69 @@ void EeScheduler::removeFromWaitObject(GuestThread &item)
+@@ -1680,10 +1981,69 @@ void EeScheduler::removeFromWaitObject(GuestThread &item)
      item.wait = {};
  }
  
@@ -6442,7 +6486,7 @@ index c5e31c4..2385387 100644
      self->wait = std::move(wait);
      self->status = self->suspendCount == 0 ? EeThreadStatus::Waiting : EeThreadStatus::WaitingSuspended;
      m_currentThreadId = 0;
-@@ -1693,6 +2026,24 @@ void EeScheduler::blockCurrent(EeWaitState wait)
+@@ -1693,6 +2053,24 @@ void EeScheduler::blockCurrent(EeWaitState wait)
  
  void EeScheduler::makeReady(GuestThread &item, int result, bool interruptSafe)
  {
@@ -6467,7 +6511,7 @@ index c5e31c4..2385387 100644
      auto completion = std::move(item.wait.completion);
      item.wait = {};
      setReturnS32(&item.activeContext(), result);
-@@ -1800,9 +2151,16 @@ void EeScheduler::processDueDeadlines()
+@@ -1800,9 +2178,16 @@ void EeScheduler::processDueDeadlines()
  
              if (now < pacingDeadline)
              {
@@ -6487,7 +6531,7 @@ index c5e31c4..2385387 100644
                  if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
                  {
                      updateNextDeadline();
-@@ -1847,11 +2205,49 @@ void EeScheduler::processDueDeadlines()
+@@ -1847,11 +2232,49 @@ void EeScheduler::processDueDeadlines()
          {
              if (scheduled.event.type == EeEventType::VBlankStart)
              {
@@ -6539,7 +6583,7 @@ index c5e31c4..2385387 100644
                                EeEvent{EeEventType::VBlankStart, 0, 0});
              }
              processEvent(scheduled.event);
-@@ -1867,6 +2263,7 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1867,6 +2290,7 @@ void EeScheduler::processEvent(const EeEvent &event)
          requestStop();
          break;
      case EeEventType::VBlankStart:
@@ -6547,7 +6591,7 @@ index c5e31c4..2385387 100644
          ++m_vsyncTick;
          m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
          if ((m_vsyncTick & 1u) != 0u)
-@@ -1881,7 +2278,7 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1881,7 +2305,7 @@ void EeScheduler::processEvent(const EeEvent &event)
          if (m_vsyncTickAddress != 0u)
          {
              const uint32_t physical = m_vsyncTickAddress & 0x1FFFFFFFu;
@@ -6556,7 +6600,7 @@ index c5e31c4..2385387 100644
              {
                  std::memcpy(m_rdram + physical, &m_vsyncTick, sizeof(m_vsyncTick));
              }
-@@ -1889,6 +2286,7 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1889,6 +2313,7 @@ void EeScheduler::processEvent(const EeEvent &event)
          m_vsyncFlagAddress = 0u;
          m_vsyncTickAddress = 0u;
          completeVSync(m_vsyncTick);
@@ -6564,7 +6608,7 @@ index c5e31c4..2385387 100644
          if (m_gsVSyncCallback != 0u && m_runtime.hasFunction(m_gsVSyncCallback))
          {
              GuestInvocation invocation{};
-@@ -1901,7 +2299,18 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1901,7 +2326,18 @@ void EeScheduler::processEvent(const EeEvent &event)
              queueInvocation(std::move(invocation));
          }
          dispatchIrq(false, 2u);
@@ -6583,7 +6627,7 @@ index c5e31c4..2385387 100644
      case EeEventType::ExternalWake:
          completeExternalWait(event.id, event.value, KE_OK);
          break;
-@@ -1922,9 +2331,9 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1922,9 +2358,9 @@ void EeScheduler::processEvent(const EeEvent &event)
          GuestInvocation invocation{};
          invocation.kind = GuestInvocationKind::Alarm;
          invocation.context.pc = alarm.handler;
@@ -6596,7 +6640,7 @@ index c5e31c4..2385387 100644
          SET_GPR_U32(&invocation.context, 28, alarm.gp);
          SET_GPR_U32(&invocation.context, 29, 0u);
          SET_GPR_U32(&invocation.context, 31, 0u);
-@@ -1987,15 +2396,46 @@ void EeScheduler::writeGuestU32(uint32_t address, uint32_t value)
+@@ -1987,15 +2423,46 @@ void EeScheduler::writeGuestU32(uint32_t address, uint32_t value)
          return;
      }
      const uint32_t physical = address & 0x1FFFFFFFu;
@@ -6644,7 +6688,7 @@ index c5e31c4..2385387 100644
      std::unique_lock lock(m_eventMutex);
      if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
      {
-@@ -2028,17 +2468,38 @@ void EeScheduler::waitForEvent()
+@@ -2028,28 +2495,45 @@ void EeScheduler::waitForEvent()
      }
      if (hasTimerDeadline)
      {
@@ -6689,6 +6733,20 @@ index c5e31c4..2385387 100644
      if (!signaled)
      {
          const uint64_t elapsed = deadlineCycle > m_eeCycle ? deadlineCycle - m_eeCycle : 0u;
+         lock.unlock();
+-        uint64_t remaining = elapsed;
+-        while (remaining > 0u)
+-        {
+-            const uint32_t step = static_cast<uint32_t>(std::min<uint64_t>(remaining, std::numeric_limits<uint32_t>::max()));
+-            accountCycles(step);
+-            remaining -= step;
+-        }
++        // (stopped early when the IOP sends the EE something: the rest follows at the next idle pass, whose host
++        // deadline has passed, so it does not wait again)
++        handOverUntilIopSignals(elapsed);
+         m_checkpointPending.store(true, std::memory_order_release);
+     }
+ }
 diff --git a/ps2xRuntime/src/lib/Kernel/HostPower.cpp b/ps2xRuntime/src/lib/Kernel/HostPower.cpp
 new file mode 100644
 index 0000000..618ec69
