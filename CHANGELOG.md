@@ -5,6 +5,19 @@ The newest version is at the top.
 
 ---
 
+## 0.4.5
+
+### Fixed
+- **Clicks left in matches.** 0.4.4 cleared the clicks in the menus and the movies, but some were still heard in
+  matches, mostly while the music played. They're gone now. Thanks again to the player who recorded them.
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- Mod support is actively being worked on and will come in a future update.
+
 ## 0.4.4
 
 ### Fixed
