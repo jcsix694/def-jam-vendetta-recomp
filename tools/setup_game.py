@@ -72,6 +72,9 @@ KNOWN_ERRORS = [
      'Your PC ran out of memory while building. Close other programs (browsers, games) and try again.'),
     (re.compile(r'LNK1104|LNK1201|Permission denied|being used by another process', re.IGNORECASE),
      "Another program held one of the build's files, often an antivirus. Try again."),
+    (re.compile(r'C1001|internal compiler error', re.IGNORECASE),
+     "Microsoft's C++ compiler crashed: your build tools may be too old. Open the Visual Studio Installer, update "
+     '"Build Tools 2022", then run the setup again.'),
     (re.compile(r'still dirty after|system time is not set', re.IGNORECASE),
      "Some files are dated in the future. Check that your PC's date, time and time zone are right, then try again."),
 ]
@@ -115,6 +118,14 @@ def run(cmd, env=None, cwd=None, parse=None, log_name=None):
 
 
 # --- 1. the build tools ---------------------------------------------------------------------------------------------
+# The compiler must be at least MIN_MSVC: older ones stop with an internal compiler error (C1001) on some of the game's
+# recompiled files (MSVC 19.35, Build Tools 17.5, does on two: GitHub issue #7); 19.44 (Build Tools 17.14) is the one
+# the game is built and tested with. The Windows SDK is needed too (its resource compiler, rc, and headers). An older or
+# incomplete Build Tools 2022 is updated and given what is missing by Microsoft's installer; any other install (a full
+# Visual Studio, the 2019 tools) gets a Build Tools 2022 of its own beside it.
+MIN_MSVC = (19, 44)
+BUILD_TOOLS_2022 = 'Microsoft.VisualStudio.Product.BuildTools'
+
 
 def vswhere():
     path = os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
@@ -122,17 +133,30 @@ def vswhere():
     return path if os.path.isfile(path) else None
 
 
-def find_vcvars():
+def find_install():
+    """The newest install with the C++ tools: {'path', 'product', 'version', 'vcvars'}, or None."""
     tool = vswhere()
     if not tool:
         return None
     out = subprocess.run([tool, '-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-                          '-property', 'installationPath'], capture_output=True, text=True).stdout.strip().splitlines()
-    for install in out:
-        vcvars = os.path.join(install.strip(), 'VC', 'Auxiliary', 'Build', 'vcvars64.bat')
-        if os.path.isfile(vcvars):
-            return vcvars
+                          '-format', 'value', '-property', 'installationPath'], capture_output=True, text=True).stdout
+    for install in out.strip().splitlines():
+        install = install.strip()
+        vcvars = os.path.join(install, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat')
+        if not os.path.isfile(vcvars):
+            continue
+
+        def prop(name):
+            got = subprocess.run([tool, '-path', install, '-format', 'value', '-property', name],
+                                 capture_output=True, text=True).stdout.strip().splitlines()
+            return got[0].strip() if got else ''
+        return {'path': install, 'product': prop('productId'), 'version': prop('installationVersion'), 'vcvars': vcvars}
     return None
+
+
+def find_vcvars():
+    found = find_install()
+    return found['vcvars'] if found else None
 
 
 def build_environment(vcvars):
@@ -153,32 +177,90 @@ def has_tools(env):
     return all(shutil.which(tool, path=path) for tool in ('cl', 'cmake', 'ninja'))
 
 
-def install_build_tools():
-    say("Microsoft's C++ build tools are missing: downloading Microsoft's installer (free; a Windows prompt asks to allow it)")
+def compiler_version(env):
+    """The C++ compiler's version, (19, 44, 35229), from the banner cl prints; None when it can't be run."""
+    cl = shutil.which('cl', path=env.get('PATH', env.get('Path', '')))
+    if not cl:
+        return None
+    out = subprocess.run([cl], env=env, capture_output=True, text=True, errors='replace')
+    m = re.search(r'Version (\d+)\.(\d+)\.(\d+)', out.stdout + out.stderr)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def has_sdk(env):
+    """The Windows SDK the build needs: its resource compiler (rc) on PATH and its headers on INCLUDE."""
+    path = env.get('PATH', env.get('Path', ''))
+    return bool(shutil.which('rc', path=path)) and 'windows kits' in env.get('INCLUDE', '').lower()
+
+
+def tools_problem(env):
+    """What is wrong with these build tools, in plain words; None when they are fine."""
+    if not env or not has_tools(env):
+        return "Microsoft's C++ build tools are missing"
+    version = compiler_version(env)
+    if version is None:
+        return "the C++ compiler in Microsoft's build tools could not be run"
+    if version[:2] < MIN_MSVC:
+        shown = '.'.join(map(str, version))
+        return (f"your C++ build tools are too old (the compiler is version {shown}; "
+                f"{'.'.join(map(str, MIN_MSVC))} or newer is needed)")
+    if not has_sdk(env):
+        return 'the Windows SDK is missing from your C++ build tools'
+    return None
+
+
+def run_installer(args, what):
+    """Microsoft's Build Tools installer (downloaded each time: always its newest) with these arguments."""
+    say(f"{what}: downloading Microsoft's installer (free; a Windows prompt asks to allow it)")
     installer = os.path.join(tempfile.gettempdir(), 'vs_BuildTools.exe')
     with urllib.request.urlopen(VS_INSTALLER_URL) as response, open(installer, 'wb') as out:
         shutil.copyfileobj(response, out)
-    cmd = [installer, '--passive', '--wait', '--norestart']
-    for component in VS_COMPONENTS:
-        cmd += ['--add', component]
+    cmd = [installer] + args
     say('> ' + ' '.join(cmd))
     code = subprocess.run(cmd).returncode
     if code not in (0, 3010):  # 3010: done, a restart recommended
         raise SetupError(f"Microsoft's installer stopped (exit code {code})")
 
 
+def adds():
+    out = []
+    for component in VS_COMPONENTS:
+        out += ['--add', component]
+    return out
+
+
+def install_build_tools(why):
+    run_installer(['--passive', '--wait', '--norestart'] + adds(), why)
+
+
+def update_build_tools(install, why):
+    """An existing Build Tools 2022 brought up to date, then given every component the build needs (the SDK)."""
+    run_installer(['update', '--installPath', install, '--passive', '--wait', '--norestart'], why + ': updating them')
+    run_installer(['modify', '--installPath', install, '--passive', '--wait', '--norestart'] + adds(),
+                  'adding what the build needs to them')
+
+
 def step_tools():
     step(2, STEPS[1])
-    vcvars = find_vcvars()
-    env = build_environment(vcvars) if vcvars else None
-    if not env or not has_tools(env):
-        install_build_tools()
+    found = find_install()
+    env = build_environment(found['vcvars']) if found else None
+    problem = tools_problem(env)
+    if problem:
+        say(f'[tools] {problem}' + (f" ({found['path']}, {found['version']})" if found else ''))
+        if found and found['product'] == BUILD_TOOLS_2022 and found['version'].startswith('17.') and env and has_tools(env):
+            update_build_tools(found['path'], problem)
+        else:
+            install_build_tools(problem)
         progress(0.9)
-        vcvars = find_vcvars()
-        env = build_environment(vcvars) if vcvars else None
-        if not env or not has_tools(env):
-            raise SetupError('the build tools are still missing after the installer (C++, CMake and Ninja are needed)')
-    say(f'build tools: {vcvars}')
+        found = find_install()
+        env = build_environment(found['vcvars']) if found else None
+        problem = tools_problem(env)
+        if problem:
+            raise SetupError(problem + ' after Microsoft\'s installer. Open the Visual Studio Installer, update '
+                             '"Build Tools 2022" and tick "Desktop development with C++" (with its Windows 11 SDK), '
+                             'then run the setup again')
+    version = '.'.join(map(str, compiler_version(env)))
+    say(f"build tools: {found['vcvars']} (the compiler {version}, the Windows SDK {env.get('WindowsSDKVersion', '').strip(chr(92))})")
     progress(1.0)
     return env
 

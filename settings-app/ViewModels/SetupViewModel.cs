@@ -57,6 +57,10 @@ public static class SetupOutput
             return line + " files";
         if (line == "Turning the game's code into C++" || line.StartsWith("Microsoft's C++ build tools are missing"))
             return line;
+        // the build tools too old or without the Windows SDK: why Microsoft's installer runs ("<why>: downloading
+        // Microsoft's installer (...)")
+        if (line.IndexOf(": downloading Microsoft's installer", StringComparison.Ordinal) is var cut and > 0)
+            return char.ToUpperInvariant(line[0]) + line[1..cut] + ". Microsoft's installer runs (a Windows prompt asks to allow it)";
         if (line == "the disc is already prepared")
             return "Your disc was already read";
         if (Sectors.Match(line) is { Success: true } d && long.TryParse(d.Groups[2].Value, out var all) && all > 0)
