@@ -181,6 +181,58 @@ namespace vendetta_wrestlerdraw
             }
         }
 
+        // A mod's gear part's rows: each bone with a segment follows the bone its record names (word + 12: part slot << 16
+        // | bone) in that posed part (`posed[slot]`); the gear's vertices are in the body's frame, so a face or hand bone's
+        // rows take the record's step into that part's frame first (+ 0x10, row vectors): S x the bone's + 0x150, and
+        // S (its translation zeroed) x + 0x110 (zeroed) x the light matrix. A body bone's step is the identity: its rows
+        // are worked out exactly as the body's own. False: a bone's part isn't posed (the gear is left out this time).
+        bool writeGearRows(const uint8_t *const posed[8], const uint8_t *layout, const uint8_t *lightMatrix,
+                           const uint8_t *colours, uint8_t *stream)
+        {
+            std::memcpy(stream + 0x40, colours, 64);
+            float light[16];
+            std::memcpy(light, lightMatrix, 64);
+            const uint32_t bones = word(layout + 8);
+            for (uint32_t k = 0; k < bones; ++k)
+            {
+                const uint8_t *rec = layout + 0x10 + 0x190 * k;
+                const int32_t segment = static_cast<int32_t>(word(rec + 8));
+                if (segment < 0)
+                    continue;
+                const uint32_t src = word(rec + 12), slot = src >> 16, n = src & 0xFFFFu;
+                const uint8_t *part = slot < 8u ? posed[slot] : nullptr;
+                if (!part || n >= word(part + 8))
+                    return false;
+                const uint8_t *bone = part + 0x10 + 0x190 * n;
+                uint8_t *rows = stream + 0x80 + 0x80 * static_cast<uint32_t>(segment);
+                float step[16];
+                std::memcpy(step, rec + 0x10, 64);
+                static const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+                float m[16];
+                std::memcpy(m, bone + 0x110, 64);
+                m[12] = m[13] = m[14] = 0.0f;
+                if (std::memcmp(step, identity, 64) == 0)
+                {
+                    std::memcpy(rows, bone + 0x150, 64);
+                    multiply(m, light);
+                    std::memcpy(rows + 0x40, m, 64);
+                    continue;
+                }
+                float p[16], b[16];
+                std::memcpy(p, step, 64);
+                std::memcpy(b, bone + 0x150, 64);
+                multiply(p, b);
+                std::memcpy(rows, p, 64);
+                float n0[16];
+                std::memcpy(n0, step, 64);
+                n0[12] = n0[13] = n0[14] = 0.0f;
+                multiply(n0, m);
+                multiply(n0, light);
+                std::memcpy(rows + 0x40, n0, 64);
+            }
+            return true;
+        }
+
         void writeRows(uint8_t *rdram, uint32_t part, uint32_t lightMatrix, uint32_t colours, uint8_t *stream)
         {
             const uint8_t *p = mem(rdram, part);
@@ -274,6 +326,7 @@ namespace vendetta_wrestlerdraw
         struct SoftTri
         {
             Out v[3];
+            uint32_t image = 0; // the host image its part is drawn with (the skin's, or a gear's own picture)
         };
         constexpr uint32_t kSoftGrid = 64; // the skin's not-solid pixels marked on a 64 x 64 grid over its area
 
@@ -515,7 +568,7 @@ namespace vendetta_wrestlerdraw
                         {
                             ++(adc ? g_stats.skipped : g_stats.triangles);
                             if (soft && !adc && touchesSoft(*o1, *o2, *o, *grid))
-                                soft->push_back(SoftTri{{*o1, *o2, *o}});
+                                soft->push_back(SoftTri{{*o1, *o2, *o}, image});
                         }
                         f1 = f2;
                         f2 = o->flagged;
@@ -541,7 +594,7 @@ namespace vendetta_wrestlerdraw
                     vertexQwords(packet, *v[2], adc);
                     ++(adc ? g_stats.skipped : g_stats.triangles);
                     if (soft && !adc && touchesSoft(*v[0], *v[1], *v[2], *grid))
-                        soft->push_back(SoftTri{{*v[0], *v[1], *v[2]}});
+                        soft->push_back(SoftTri{{*v[0], *v[1], *v[2]}, image});
                 }
                 ++g_stats.batches;
                 if (packet.q.size() * 8u >= kPacketBytes)
@@ -718,6 +771,9 @@ namespace vendetta_wrestlerdraw
         constexpr uint32_t kSkinImageBase = 0x50000000u; // our host image ids for the mods' skins
         constexpr int kBody = 1, kBody2 = 2, kFace = 3, kLeftHand = 4, kRightHand = 5, kAlpha1 = 6, kAlpha2 = 7,
                       kTexture = 18;
+        // A mod model's gear block: a slot the game's code never reads (it reads 0-17, and only from the model behind)
+        constexpr int kGearSlot = 19;
+        constexpr uint32_t kGearMagic = 0x52414547u; // "GEAR"
         constexpr uint32_t kRigLights = 0x328u, kRigColours = 0x32Cu, kRigFlags = 0x344u; // + 0x344 bit 0: High Poly
         constexpr uint32_t kRecordSize = 0x20u, kRecordModel = 0x1Cu; // a character record: + 0x1C its DATA.BIN entry
         constexpr uint32_t kGameCharacters = 0x27E100u;  // the game's own character table (the game reads the store's copy)
@@ -767,6 +823,18 @@ namespace vendetta_wrestlerdraw
             uint32_t image = 0;
             bool cutout = false;           // its skin has pixels not solid: the alpha test on, those drawn see-through
             std::vector<uint8_t> softGrid; // where they are (kSoftGrid x kSoftGrid over the skin)
+            // Its gear (boots, pads, gloves, a jacket: every piece not the body, the face, a hand or a see-through part),
+            // each a part of its own in the gear block, following any of the skeleton's bones, drawn after the body with
+            // its own picture (textures\gear\<file>) or else the skin
+            struct Gear
+            {
+                std::string name;
+                uint32_t at = 0;    // its part, bytes into `file`
+                uint32_t image = 0; // its own picture's host image, 0: the skin
+                bool cutout = false;            // its picture has pixels not solid: drawn as the skin's are
+                std::vector<uint8_t> softGrid; // where they are (kSoftGrid x kSoftGrid over its picture)
+            };
+            std::vector<Gear> gear;
             const uint8_t *at(int slot) const { return part[slot] >= 0 ? file.data() + part[slot] : nullptr; }
             uint8_t *at(int slot) { return part[slot] >= 0 ? file.data() + part[slot] : nullptr; }
         };
@@ -790,7 +858,9 @@ namespace vendetta_wrestlerdraw
 
         // The kept triangles sorted far to near (Z grows nearer) and drawn blended, as the game's own see-through parts:
         // ALPHA (Cs - Cd) As + Cd, TEST alpha >= 1 with the z test, z written; TEST = `testAfter` after (the context of
-        // the skin's TEX0: TEX0_1 0x06 / TEX0_2 0x07)
+        // the skin's TEX0: TEX0_1 0x06 / TEX0_2 0x07). Each triangle with the picture its part was drawn with (the skin,
+        // or a gear's own), bound at the skin's address where it changes, so the body's and the gear's see-through
+        // triangles keep one far-to-near order.
         void drawSeeThrough(SeeThroughList &list, uint64_t testAfter)
         {
             if (list.tris.empty())
@@ -802,15 +872,22 @@ namespace vendetta_wrestlerdraw
             Packet packet;
             packet.ad(list.tex0Reg, list.tex0);
             const uint32_t tbp = static_cast<uint32_t>(list.tex0) & 0x3FFFu;
-            if (list.image)
-                packet.ad(0x71u, uint64_t(tbp) | (uint64_t(list.image) << 32));
+            uint32_t bound = 0;
             packet.ad(0x42u + context, kSeeThroughAlpha);
             packet.ad(0x47u + context, kSeeThroughTest);
             for (size_t i = 0; i < list.tris.size();)
             {
+                const uint32_t image = list.tris[i].image;
+                if (image != bound)
+                {
+                    packet.ad(0x71u, uint64_t(tbp) | (uint64_t(image) << 32)); // 0: unbound (the game's own at tbp)
+                    bound = image;
+                }
                 // a triangle list: PRIM 0x25B (IIP, TME, ABE, context 2), PACKED, ST / RGBAQ / XYZF2 (as the wrestler
-                // kernel's own tags: our z is already shifted for XYZF2), NLOOP 3 a triangle
-                const size_t n = std::min<size_t>(list.tris.size() - i, 0x2000u);
+                // kernel's own tags: our z is already shifted for XYZF2), NLOOP 3 a triangle; a run of one picture
+                size_t n = 0;
+                while (i + n < list.tris.size() && n < 0x2000u && list.tris[i + n].image == image)
+                    ++n;
                 packet.tag(uint64_t(3u * n) | (1ull << 46) | (uint64_t(0x25Bu & ~(context ? 0u : 0x200u)) << 47) |
                                (3ull << 60),
                            0x412ull);
@@ -821,7 +898,7 @@ namespace vendetta_wrestlerdraw
                     send(packet);
             }
             packet.ad(0x47u + context, testAfter);
-            if (list.image)
+            if (bound)
                 packet.ad(0x71u, uint64_t(tbp)); // unbound
             send(packet);
             g_stats.seeThrough += list.tris.size();
@@ -1121,6 +1198,58 @@ namespace vendetta_wrestlerdraw
 
         // The skin from the file's upload packet (slot 18: the T8 picture sent as CT32, then its CLUT), decoded as the
         // GS reads it; or textures/skin.png. Made a host image. False: none (the model behind's skin shows).
+        // A mod picture's pixels (the GS's alpha, 128 = solid) made ready to draw: pixels not solid (alpha < kSolidAlpha)
+        // set `cutout` and are marked on `grid` (their triangles drawn again see-through); the colour hidden behind fully
+        // clear ones (often white) taken from the nearest pixel with any colour, so the bilinear read at a hole's edge
+        // doesn't mix it in as a fringe
+        void preparePixels(std::vector<uint32_t> &rgba, uint32_t w, uint32_t h, bool &cutout, std::vector<uint8_t> *grid)
+        {
+            if (grid)
+                grid->assign(kSoftGrid * kSoftGrid, 0);
+            std::vector<uint32_t> queue;
+            std::vector<uint8_t> filled(rgba.size(), 0);
+            for (uint32_t i = 0; i < rgba.size(); ++i)
+            {
+                const uint32_t alpha = rgba[i] >> 24;
+                if (alpha < kSolidAlpha)
+                {
+                    cutout = true;
+                    if (grid)
+                        (*grid)[(i / w) * kSoftGrid / h * kSoftGrid + (i % w) * kSoftGrid / w] = 1;
+                }
+                if (alpha > 0u)
+                {
+                    filled[i] = 1;
+                    queue.push_back(i);
+                }
+            }
+            if (queue.size() < rgba.size() && !queue.empty())
+                for (size_t q = 0; q < queue.size(); ++q)
+                {
+                    const uint32_t i = queue[q], x = i % w, y = i / w;
+                    const uint32_t next[4] = {x > 0 ? i - 1 : i, x + 1 < w ? i + 1 : i, y > 0 ? i - w : i, y + 1 < h ? i + w : i};
+                    for (uint32_t n : next)
+                        if (!filled[n])
+                        {
+                            filled[n] = 1;
+                            rgba[n] = (rgba[n] & 0xFF000000u) | (rgba[i] & 0x00FFFFFFu);
+                            queue.push_back(n);
+                        }
+                }
+        }
+
+        // A PNG read into the GS's alpha (PNG 255 = solid to 128); false: not readable
+        bool readPicture(const std::filesystem::path &path, std::vector<uint32_t> &rgba, uint32_t &w, uint32_t &h)
+        {
+            std::ifstream in(path, std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (bytes.empty() || !gsDecodePicture(bytes.data(), bytes.size(), 0, 0, rgba, w, h))
+                return false;
+            for (uint32_t &c : rgba)
+                c = (c & 0x00FFFFFFu) | ((((c >> 24) * 128u + 127u) / 255u) << 24);
+            return true;
+        }
+
         bool makeSkin(ModModel &m, const vendetta_wrestlers::ModelFile &files)
         {
             GSGpuRenderer *renderer = gpu();
@@ -1170,41 +1299,7 @@ namespace vendetta_wrestlerdraw
                 if (!scratch.decode(tex0, rgba, w, h))
                     return false;
             }
-            // Pixels not solid (alpha < kSolidAlpha) marked on the grid (their triangles drawn again see-through); the
-            // colour hidden behind fully clear ones (often white) taken from the nearest pixel with any colour, so the
-            // bilinear read at a hole's edge doesn't mix it in as a fringe
-            {
-                m.softGrid.assign(kSoftGrid * kSoftGrid, 0);
-                std::vector<uint32_t> queue;
-                std::vector<uint8_t> filled(rgba.size(), 0);
-                for (uint32_t i = 0; i < rgba.size(); ++i)
-                {
-                    const uint32_t alpha = rgba[i] >> 24;
-                    if (alpha < kSolidAlpha)
-                    {
-                        m.cutout = true;
-                        m.softGrid[(i / w) * kSoftGrid / h * kSoftGrid + (i % w) * kSoftGrid / w] = 1;
-                    }
-                    if (alpha > 0u)
-                    {
-                        filled[i] = 1;
-                        queue.push_back(i);
-                    }
-                }
-                if (queue.size() < rgba.size() && !queue.empty())
-                    for (size_t q = 0; q < queue.size(); ++q)
-                    {
-                        const uint32_t i = queue[q], x = i % w, y = i / w;
-                        const uint32_t next[4] = {x > 0 ? i - 1 : i, x + 1 < w ? i + 1 : i, y > 0 ? i - w : i, y + 1 < h ? i + w : i};
-                        for (uint32_t n : next)
-                            if (!filled[n])
-                            {
-                                filled[n] = 1;
-                                rgba[n] = (rgba[n] & 0xFF000000u) | (rgba[i] & 0x00FFFFFFu);
-                                queue.push_back(n);
-                            }
-                    }
-            }
+            preparePixels(rgba, w, h, m.cutout, &m.softGrid);
             // VENDETTA_MODSKIN_DUMP=<file>: the skin as it is made (u32 width, u32 height, then RGBA8, the GS's alpha)
             if (const char *dump = std::getenv("VENDETTA_MODSKIN_DUMP"); dump && *dump)
             {
@@ -1605,6 +1700,101 @@ namespace vendetta_wrestlerdraw
             }
         }
 
+        // A mod model's gear block (slot kGearSlot; the plugin writes it): "GEAR", version 1, the count, 0; then a 16-byte
+        // entry a piece {its part's offset, its size, its name's offset, its picture file's offset} (bytes from the block's
+        // start; a string = u32 length + UTF-8, a picture file of length 0: the skin); then the strings and the parts. A
+        // gear part is a model part whose bone list is the whole skeleton: each bone record names the bone it follows
+        // (word + 12: part slot << 16 | bone) and holds at + 0x10 the step from the body's frame (the gear's vertices)
+        // into that part's frame (16 floats, row vectors; the identity for the body's bones), so a glove follows a hand
+        // and the forearm in one piece. Each piece checked as the body is; one that fails is left out (a line in
+        // mods.log), the model kept. Its picture: textures\gear\<file>, any size.
+        std::string gearString(const uint8_t *block, uint32_t size, uint32_t at)
+        {
+            if (at + 4u > size || word(block + at) > size - at - 4u)
+                return {};
+            return std::string(reinterpret_cast<const char *>(block + at + 4u), word(block + at));
+        }
+
+        void loadGear(ModModel &m, const vendetta_wrestlers::ModelFile &files)
+        {
+            const uint8_t *block = m.at(kGearSlot);
+            if (!block)
+                return;
+            const uint32_t size = m.partSize[kGearSlot];
+            if (size < 16u || word(block) != kGearMagic || word(block + 4) != 1u || word(block + 8) > (size - 16u) / 16u)
+            {
+                vendetta_mods::problem() << m.what << ": its gear block can't be read (not the plugin's, or damaged): no gear drawn"
+                                         << std::endl;
+                return;
+            }
+            const uint32_t count = word(block + 8);
+            for (uint32_t n = 0; n < count; ++n)
+            {
+                const uint8_t *e = block + 16u + 16u * n;
+                const uint32_t at = word(e), bytes = word(e + 4);
+                std::string name = gearString(block, size, word(e + 8));
+                const std::string file = gearString(block, size, word(e + 12));
+                if (name.empty())
+                    name = "gear " + std::to_string(n + 1);
+                const uint8_t *p = block + at;
+                if (at % 16u || at >= size || bytes > size - at || bytes < 0x10u || !validatePart(p, p + bytes))
+                {
+                    vendetta_mods::problem() << m.what << ": its gear " << name << " is damaged (its data runs past the file or "
+                                             << "points outside itself): not drawn" << std::endl;
+                    continue;
+                }
+                // every bone it uses follows a bone the model has
+                const char *wrong = nullptr;
+                const uint32_t bones = word(p + 8);
+                if (0x10u + bones * 0x190u > bytes)
+                    wrong = "its bones run past it";
+                for (uint32_t k = 0; !wrong && k < bones; ++k)
+                {
+                    const uint8_t *rec = p + 0x10u + 0x190u * k;
+                    if (static_cast<int32_t>(word(rec + 8)) < 0)
+                        continue;
+                    const uint32_t src = word(rec + 12), slot = src >> 16, bone = src & 0xFFFFu;
+                    const uint8_t *part = slot == kBody || slot == kFace || slot == kLeftHand || slot == kRightHand
+                                              ? m.at(static_cast<int>(slot)) : nullptr;
+                    if (!part)
+                        wrong = "it follows a part the model doesn't have";
+                    else if (bone >= word(part + 8))
+                        wrong = "it follows a bone the model doesn't have";
+                }
+                if (wrong)
+                {
+                    vendetta_mods::problem() << m.what << ": its gear " << name << ": " << wrong << ": not drawn" << std::endl;
+                    continue;
+                }
+                ModModel::Gear g;
+                g.name = name;
+                g.at = static_cast<uint32_t>(p - m.file.data());
+                GSGpuRenderer *renderer = gpu();
+                std::error_code ec;
+                const std::filesystem::path picture =
+                    file.empty() || files.textures.empty() ? std::filesystem::path() : files.textures / "gear" / std::filesystem::path(std::u8string(file.begin(), file.end()));
+                if (!picture.empty() && !std::filesystem::is_regular_file(picture, ec))
+                    vendetta_mods::problem() << m.what << ": its gear " << name << ": textures\\gear\\" << file
+                                             << " is missing: drawn with the skin" << std::endl;
+                else if (renderer && !picture.empty())
+                {
+                    std::vector<uint32_t> rgba;
+                    uint32_t w = 0, h = 0;
+                    if (readPicture(picture, rgba, w, h))
+                    {
+                        preparePixels(rgba, w, h, g.cutout, &g.softGrid);
+                        g.image = g_nextImage++;
+                        renderer->setHostImage(g.image, w, h, std::move(rgba));
+                    }
+                    else
+                        vendetta_mods::problem() << m.what << ": its gear " << name << ": textures\\gear\\" << file
+                                                 << " can't be read as a picture: drawn with the skin" << std::endl;
+                }
+                std::cerr << m.what << ": gear " << name << ", " << (g.image ? "its own picture" : "on the skin") << std::endl;
+                m.gear.push_back(g);
+            }
+        }
+
         // A mod's model read and checked: the game's format (WRS); glTF to come. Anything wrong: a line in mods.log and
         // the model behind it (`behind`: "Briggs'", or whose it is) is used instead, the whole match.
         std::unique_ptr<ModModel> loadModel(const vendetta_wrestlers::ModelFile &files, const std::string &behind)
@@ -1691,6 +1881,7 @@ namespace vendetta_wrestlerdraw
                                          << instead << std::endl;
                 return m;
             }
+            loadGear(*m, files);
             m->ok = true;
             std::cerr << what << ": read (" << m->file.size() / 1024 << " KB)" << std::endl;
             return m;
@@ -1726,9 +1917,14 @@ namespace vendetta_wrestlerdraw
             {
                 if (std::find(records, records + 4, it->first) == records + 4)
                 {
-                    if (it->second->image)
-                        if (GSGpuRenderer *renderer = gpu())
+                    if (GSGpuRenderer *renderer = gpu())
+                    {
+                        if (it->second->image)
                             renderer->dropHostImage(it->second->image);
+                        for (const ModModel::Gear &g : it->second->gear)
+                            if (g.image)
+                                renderer->dropHostImage(g.image);
+                    }
                     it = g_models.erase(it);
                 }
                 else
@@ -2070,6 +2266,29 @@ namespace vendetta_wrestlerdraw
                 std::memcpy(stream + 0x30u, tex0, 16); // the skin's address (the slot the game uploaded to)
                 writeRows(posed, part, light, colours, stream);
                 drawPart(part, m.image, m.cutout, m.cutout && !g_softOff ? &list.tris : nullptr, &m.softGrid);
+            }
+            // its gear: each bone's rows from the part the game posed it in (the body passed here, the face and hands the
+            // mod's own parts it posed); its own picture or the skin. A picture with pixels not solid is drawn as the
+            // skin is: its solid pixels now, the triangles touching the others kept for the see-through pass (with the
+            // body's, one far-to-near order), each with its own picture
+            if (!m.gear.empty())
+            {
+                const uint8_t *posedParts[8] = {};
+                posedParts[kBody] = body;
+                for (int slot : {kFace, kLeftHand, kRightHand})
+                    if (m.at(slot))
+                        if (const uint32_t at = slotTarget(carrier, slot))
+                            posedParts[slot] = mem(rdram, at);
+                for (const ModModel::Gear &g : m.gear)
+                {
+                    uint8_t *part = m.file.data() + g.at;
+                    uint8_t *stream = part + (word(part) & ~3u);
+                    std::memcpy(stream + 0x30u, tex0, 16);
+                    const bool cutout = g.image ? g.cutout : m.cutout;
+                    if (writeGearRows(posedParts, part, light, colours, stream))
+                        drawPart(part, g.image ? g.image : m.image, cutout, cutout && !g_softOff ? &list.tris : nullptr,
+                                 g.image ? &g.softGrid : &m.softGrid);
+                }
             }
             if (!list.tris.empty())
             {
