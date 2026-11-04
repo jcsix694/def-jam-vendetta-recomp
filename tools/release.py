@@ -3,7 +3,9 @@
 #                                                   kit's latest release (what the zip will carry: the notes name it)
 #   python tools/release.py set-version X.Y.Z       the version in its one place (the settings program's project)
 #   python tools/release.py notes X.Y.Z             CHANGELOG.md's section for X.Y.Z -> dist/release-notes.md
-#   python tools/release.py check-zip X.Y.Z         dist/<zip>: its list of files, its version, its size, the mod kit
+#   python tools/release.py check-zip X.Y.Z         dist/<zip>: its list of files, its version, its size, the mod kit,
+#                                                   and its settings program started once from the zip (publish
+#                                                   refuses a zip this hasn't passed)
 #   python tools/release.py publish X.Y.Z [--repo owner/name] [--zip file] [--notes file]
 #                                                   tags vX.Y.Z on this commit, pushes the tag, makes the GitHub
 #                                                   release with the notes and the zip (nothing else is pushed here)
@@ -18,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 
@@ -29,6 +32,7 @@ DIST = os.path.join(REPO, 'dist')
 ZIP_NAME = 'Def-Jam-Vendetta-Recompiled-Windows.zip'
 TOP = 'Def Jam Vendetta Recompiled'
 NOTES = os.path.join(DIST, 'release-notes.md')
+PASSED = os.path.join(DIST, 'check-zip-passed.txt')  # "<version> <sha256>": the zip check-zip passed last
 MOD_KIT_REPO = 'jcsix694/adjvrmk'
 MOD_KIT = f'{TOP}/Mod kit/adjvrmk.exe'
 # --zip / --notes (testing with a throwaway repository): another file uploaded under the zip's name, other notes
@@ -123,6 +127,9 @@ def check_zip(version):
         for needed in (f'{TOP}/Def Jam Vendetta Recompiled Settings.exe', f'{TOP}/READ ME FIRST.txt', MOD_KIT):
             if needed not in names:
                 raise SystemExit(f'missing: {needed}')
+    if os.path.isfile(PASSED):
+        os.remove(PASSED)
+    started_from_zip(path)
     size = os.path.getsize(path)
     sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
     print(f'{ZIP_NAME}: {size / 1e6:.1f} MB, {len(listed)} files, version {version}, sha256 {sha}')
@@ -131,6 +138,36 @@ def check_zip(version):
     print(f'the mod kit inside: {kit}')
     if os.path.isfile(NOTES) and kit not in open(NOTES, encoding='utf-8').read():
         print(f'note: the release notes do not name the mod kit {kit}')
+    with open(PASSED, 'w', encoding='utf-8') as f:
+        f.write(f'{version} {sha}\n')
+
+
+def started_from_zip(path):
+    """The settings program and the mod kit as a player gets them, each taken out of the zip into an empty folder and
+    started: each draws a page without a window, which goes through the same start (the app, its XAML, the theme) as
+    opening its window. A build that leaves a program unable to start (0.5.1's settings program: "No precompiled XAML
+    found") stops the release here."""
+    programs = (('the settings program', f'{TOP}/Def Jam Vendetta Recompiled Settings.exe', ['--shot', 'play']),
+                ('the mod kit', MOD_KIT, ['--shot', 'animations']))
+    with zipfile.ZipFile(path) as z:
+        names = set(z.namelist())
+        for what, name, args in programs:
+            if name not in names:
+                raise SystemExit(f'missing: {name}')
+            with tempfile.TemporaryDirectory(prefix='vdj-check-') as folder:
+                exe = os.path.join(folder, os.path.basename(name))
+                with z.open(name) as src, open(exe, 'wb') as dst:
+                    dst.write(src.read())
+                shot = os.path.join(folder, 'check.png')
+                try:
+                    started = subprocess.run([exe, *args, shot] + (['1280', '800'] if what == 'the mod kit' else []),
+                                             capture_output=True, text=True, timeout=180, cwd=folder)
+                except subprocess.TimeoutExpired:
+                    raise SystemExit(f'{what} in the zip did not finish starting in 3 minutes')
+                if started.returncode != 0 or not os.path.isfile(shot) or os.path.getsize(shot) == 0:
+                    raise SystemExit('%s in the zip does not start (exit %d):\n%s'
+                                     % (what, started.returncode, (started.stderr or started.stdout).strip()))
+            print(f'{what} in the zip: starts')
 
 
 def publish(version, repo):
@@ -145,7 +182,12 @@ def publish(version, repo):
     cmd = ['gh', 'release', 'create', tag, path, '--repo', repo, '--title',
            f'Def Jam Vendetta Recompiled {version}', '--notes-file', notes_file, '--latest']
     if repo == GITHUB_REPO:
-        # the real release: from a commit that is on GitHub, tagged here
+        # the real release: only the zip check-zip passed, for this version
+        sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+        passed = open(PASSED, encoding='utf-8').read().split() if os.path.isfile(PASSED) else []
+        if passed != [version, sha]:
+            raise SystemExit(f'run "check-zip {version}" on this zip first (it starts the settings program from it)')
+        # from a commit that is on GitHub, tagged here
         if run('git', 'status', '--porcelain'):
             raise SystemExit('uncommitted changes: a release comes from a commit')
         head = run('git', 'rev-parse', 'HEAD')
