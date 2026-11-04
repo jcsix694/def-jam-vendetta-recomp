@@ -82,6 +82,21 @@ SkiaSharp / HarfBuzzSharp - Copyright (c) Microsoft Corporation - MIT - https://
 Inter (the font) - Copyright (c) The Inter Project Authors - SIL Open Font License 1.1 - https://github.com/rsms/inter
 
 
+The mod kit (Mod kit\adjvrmk.exe)
+---------------------------------
+
+The mod kit, Copyright (C) 2026 jcsix694 (@jcsix on X), is a separate program by the same author that comes with the
+game. Its code isn't in this repository, and this project's licence doesn't cover it. It is built with:
+
+Avalonia - Copyright (c) .NET Foundation and Contributors - MIT - https://github.com/AvaloniaUI/Avalonia
+.NET runtime (inside the kit's exe) - Copyright (c) .NET Foundation and Contributors - MIT - https://github.com/dotnet/runtime
+CommunityToolkit.Mvvm - Copyright (c) .NET Foundation and Contributors - MIT - https://github.com/CommunityToolkit/dotnet
+SkiaSharp / HarfBuzzSharp - Copyright (c) Microsoft Corporation - MIT - https://github.com/mono/SkiaSharp
+  (Skia: BSD-3-Clause, Google; HarfBuzz: MIT, its authors)
+Inter (the font) - Copyright (c) The Inter Project Authors - SIL Open Font License 1.1 - https://github.com/rsms/inter
+NAudio (the kit's sound playback) - Copyright (c) Mark Heath and contributors - MIT - https://github.com/naudio/NAudio
+
+
 In the release zip
 ------------------
 
