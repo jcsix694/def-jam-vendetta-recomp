@@ -5,6 +5,20 @@ The newest version is at the top.
 
 ---
 
+## 0.5.2
+
+### Fixed
+- **The settings program didn't open in 0.5.1.** Clicking it did nothing, on every PC, so a new install couldn't be
+  set up and an update couldn't be started. It opens again. Comes with the mod kit v0.3.0, as before.
+
+### Good to know
+- **If you have 0.5.1**, the settings program can't update itself, so update by hand: download this version's zip and
+  unzip it over your game folder, replacing the files. Then open the settings program. If the game was already built,
+  it offers to rebuild it for 0.5.2 (a few minutes). Your saves, settings, projects and mods stay as they are.
+- From 0.5.0 or older, press **Update** when the game asks as it starts, or on the settings program's Play page.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.5.1
 
 ### Fixed
