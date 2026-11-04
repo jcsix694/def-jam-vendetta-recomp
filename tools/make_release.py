@@ -183,11 +183,27 @@ def mod_kit(work):
 
 
 def settings_exe(work):
+    # The publish's own build folders are cleared first: left from an earlier build, their compiled program can be
+    # taken as up to date with Avalonia's XAML step never run on it, and the exe then stops at once on every PC
+    # ("No precompiled XAML found for VendettaSettings.App", 0.5.1).
+    app = os.path.join(REPO, 'settings-app')
+    for stale in (os.path.join(app, 'obj', 'Release', 'net10.0', 'win-x64'),
+                  os.path.join(app, 'bin', 'Release', 'net10.0', 'win-x64')):
+        shutil.rmtree(stale, ignore_errors=True)
     out = os.path.join(work, 'publish')
-    subprocess.run(['dotnet', 'publish', os.path.join(REPO, 'settings-app'), '-c', 'Release', '-r', 'win-x64',
+    subprocess.run(['dotnet', 'publish', app, '-c', 'Release', '-r', 'win-x64',
                     '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
                     '-p:DebugType=none', '-o', out, '-nologo', '-v', 'q'], check=True)
-    return os.path.join(out, 'Def Jam Vendetta Recompiled Settings.exe')
+    exe = os.path.join(out, 'Def Jam Vendetta Recompiled Settings.exe')
+    # The exe as a player gets it, started once: a page drawn without a window goes through the same start (the app,
+    # its XAML, the theme) that opens the window.
+    shot = os.path.join(work, 'settings-check.png')
+    started = subprocess.run([exe, '--shot', 'play', shot], capture_output=True, text=True, timeout=120)
+    if started.returncode != 0 or not os.path.isfile(shot):
+        raise SystemExit('the settings program does not start (exit %d):\n%s' % (started.returncode,
+                                                                             (started.stderr or started.stdout).strip()))
+    print('settings program: starts')
+    return exe
 
 
 def python_zip():
