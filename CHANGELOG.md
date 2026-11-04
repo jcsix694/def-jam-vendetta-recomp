@@ -5,6 +5,24 @@ The newest version is at the top.
 
 ---
 
+## 0.6.0
+
+### New
+- **Comes with the mod kit v0.4.0** (the Mod kit folder, Settings > Mods > Open the mod kit). A mod you import into
+  the kit now sits in the same lists as your own work, tagged with the mod's name, version and author, and all of it
+  can be changed, its animations too. A wrestler you share that uses a downloaded animation carries it in its zip.
+- **The kit's Blender plugin v0.3.1** brings a wrestler in with one material, its skin, instead of several showing the
+  same picture. Install it again from the kit's Blender plugin page.
+
+### Good to know
+- The game itself is the same as 0.5.2.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects, mods and your work in the mod kit stay as they are.
+- **If you have 0.5.1**, its settings program can't update itself: download this version's zip and unzip it over your
+  game folder, replacing the files, then open the settings program.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.5.2
 
 ### Fixed
