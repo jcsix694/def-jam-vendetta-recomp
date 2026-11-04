@@ -92,6 +92,61 @@ internal static class Shot
     /// of the folder holding a project): the Mods page as a player uses it on the first project (install into it, where the
     /// wrestlers go, on / off with needs, the problems and their fixes, an update that breaks something, remove), with the
     /// project's list and problems printed after each step.</summary>
+    /// <summary>Which kit Open the mod kit starts: an install with its Mod kit folder and a mod-kit.txt naming another kit
+    /// (that kit once linked here, then to another game), an install without the folder (the repository) and one with
+    /// neither. Scratch folders in the temp folder, removed after; ends "all passed" or the failures.</summary>
+    public static void SelfTestModKit()
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        var top = Path.Combine(Path.GetTempPath(), "vendetta-selftest-modkit-" + Environment.ProcessId);
+        var failed = 0;
+        string Make(string name, bool shipped, string? note)
+        {
+            var root = Path.Combine(top, name);
+            Directory.CreateDirectory(Path.Combine(root, GameFolder.DataFolder, "projects"));
+            if (shipped)
+            {
+                Directory.CreateDirectory(Path.Combine(root, "Mod kit"));
+                File.WriteAllText(Path.Combine(root, ModsViewModel.ShippedModKit), "");
+            }
+            if (note != null)
+                File.WriteAllText(Path.Combine(root, GameFolder.DataFolder, "mod-kit.txt"), note + "\n");
+            return root;
+        }
+        void Check(string what, string root, string? expected)
+        {
+            Environment.SetEnvironmentVariable("VENDETTA_ROOT", root);
+            var m = new ModsViewModel(GameFolder.Find(), readOnly: true, _ => { }, () => { });
+            var got = m.ModKit;
+            var ok = string.Equals(got, expected, StringComparison.OrdinalIgnoreCase);
+            failed += ok ? 0 : 1;
+            Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {what}: {got ?? "none"}" + (ok ? "" : $" (expected {expected ?? "none"})"));
+        }
+        try
+        {
+            Directory.CreateDirectory(top);
+            var other = Path.Combine(top, "another kit", "adjvrmk.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(other)!);
+            File.WriteAllText(other, "");
+            var a = Make("install with a stray note", shipped: true, note: other);
+            Check("the kit beside the game, over a note naming another kit", a, Path.Combine(a, ModsViewModel.ShippedModKit));
+            var b = Make("install without a note", shipped: true, note: null);
+            Check("the kit beside the game, no note", b, Path.Combine(b, ModsViewModel.ShippedModKit));
+            var c = Make("repository with a note", shipped: false, note: other);
+            Check("no kit beside the game: the note's kit", c, other);
+            var d = Make("repository with an old note", shipped: false, note: Path.Combine(top, "gone", "adjvrmk.exe"));
+            Check("no kit beside the game, the note's kit gone: none", d, null);
+            var e = Make("neither", shipped: false, note: null);
+            Check("neither: none", e, null);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("VENDETTA_ROOT", null);
+            try { Directory.Delete(top, recursive: true); } catch { }
+        }
+        Console.WriteLine(failed == 0 ? "all passed" : $"{failed} failed");
+    }
+
     public static void SelfTestMods(string[] mods)
     {
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VENDETTA_ROOT")))

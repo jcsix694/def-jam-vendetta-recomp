@@ -56,6 +56,13 @@ internal static class Program
             Shot.SelfTestShare(args[1]);
             return;
         }
+        // Dev: which mod kit "Open the mod kit" starts (the kit beside the game over a kit's old mod-kit.txt), on scratch
+        // folders of its own: --selftest-modkit
+        if (args.Length >= 1 && args[0] == "--selftest-modkit")
+        {
+            Shot.SelfTestModKit();
+            return;
+        }
         // Dev: the saving checked on a scratch folder (VENDETTA_ROOT): --selftest [play]
         if (args.Length >= 1 && args[0] == "--selftest")
         {

@@ -384,22 +384,24 @@ public partial class ModsViewModel : ObservableObject
         GameFolder.Open(dir);
     }
 
-    // --- the mod kit: the one that last linked to this recomp (it writes where it is in mod-kit.txt beside the
-    // projects), else the one that comes with the game (Mod kit\adjvrmk.exe beside it, which links itself) ---
+    // --- the mod kit: the one that comes with the game (Mod kit\adjvrmk.exe beside it, which links itself), always,
+    // as it is updated with the game; only without it (the repository) the one that last linked to this recomp (it
+    // writes where it is in mod-kit.txt beside the projects). A kit once linked to this install and later to another
+    // game leaves its path in mod-kit.txt, so that file never wins over the kit beside the game. ---
 
     public const string ShippedModKit = "Mod kit\\adjvrmk.exe";
 
-    private string? ModKit
+    internal string? ModKit
     {
         get
         {
             try
             {
-                var file = Path.Combine(_folder.Data, "mod-kit.txt");
-                if (File.Exists(file) && File.ReadAllText(file).Trim() is { Length: > 0 } exe && File.Exists(exe))
-                    return exe;
                 var shipped = Path.Combine(_folder.Root, ShippedModKit);
-                return File.Exists(shipped) ? shipped : null;
+                if (File.Exists(shipped))
+                    return shipped;
+                var file = Path.Combine(_folder.Data, "mod-kit.txt");
+                return File.Exists(file) && File.ReadAllText(file).Trim() is { Length: > 0 } exe && File.Exists(exe) ? exe : null;
             }
             catch
             {
