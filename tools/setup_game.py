@@ -485,11 +485,28 @@ def mark_changed_files(data, after_copy):
         say(f'{marked} files changed since the game was last built: marked as changed')
 
 
-def step_graphics(out_dir, data):
-    """The graphics card's pipelines built now and kept in graphics-cache.bin beside the game, so its first start
-    doesn't build them (a couple of minutes). Never stops the setup: the game builds them itself when this can't."""
-    step(6, STEPS[5])
+def install_game(out_dir, data):
+    """The built game program and its DLLs put in their place beside the game files."""
     exe = os.path.join(out_dir, 'ps2EntryRunner.exe')
+    if not os.path.isfile(exe):
+        raise SetupError('the game was not built')
+    # each copied beside its place first, then swapped in: an update's rebuild replaces the game only once it is all here
+    files = [(exe, GAME_EXE)] + [(os.path.join(out_dir, name), name) for name in os.listdir(out_dir)
+                                  if name.lower().endswith('.dll')]  # the DLLs it needs (ffmpeg)
+    for source, name in files:
+        shutil.copyfile(source, os.path.join(data, name + '.new'))
+    for _, name in files:
+        os.replace(os.path.join(data, name + '.new'), os.path.join(data, name))
+
+
+def step_graphics(data):
+    """The graphics card's pipelines built now and kept in graphics-cache.bin beside the game, so its first start
+    doesn't build them (a couple of minutes). Never stops the setup: the game builds them itself when this can't.
+    Run with the game program itself, in its place: the driver only gives the saved pipelines back to the program that
+    saved them (the same build run as the build folder's ps2EntryRunner.exe saved pipelines the game found none of: it
+    built all 10,900 again at its first start)."""
+    step(6, STEPS[5])
+    exe = os.path.join(data, GAME_EXE)
     env = dict(os.environ)
     env['VENDETTA_GRAPHICS_CACHE'] = os.path.join(data, 'graphics-cache.bin')
     # the player's settings (they pick the graphics card) when there are any yet; none on a first install
@@ -508,18 +525,8 @@ def step_graphics(out_dir, data):
     progress(1.0)
 
 
-def step_finish(out_dir, data):
+def step_finish(data):
     step(7, STEPS[6])
-    exe = os.path.join(out_dir, 'ps2EntryRunner.exe')
-    if not os.path.isfile(exe):
-        raise SetupError('the game was not built')
-    # each copied beside its place first, then swapped in: an update's rebuild replaces the game only once it is all here
-    files = [(exe, GAME_EXE)] + [(os.path.join(out_dir, name), name) for name in os.listdir(out_dir)
-                                  if name.lower().endswith('.dll')]  # the DLLs it needs (ffmpeg)
-    for source, name in files:
-        shutil.copyfile(source, os.path.join(data, name + '.new'))
-    for _, name in files:
-        os.replace(os.path.join(data, name + '.new'), os.path.join(data, name))
     # what it was built from: the settings program and the game compare it with the release's files
     if os.path.isfile(os.path.join(data, MANIFEST)):
         built_from = os.path.join(data, BUILT_FROM)
@@ -546,8 +553,9 @@ def main():
         recompiler = step_recompiler(env, data, arch)
         step_recompile(recompiler, data)
         out_dir = step_game(env, data, arch)
-        step_graphics(out_dir, data)
-        step_finish(out_dir, data)
+        install_game(out_dir, data)
+        step_graphics(data)
+        step_finish(data)
     except SetupError as error:
         # the step it stopped in, the tool's own error lines, and what they mean when it is a known one
         where = f'{STEPS[current_step - 1]}: ' if 1 <= current_step <= len(STEPS) else ''
