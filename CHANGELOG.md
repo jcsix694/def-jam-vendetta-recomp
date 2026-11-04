@@ -5,6 +5,38 @@ The newest version is at the top.
 
 ---
 
+## 0.5.0
+
+### New
+- **Mod support.** Mods add to the game or change it: wrestlers with their own models, attires, pictures, voice lines
+  and movesets, new moves and animations, and arenas with their own models, lights, fly-ins, crowd sounds and Choose
+  Stage pictures. A mod wrestler can take a game wrestler's place or get a new slot on Choose Fighter. A mod arena can
+  take a game arena's place or appear as a new stage on Choose Stage.
+- **Projects.** Mods are played in a project: a set of mods in the order you choose, with its own saves. The original
+  game never loads mods, and its saves stay as they are. Make and pick projects on the settings program's Play page,
+  and switch their mods on or off on the Mods page. A whole project can be shared with friends as one zip.
+- **A check before a project starts.** If a project's mods have a problem (a mod missing, or a move that isn't there), the
+  game says what is wrong instead of starting.
+- **The mod kit comes with the game.** The mod kit v0.3.0 is in the **Mod kit** folder beside the game. Open it from
+  the settings program's Mods page with **Open the mod kit**. It makes wrestlers, attires, moves, animations and arenas
+  and adds them to a project. Its Blender plugin brings the game's models into Blender 5.2 and exports your own.
+
+### Better
+- **High Poly always.** Every match uses the High Poly wrestlers and arenas, so the setting for it is gone.
+- **The first start after installing or updating is quicker.** The graphics prepared during setup are now used, so
+  the game no longer spends about 2 minutes on "Preparing graphics" the first time it opens.
+
+### Fixed
+- **Setup stopped while building the game on some PCs** (an internal compiler error). The setup now checks the build
+  tools' compiler and the Windows SDK, and updates older build tools by itself. Thanks to the player who reported it.
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves and
+  settings stay as they are. The mod kit is added to your install by the update.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+- The original game plays as before. Mods are only played in a project.
+
 ## 0.4.5
 
 ### Fixed
