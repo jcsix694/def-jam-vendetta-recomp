@@ -20,6 +20,21 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 
 <img src="images/game-match.jpg" alt="Briggs against Spider in The Face Club, widescreen at 16x" width="100%">
 
+**Contents**
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Install](#install)
+- [Def Jam Vendetta Recompiled Settings](#def-jam-vendetta-recompiled-settings)
+- [Mods](#mods)
+  - [The mod kit](#the-mod-kit)
+  - [Wrestlers](#wrestlers)
+  - [Arenas](#arenas)
+  - [Blender plugin](#blender-plugin)
+- [Controls](#controls)
+- [Good to know](#good-to-know)
+- [Thanks to](#thanks-to)
+- [Licence](#licence)
+
 ## Features
 
 **Picture**
@@ -40,8 +55,14 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 - A settings program that sets everything up from your disc and updates itself
 - Your saves stay as memory card files on your PC
 
-**Mod support: coming in a future update**
-- Actively being worked on, and it will come.
+**Mods**
+- New wrestlers and arenas, each with its own place on Choose Fighter and Choose Stage, or in place of the game's own
+- Wrestlers with their own models, skins, attires, movesets, animations and voice lines
+- Your own animations: moves, intros, victories and taunts, posed frame by frame, with their own sounds and cameras
+- Arenas with their own models, textures, lights, crowd sounds and fly-in camera
+- Projects: each one has its own mods and its own saves, so the original game and your saves are never touched
+- The mod kit comes with the game, with a Blender plugin for models
+- Share a project and its mods as one zip
 
 ## Screenshots
 
@@ -120,6 +141,9 @@ version. Turn both checks off under About › Check for updates automatically.
 </tr>
 </table>
 
+- **Play:** what to play, the original game or one of your projects; new projects, copy, rename, delete, export one to
+  share and import one.
+- **Mods:** a project's mods in their load order, its mods folder, and the mod kit.
 - **Display:** window or borderless, which screen, VSync, and
   widescreen, 4:3 or stretched.
 - **Graphics:** graphics card or CPU, scale 1× to 16×, Sharp 2D, and FSR, smooth or blocky scaling with sharpening.
@@ -129,6 +153,156 @@ version. Turn both checks off under About › Check for updates automatically.
 - **Gameplay:** the camera style in matches, the match speed (Def Jam Vendetta, WWF No Mercy or your own), and Unlock
   everything.
 - **About:** the version, your game folder and save data in one click, and what it's made with.
+
+## Mods
+
+Mods are played in **projects**. A project is a set of mods with its own saves: the original game never loads mods,
+and its saves stay as they are.
+
+<table>
+<tr>
+<td width="50%"><img src="images/settings-play.png" alt="The Play page with a project"><br><sub>The Play page: the original game or one of your projects, each with its own saves.</sub></td>
+<td width="50%"><img src="images/settings-mods.png" alt="The Mods page"><br><sub>The Mods page: a project's mods in load order, each switched on or off.</sub></td>
+</tr>
+</table>
+
+1. On the **Play** page, press **+ New project** and give it a name.
+2. On the **Mods** page, press **Open the mod kit**. It's in the `Mod kit` folder beside Def Jam Vendetta Recompiled
+   Settings.
+3. In the mod kit, make a wrestler or an arena (or import one someone shared), then press **Add to project…**: it
+   either replaces one of the game's own or gets a new place of its own.
+4. Back on the **Play** page, pick the project and press **PLAY**.
+
+When two mods change the same thing, the one lower down the Mods page wins. If a project's mods have a problem, the
+game tells you before it starts, and the Mods page says what's wrong. To share a project with its mods, use
+**Export to share…** on the Play page; the other player brings it in with **Import…**.
+
+### The mod kit
+
+The mod kit makes the mods. Its first start asks for the name you make mods under, and it links itself to the game it
+came with.
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-name.png" alt="The mod kit's first start: your name"><br><sub>Your name goes into every mod you make, so two people's mods never clash.</sub></td>
+<td width="50%"><img src="images/modkit-linked.png" alt="Linked games"><br><sub>Linked games: the game the kit reads from and adds mods to.</sub></td>
+</tr>
+</table>
+
+### Wrestlers
+
+A wrestler is up to 3 attires, each with a model, a profile and its select screen pictures. It gets a new slot on
+Choose Fighter, or takes a game wrestler's place. Everything about it can be your own: its names and size, its stats,
+its voice and its intro and win lines, its moveset and combos, its animations, its model and its pictures. Or start
+from any of the game's wrestlers and change only what you want.
+
+#### Making a wrestler
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-wrestlers.png" alt="A wrestler and its attires"><br><sub>The wrestler and its attires, with its model turning in the preview.</sub></td>
+<td width="50%"><img src="images/modkit-profile.png" alt="A wrestler profile"><br><sub>The profile: names, height and weight, size, voice, and the intro and win lines.</sub></td>
+</tr>
+</table>
+
+#### Moves and animations
+
+Every slot in the moveset holds one of the game's moves or one of your own, and the preview plays it on the wrestler's
+own model. Your own animations are made in the kit: **Create new** starts one from any of the game's moves, of every
+kind the game has (grapples, strikes, running attacks, corner and rope moves, aerials, Blazin' moves, taunts, intros and
+victories), and everything about it can then be changed:
+
+- **Pose:** click a body part on the wrestler and drag it. Each change is a key, and the frames between are the game's
+  or filled in for you. Copy, paste and mirror poses, save your own, or start from ready-made poses and any frame of a
+  game animation.
+- **Timing:** add and delete frames, set its speed, and place the moments the game reads: when it hits, when the damage
+  lands, and the windows for the ropes, ring shakes and screen shakes.
+- **Sounds:** the game's sounds at any frame, or copied from one of the game's animations.
+- **Camera:** intros and victories get their own camera, key by key, for each corner of the ring.
+- **Face and hands:** the faces, eyes, lips and hand shapes, frame by frame.
+- **Before and after:** seen joined to what the game plays before and after it, then tried in a real match.
+
+<img src="images/modkit-moveset.png" alt="A profile's moveset with the preview"><br><sub>The moveset: every slot the game has, grouped by situation with its buttons, each move played in the preview on the wrestler's own model. The Fight and Combos tabs hold the stats and the combos.</sub>
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-animations.png" alt="Animations"><br><sub>Your own intros, victories and moves.</sub></td>
+<td width="50%"><img src="images/modkit-editor.png" alt="An animation open in the editor"><br><sub>The editor: key poses on a timeline, sounds at their frames, the camera, the face and hands.</sub></td>
+</tr>
+</table>
+
+#### Models and pictures
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-models.png" alt="Wrestler models"><br><sub>Models in the game's format, made in Blender with the plugin.</sub></td>
+<td width="50%"><img src="images/modkit-pictures.png" alt="Select screen pictures"><br><sub>Renders, icons and name logos, any size. The game's own can be saved as PNG to start from.</sub></td>
+</tr>
+</table>
+
+#### Adding to a project
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-addreplace.png" alt="Add to project: replacing a game wrestler"><br><sub>Replacing a wrestler: its attires take that wrestler's one by one, and the rest stay the game's own.</sub></td>
+<td width="50%"><img src="images/modkit-addnew.png" alt="Add to project: a new slot"><br><sub>A new slot at the end of Choose Fighter: no game wrestler changes.</sub></td>
+</tr>
+</table>
+
+### Arenas
+
+An arena is its model with its lights, fly-in, sounds and Choose Stage pictures. It gets a new place on Choose Stage,
+or takes a game arena's place. Start from any of the game's 12 arenas, or from your own model made in Blender, and
+change what you want:
+
+- **Lights:** every light the game uses, for the fight, the intros and close-ups and each part of the crowd: its kind,
+  where it sits, how far it reaches, and its colour over time, picked on a colour wheel.
+- **Fly-in:** the camera's path into the arena before a match, key by key on a timeline, with its cuts.
+- **Sounds:** the crowd, the arena's own sounds and the announcer's welcome, picked from the game's recordings.
+- **Choose Stage:** its big picture, thumbnail and name strip, any size.
+
+#### The arena
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-arenas.png" alt="An arena"><br><sub>The arena and what it uses, seen with two wrestlers in it.</sub></td>
+<td width="50%"><img src="images/modkit-lights.png" alt="An arena's lights"><br><sub>Lights: each set the game uses, for the fight, the intros and close-ups, and the crowd.</sub></td>
+</tr>
+</table>
+
+#### Fly-ins and sounds
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-flyin.png" alt="The fly-in editor"><br><sub>The fly-in: the camera's path into the arena, key by key on a timeline.</sub></td>
+<td width="50%"><img src="images/modkit-sounds.png" alt="A sound set"><br><sub>Sounds: the crowd, the arena's own sounds and the announcer's welcome.</sub></td>
+</tr>
+</table>
+
+#### Models and pictures
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-arenamodels.png" alt="Arena models"><br><sub>Arena models in the game's format, with their crowd and pictures.</sub></td>
+<td width="50%"><img src="images/modkit-stagepictures.png" alt="Stage pictures"><br><sub>Choose Stage's big picture, thumbnail and name strip. The game's own can be saved as PNG.</sub></td>
+</tr>
+</table>
+
+#### Adding to a project
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-arenareplace.png" alt="Add to project: replacing a game arena"><br><sub>Replacing an arena: it takes that arena's place in Battle, Survival and Story.</sub></td>
+<td width="50%"><img src="images/modkit-arenanew.png" alt="Add to project: a new arena on Choose Stage"><br><sub>New on Choose Stage, after the game's 12, in Battle. The kit's checks say what's still missing.</sub></td>
+</tr>
+</table>
+
+### Blender plugin
+
+Wrestlers' and arenas' models are made in Blender, version 5.2 or newer. The kit's Blender plugin page downloads the
+plugin, which brings the game's models into Blender and exports yours for the kit.
+
+<img src="images/modkit-blender.png" alt="The Blender plugin page" width="50%">
 
 ## Controls
 
@@ -151,8 +325,10 @@ Controls page.
 ## Good to know
 
 - **Your saves** are memory card files in `files\game\mc0` (About › Open save data). Copy that folder to back them up.
+  Each project keeps its own in its folder under `files\projects`.
 - **Running slowly?** 16× (the default) needs a fairly strong graphics card: try 8× on the Graphics page.
-- **The very first start** is slow for about a minute while the graphics card prepares its shaders.
+- **Preparing graphics:** the setup and each update prepare the graphics card's shaders (about 2 minutes), so the game
+  starts quickly. After a graphics driver update the game prepares them again once, with a "Preparing graphics" popup.
 - **Vibration** can also be turned off in the game's own pause menu.
 - **Camera styles** (on the Gameplay page):
   - **Def Jam Vendetta:** the game's own camera, the default.
@@ -240,6 +416,9 @@ It has to be the GPL: PS2Recomp (ran-j, GPL-3.0) is built into the game program,
 under its licence. Our changes to paraLLEl-GS (`patches\parallel-gs-local.diff`) are under its LGPL-3.0+. paraLLEl-GS
 (© Arntzen Software AS) is LGPL-3.0+ and uses Granite (© Hans-Kristian Arntzen, MIT). Both are included as submodules.
 Every other part and its licence: `THIRD-PARTY-NOTICES.txt`.
+
+The mod kit in the download's `Mod kit` folder is a separate program by the same author that comes with the game. Its
+code isn't in this repository, and this licence doesn't cover it.
 
 <sub>Not affiliated with or endorsed by Electronic Arts, EA Sports BIG, AKI Corporation or Def Jam Recordings. Def Jam
 Vendetta and its name, logo and artwork belong to their owners. The banner and Def Jam Vendetta Recompiled Settings' pictures are artwork
