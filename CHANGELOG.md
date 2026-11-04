@@ -5,6 +5,19 @@ The newest version is at the top.
 
 ---
 
+## 0.5.1
+
+### Fixed
+- **Open the mod kit could start another copy of the mod kit.** If another copy of the mod kit had once been linked
+  to your install, the settings program's **Open the mod kit** could start that copy instead of the one in the
+  **Mod kit** folder. It now always starts the mod kit that comes with the game (v0.3.0).
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects and mods stay as they are.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.5.0
 
 ### New
