@@ -46,6 +46,15 @@ namespace vendetta_pictures
 
     // The same, drawing nothing there (transparent).
     void hide(uint32_t tbp);
+
+    // Picture id drawn at once wherever GS address `tbp` is sampled (GS register 0x71: no upload needed, the game's
+    // picture already there), until unbindNow(tbp): around one of the game's draws. The game thread, in its GS order.
+    // False (nothing done) when it can't be shown; while it is being read, nothing is drawn there (transparent).
+    bool bindNow(uint32_t tbp, uint32_t id);
+    void unbindNow(uint32_t tbp);
+
+    // The picture's own size in pixels (its file's), 0 x 0 when it can't be read.
+    void fileSize(const std::filesystem::path &file, uint32_t &width, uint32_t &height);
 }
 
 void installVendettaPictures(PS2Runtime &runtime);

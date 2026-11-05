@@ -109,6 +109,10 @@ namespace vendetta_widescreen
 
     bool isHud(const GSDrawState &state)
     {
+        // a menu over a wide backdrop (a centred frame, vendetta_menus.cpp): its 2-D is drawn with the depth test on
+        // (ZTST always, TEST 0x3000d), so every context-1 draw into the display buffer counts
+        if (ps2_widescreen::centredNow())
+            return state.prim.ctxt == 0u && state.context.frame.fbp < 0x80u;
         return state.prim.ctxt == 0u && (state.context.test & 0x10000u) == 0u && state.context.frame.fbp < 0x80u;
     }
 

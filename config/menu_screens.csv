@@ -1,0 +1,51 @@
+# The menu themes' screens: the key a theme names, and when it is on (the front end 0x29E468 + 4 = the number,
+# the story 0x29E5A0 + 0 = the phase, a match: by the drawing routine, menu_pieces.csv). Made by a script.
+screen,where,number
+boot-card,front end,0
+boot-card,front end,1
+boot-card,front end,2
+title,front end,5
+main-menu,front end,6
+choose-match,front end,7
+select,front end,8
+select,front end,9
+stage,front end,A
+user-setup,front end,B
+user-setup,front end,C
+user-setup,front end,D
+delete-user,front end,E
+user-setup,front end,F
+teams,front end,10
+high-scores,front end,11
+survival-next,front end,12
+survival-next,front end,13
+gallery,front end,15
+options,front end,16
+tutorial,front end,17
+vs,front end,19
+vs,front end,1A
+post-match,front end,1B
+story-debug,story,1
+choose-character,story,2
+story-loading,story,4
+match-complete,story,6
+story-save-stub,story,7
+home-message,story,8
+home,story,9
+options,story,A
+develop,story,B
+gallery,story,C
+ladder,story,D
+girlfriend,story,E
+story-end-save,story,13
+story-post-match,story,14
+story-rewards,story,15
+story-next,story,16
+hud,a match,
+pause,a match,
+match-words,a match,
+winner,a match,
+intro-caption,a match,
+letterbox,a match,
+game-over,a match,
+photo,front end,15

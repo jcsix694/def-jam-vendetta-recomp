@@ -2812,7 +2812,7 @@ index 509fd07..71243e7 100644
  
      std::string CodeGenerator::translateVU_VMTIR(const Instruction &inst)
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..09548da 100644
+index 589d768..dfb52e8 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -82,6 +82,10 @@ else()
@@ -2889,7 +2889,7 @@ index 589d768..09548da 100644
  file(GLOB_RECURSE KERNEL_SRC_FILES CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/Kernel/*.cpp"
  )
-@@ -462,6 +502,17 @@ else()
+@@ -462,6 +502,26 @@ else()
      )
  endif()
  
@@ -2904,10 +2904,19 @@ index 589d768..09548da 100644
 +        COMPILE_OPTIONS "$<$<CONFIG:RelWithDebInfo>:/Z7;/Ob2>")
 +endif()
 +
++# A game's own file that uses raylib's font loader (e.g. def-jam-vendetta-recomp's vendetta_menufont.cpp): built on its
++# own, so raylib's header never shares a unity batch or a precompiled header with the platform's.
++set(PS2X_MENUFONT_CPP "${CMAKE_CURRENT_SOURCE_DIR}/src/runner/vendetta_menufont.cpp")
++if(EXISTS "${PS2X_MENUFONT_CPP}")
++    set_source_files_properties("${PS2X_MENUFONT_CPP}" PROPERTIES
++        SKIP_UNITY_BUILD_INCLUSION ON
++        SKIP_PRECOMPILE_HEADERS ON)
++endif()
++
  if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      set_target_properties(ps2EntryRunner PROPERTIES
          UNITY_BUILD ON
-@@ -507,6 +558,19 @@ target_include_directories(ps2_runtime PUBLIC
+@@ -507,6 +567,19 @@ target_include_directories(ps2_runtime PUBLIC
  )
  
  target_link_libraries(ps2_runtime PUBLIC ps2_host_backend ffmpeg ps2_iop)
@@ -2927,7 +2936,7 @@ index 589d768..09548da 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
-@@ -518,10 +582,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
+@@ -518,10 +591,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
      )
      target_link_libraries(ps2EntryRunner PRIVATE rlImGui imgui)
      target_compile_definitions(ps2EntryRunner PRIVATE PS2X_ENABLE_DEBUG_UI=1)
@@ -3706,10 +3715,10 @@ index 4c3f641..b106c89 100644
  #endif
 diff --git a/ps2xRuntime/include/runtime/gs/gs_gpu.h b/ps2xRuntime/include/runtime/gs/gs_gpu.h
 new file mode 100644
-index 0000000..61bba2e
+index 0000000..a9e8917
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_gpu.h
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,203 @@
 +#pragma once
 +
 +// The GS drawn on the graphics card (paraLLEl-GS, Vulkan compute), next to the CPU renderer.
@@ -3895,6 +3904,9 @@ index 0000000..61bba2e
 +        (void)id, (void)width, (void)height, (void)rgba;
 +    }
 +    virtual void dropHostImage(uint32_t id) { (void)id; }
++    // Any thread: a host image known by what is uploaded: a whole transfer into GS address `dbp` whose bytes hash to
++    // `hash` (64-bit FNV-1a over the bytes) draws as image `id` until the next transfer there (id 0: forgotten).
++    virtual void setHostImageForContent(uint32_t dbp, uint64_t hash, uint32_t id) { (void)dbp, (void)hash, (void)id; }
 +
 +    // Idempotent; joins the renderer's thread, which owns (and destroys) every Vulkan object.
 +    virtual void shutdown() = 0;
@@ -5895,10 +5907,10 @@ index 0000000..3bc0f17
 +}
 diff --git a/ps2xRuntime/include/runtime/ps2_widescreen.h b/ps2xRuntime/include/runtime/ps2_widescreen.h
 new file mode 100644
-index 0000000..beccad8
+index 0000000..48e9886
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_widescreen.h
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,78 @@
 +#pragma once
 +// Widescreen for games drawn for a 4:3 TV: the game's view is widened by game-specific code (its projection), which
 +// marks each frame it draws that way; the window then shows those frames at the target shape and everything else
@@ -5950,6 +5962,31 @@ index 0000000..beccad8
 +    inline bool wideNow(int64_t holdMs = 250)
 +    {
 +        return targetAspect() > 0.0f && detail::nowMs() - detail::lastWideFrame().load(std::memory_order_relaxed) <= holdMs;
++    }
++
++    namespace detail
++    {
++        inline std::atomic<int64_t> &lastCentredFrame()
++        {
++            static std::atomic<int64_t> value{INT64_MIN / 2};
++            return value;
++        }
++    }
++
++    // Game code: the frame being drawn is wide, and its 2-D layer is a 4:3 picture in the middle (a menu over a wide
++    // background): every overlay element is squeezed around the centre and kept inside the 4:3 middle, the full-width
++    // layers (the background, fades) left as they are. Marks the frame wide too.
++    inline void markCentredFrame()
++    {
++        const int64_t now = detail::nowMs();
++        detail::lastCentredFrame().store(now, std::memory_order_relaxed);
++        detail::lastWideFrame().store(now, std::memory_order_relaxed);
++    }
++
++    // A centred frame was drawn in the last `holdMs` milliseconds.
++    inline bool centredNow(int64_t holdMs = 250)
++    {
++        return targetAspect() > 0.0f && detail::nowMs() - detail::lastCentredFrame().load(std::memory_order_relaxed) <= holdMs;
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
@@ -11062,7 +11099,7 @@ index f0ad507..8fa3249 100644
      result.displayFbp = displayFrame.fbp;
      result.sourceFbp = selected.fbp;
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 5658928..51deae2 100644
+index 5658928..2a49935 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -1,8 +1,17 @@
@@ -12080,7 +12117,7 @@ index 5658928..51deae2 100644
          m_vtxCount = 2;
          break;
      default:
-@@ -1607,28 +2208,306 @@ void GS::vertexKick(bool drawing)
+@@ -1607,28 +2208,313 @@ void GS::vertexKick(bool drawing)
      }
  }
  
@@ -12256,6 +12293,9 @@ index 5658928..51deae2 100644
 +    // 2. each element squeezed back to its shape around its anchor: x' = A + k (x - A)
 +    const float target = ps2_widescreen::targetAspect();
 +    const float k = target > 0.0f ? (4.0f / 3.0f) / target : 1.0f;
++    // a centred frame (ps2_widescreen::markCentredFrame: a menu over a wide background): every element around the
++    // centre, and kept inside the 4:3 middle (a piece sliding in or out stops at its edge, never over the sides)
++    const bool centred = ps2_widescreen::centredNow();
 +    std::unordered_map<uint64_t, size_t> heldIndex;
 +    for (size_t i = 0; i < m_held.size(); ++i)
 +        if (m_held[i].packet != 0u && m_held[i].packet != ~0ull)
@@ -12275,7 +12315,9 @@ index 5658928..51deae2 100644
 +
 +        float anchor = w * 0.5f;
 +        int kind = 1;
-+        if (centre < w / 3.0f)
++        if (centred)
++            ;
++        else if (centre < w / 3.0f)
 +            anchor = 0.0f, kind = 0;
 +        else if (centre > w * 2.0f / 3.0f)
 +            anchor = w, kind = 2;
@@ -12305,7 +12347,9 @@ index 5658928..51deae2 100644
 +                uint8_t *bytes = m_held[held->second].bytes.data() + src.offset;
 +                const uint16_t x = static_cast<uint16_t>(bytes[0] | (bytes[1] << 8));
 +                const float screenX = static_cast<float>(x) / 16.0f - p.ofx;
-+                const float placed = anchor + k * (screenX - anchor);
++                float placed = anchor + k * (screenX - anchor);
++                if (centred)
++                    placed = std::clamp(placed, w * 0.5f * (1.0f - k), w * 0.5f * (1.0f + k));
 +                const long fixed = std::lround((placed + p.ofx) * 16.0f);
 +                const uint16_t nx = static_cast<uint16_t>(std::clamp<long>(fixed, 0, 0xFFFF));
 +                bytes[0] = static_cast<uint8_t>(nx & 0xFFu);
@@ -12389,7 +12433,7 @@ index 5658928..51deae2 100644
      return m_backend ? m_backend->ConsumeLocalToHostBytes(dst, maxBytes) : 0u;
  }
  
-@@ -1637,7 +2516,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1637,7 +2523,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
      if (!backend)
          backend = std::make_unique<GSCpuBackend>();
  
@@ -12399,7 +12443,7 @@ index 5658928..51deae2 100644
      std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
      if (m_backend)
      {
-@@ -1657,21 +2538,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1657,21 +2545,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
          }
      }
  
@@ -12610,10 +12654,10 @@ index 0000000..6085f2a
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
 new file mode 100644
-index 0000000..b1fe89b
+index 0000000..f5d72b2
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
-@@ -0,0 +1,1465 @@
+@@ -0,0 +1,1470 @@
 +// The GS on the graphics card: paraLLEl-GS (Arntzen Software AS, LGPL-3.0+) on Granite's Vulkan backend.
 +//
 +// The GS front end hands over the raw GS input in its own order (GIF data per path, register writes, presentations);
@@ -13056,6 +13100,11 @@ index 0000000..b1fe89b
 +        {
 +            if (ParallelGS::GSInterface *gs = m_hostImages.load(std::memory_order_acquire))
 +                gs->drop_host_image(id);
++        }
++        void setHostImageForContent(uint32_t dbp, uint64_t hash, uint32_t id) override
++        {
++            if (ParallelGS::GSInterface *gs = m_hostImages.load(std::memory_order_acquire))
++                gs->set_host_image_content(dbp, hash, id);
 +        }
 +
 +        GSGpuStatus status() const override

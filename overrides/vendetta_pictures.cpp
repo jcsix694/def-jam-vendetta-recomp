@@ -167,16 +167,31 @@ namespace vendetta_pictures
             }
         }
 
-        // The register 0x70 into the GS stream, in order with the game's own GIF transfers.
-        void arm(uint32_t tbp, uint32_t id)
+        // A host-image register into the GS stream, in order with the game's own GIF transfers: 0x70 (the next upload to
+        // tbp draws as the image) or 0x71 (tbp draws as the image at once; id 0 unbinds). paraLLEl-GS, a local addition.
+        void sendHostRegister(uint32_t reg, uint32_t tbp, uint32_t id)
         {
             alignas(16) uint64_t packet[4] = {
                 0x1000000000008001ull,                     // GIFtag: NLOOP 1, EOP, PACKED, NREG 1
                 0xEull,                                    // REGS: A+D
                 uint64_t(tbp & 0x3FFFu) | (uint64_t(id) << 32),
-                0x70ull,                                   // the host-image register (paraLLEl-GS, a local addition)
+                uint64_t(reg),
             };
             g_runtime->memory().submitChainGif(reinterpret_cast<const uint8_t *>(packet), sizeof(packet));
+        }
+
+        void arm(uint32_t tbp, uint32_t id) { sendHostRegister(0x70u, tbp, id); }
+
+        // The blank picture on the graphics card (once), for a picture still being read.
+        void ensureBlank()
+        {
+            if (g_blankSent)
+                return;
+            if (GSGpuRenderer *renderer = gpu())
+            {
+                renderer->setHostImage(kBlank, 1u, 1u, std::vector<uint32_t>(1u, 0u));
+                g_blankSent = true;
+            }
         }
 
         void queue(uint32_t id)
@@ -264,6 +279,54 @@ namespace vendetta_pictures
             }
         }
         arm(tbp, kBlank);
+    }
+
+    bool bindNow(uint32_t tbp, uint32_t id)
+    {
+        if (!available())
+            return false;
+        bool ready = false;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            if (id < 2u || id >= g_pictures.size() || g_pictures[id].state == State::Failed)
+                return false;
+            g_pictures[id].shown = Clock::now();
+            queue(id);
+            ready = g_pictures[id].state == State::Ready;
+            if (!ready && logOn())
+                std::cerr << "[pictures] " << g_pictures[id].file.string() << " drawn before it was read (nothing drawn)" << std::endl;
+            ensureBlank();
+        }
+        sendHostRegister(0x71u, tbp, ready ? id : kBlank);
+        return true;
+    }
+
+    void unbindNow(uint32_t tbp)
+    {
+        if (available())
+            sendHostRegister(0x71u, tbp, 0u);
+    }
+
+    void fileSize(const std::filesystem::path &file, uint32_t &width, uint32_t &height)
+    {
+        // a PNG's IHDR (width, height big-endian at bytes 16 and 20); anything else: decoded whole
+        width = height = 0;
+        std::ifstream in(file, std::ios::binary);
+        uint8_t head[24] = {};
+        if (in && in.read(reinterpret_cast<char *>(head), sizeof(head)) && head[1] == 'P' && head[2] == 'N' && head[3] == 'G')
+        {
+            width = (uint32_t(head[16]) << 24) | (uint32_t(head[17]) << 16) | (uint32_t(head[18]) << 8) | head[19];
+            height = (uint32_t(head[20]) << 24) | (uint32_t(head[21]) << 16) | (uint32_t(head[22]) << 8) | head[23];
+            return;
+        }
+        std::vector<uint8_t> data;
+        std::ifstream all(file, std::ios::binary);
+        if (!all)
+            return;
+        data.assign(std::istreambuf_iterator<char>(all), std::istreambuf_iterator<char>());
+        std::vector<uint32_t> rgba;
+        if (!gsDecodePicture(data.data(), data.size(), 0u, 0u, rgba, width, height))
+            width = height = 0;
     }
 
     void install(PS2Runtime &runtime)
