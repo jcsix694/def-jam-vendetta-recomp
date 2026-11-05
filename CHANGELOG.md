@@ -5,6 +5,22 @@ The newest version is at the top.
 
 ---
 
+## 0.6.1
+
+### Fixed
+- **Comes with the mod kit v0.4.1** (the Mod kit folder, Settings > Mods > Open the mod kit). Its Blender plugin v0.3.2
+  no longer cuts out the skin between two pieces of gear when a wrestler is exported, such as the shin between a knee
+  pad and a boot. Install the plugin again from the kit's Blender plugin page, then export your wrestler again.
+
+### Good to know
+- The game itself is the same as 0.6.0.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects, mods and your work in the mod kit stay as they are.
+- **If you have 0.5.1**, its settings program can't update itself: download this version's zip and unzip it over your
+  game folder, replacing the files, then open the settings program.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.6.0
 
 ### New
