@@ -43,6 +43,7 @@ namespace vendetta_pictures
             State state = State::Idle;
             uint64_t bytes = 0;
             Clock::time_point shown{};
+            bool made = false; // made from pixels by our code (addPixels): on the card for good, never read from a file
         };
 
         PS2Runtime *g_runtime = nullptr;
@@ -113,7 +114,7 @@ namespace vendetta_pictures
             {
                 uint32_t oldest = 0;
                 for (uint32_t id = 2; id < g_pictures.size(); ++id)
-                    if (g_pictures[id].state == State::Ready && g_pictures[id].shown < old &&
+                    if (g_pictures[id].state == State::Ready && !g_pictures[id].made && g_pictures[id].shown < old &&
                         (!oldest || g_pictures[id].shown < g_pictures[oldest].shown))
                         oldest = id;
                 if (!oldest)
@@ -227,6 +228,28 @@ namespace vendetta_pictures
         p.kind = kind;
         g_pictures.push_back(p);
         return static_cast<uint32_t>(g_pictures.size() - 1u);
+    }
+
+    uint32_t addPixels(uint32_t width, uint32_t height, uint32_t pixelsW, uint32_t pixelsH, std::vector<uint32_t> rgba)
+    {
+        GSGpuRenderer *renderer = gpu();
+        if (!renderer || rgba.size() != size_t(pixelsW) * pixelsH)
+            return 0u;
+        uint32_t id = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            Picture p;
+            p.width = std::max(1u, width);
+            p.height = std::max(1u, height);
+            p.made = true;
+            p.state = State::Ready;
+            p.bytes = uint64_t(pixelsW) * pixelsH * 4u * 4u / 3u;
+            g_bytes += p.bytes;
+            g_pictures.push_back(p);
+            id = static_cast<uint32_t>(g_pictures.size() - 1u);
+        }
+        renderer->setHostImage(id, pixelsW, pixelsH, std::move(rgba));
+        return id;
     }
 
     void want(uint32_t id)

@@ -3,7 +3,8 @@
 python tools/make_menu_pieces.py        run after config/menu_pieces.csv changes; the game is built with the table, so
                                         nothing is read at run time. Each live piece becomes one row:
   {name, kind, owner, source, a, b, u0, v0, u1, v1, first return address, how many, grows}
-  kind: 1 picture, 2 words (a = the text's address), 3 words built at run time, 4 a plain quad, 5 a screen copy
+  kind: 1 picture, 2 words (a = the text's address), 3 words built at run time, 4 a plain quad, 5 a screen copy,
+        6 a letter of the banner font (changed by a theme's banner font, never as a picture)
   owner: 0 menu (a theme can change it), 1 wrestler, 2 arena, 3 the game's own
   source (pictures): 1 a PRM pack (a = pack, b = record), 2 a group (a = group, b = record)
   grows: 1 = a bar, drawn from its left edge as wide as a value (u1 = the widest seen)
@@ -19,7 +20,7 @@ out = os.path.join(root, 'overrides', 'vendetta_menu_pieces.inc')
 with open(src, encoding='utf-8') as f:
     rows = list(csv.DictReader(l for l in f if not l.startswith('#')))
 
-KIND = {'picture': 1, 'words': 2, 'words-built': 3, 'plain': 4, 'copy': 5}
+KIND = {'picture': 1, 'words': 2, 'words-built': 3, 'plain': 4, 'copy': 5, 'banner': 6}
 OWNER = {'menu': 0, 'wrestler': 1, 'arena': 2, 'game': 3}
 SOURCE = {'prm': 1, 'group': 2}
 entries, ras = [], []

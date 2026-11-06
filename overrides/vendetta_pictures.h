@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <vector>
 
 class PS2Runtime;
 
@@ -52,6 +53,11 @@ namespace vendetta_pictures
     // False (nothing done) when it can't be shown; while it is being read, nothing is drawn there (transparent).
     bool bindNow(uint32_t tbp, uint32_t id);
     void unbindNow(uint32_t tbp);
+
+    // A picture made by our own code from its pixels (`pixelsW` x `pixelsH`, 0xAABBGGRR, the GS's alpha: 0x80 =
+    // opaque), shown on a GS texture of `width` x `height` texels like add()'s; ready at once and kept on the graphics
+    // card (never dropped for the budget). Returns its id, or 0 when there is no graphics card renderer.
+    uint32_t addPixels(uint32_t width, uint32_t height, uint32_t pixelsW, uint32_t pixelsH, std::vector<uint32_t> rgba);
 
     // The picture's own size in pixels (its file's), 0 x 0 when it can't be read.
     void fileSize(const std::filesystem::path &file, uint32_t &width, uint32_t &height);

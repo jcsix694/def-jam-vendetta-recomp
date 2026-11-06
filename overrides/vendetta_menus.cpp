@@ -106,7 +106,7 @@ namespace vendetta_menus
         constexpr uint32_t kGlyphBytes = 288u;    // a letter: 24 x 24 at 4 bits a pixel, uploaded straight from its chunk
         constexpr uint32_t kFontScale = 4u;       // our letters drawn at 4x the game's 32 x 32 texture
         constexpr uint32_t kFontImageBase = 0x51000000u;
-        std::filesystem::path g_fontFile[2]; // the menu font (every chunk), the header font (131: the header's words)
+        std::filesystem::path g_fontFile[3]; // the menu font (every chunk), the header font (131: the header's words), the banner font
         std::string g_fontTheme;
         bool g_fontsBuilt = false;
         std::unordered_map<std::string, uint32_t> g_byName;
@@ -345,12 +345,160 @@ namespace vendetta_menus
             return true;
         }
 
+        // ---- the banner font ("fonts": { "banner": ... }): the winner banner's, the Blazin' banner's and the High Scores
+        // banner's letters, drawn from a sheet made of the theme's font file ----
+        // The banner font is one picture (PRM pack 0xF, record 7: 256 x 256 texels, 4-bit) holding 31 letters, each a
+        // rect in the table 0x23B3B8 ({left, top, right, bottom} as floats, 16 bytes a letter, in kBannerChars' order;
+        // FUN_001588c0 maps a character to its letter). The draw (FUN_001587a0) and the measure (FUN_001586c0) read the
+        // rects, and each letter is a menu quad (FUN_00183c88 from 0x158B78) with that rect as its UVs. So the theme's
+        // letters are drawn on a sheet of our own, each in a rect of its own width, the table rewritten to those rects
+        // (the game measures, centres and draws with them), and every letter quad drawn from our sheet.
+        constexpr uint32_t kBannerQuadRa = 0x158B78u;
+        constexpr uint32_t kBannerPack = 0xFu, kBannerRecord = 7u;
+        constexpr uint32_t kBannerEdges = 0x23B3B8u;
+        constexpr char kBannerChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ'.!&-";
+        constexpr int kBannerScale = 4;  // our sheet at 4 x the game's 256 x 256
+        constexpr int kBannerRow = 50;   // a letter's height on the sheet (the game's)
+        constexpr int kBannerCap = 38;   // the capital H's height in it, the rest the edge and room
+        constexpr int kBannerEdge = 2;   // the black edge round each letter, in the sheet's texels
+        uint32_t g_bannerImage = 0;
+        bool g_bannerBuilt = false;
+
+        void buildBanner(uint8_t *rdram)
+        {
+            g_bannerBuilt = true;
+            if (g_fontFile[2].empty() || !vendetta_pictures::available())
+                return;
+            std::vector<uint8_t> bytes;
+            {
+                std::ifstream in(g_fontFile[2], std::ios::binary);
+                bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            std::vector<vendetta_menufont::Letter> probe;
+            if (!vendetta_menufont::letters(bytes, 100, 'H', 'H', probe) || probe.empty() || probe[0].height <= 0)
+            {
+                vendetta_mods::problem() << "[menus] " << g_fontTheme << ": " << g_fontFile[2].filename().string()
+                                         << " can't be read as a font: the game's banner font kept" << std::endl;
+                return;
+            }
+            constexpr int S = kBannerScale, R = kBannerEdge * S, N = int(sizeof(kBannerChars) - 1);
+            std::vector<vendetta_menufont::Letter> letters;
+            const vendetta_menufont::Letter *of[N] = {};
+            float rect[N][4] = {};
+            double shrink = 1.0;
+            bool fits = false;
+            // laid out in rows like the game's (50 tall, a texel apart), each letter as wide as it is; a font too wide
+            // for the sheet is made smaller until it fits
+            for (int attempt = 0; attempt < 10 && !fits; ++attempt, shrink *= 0.9)
+            {
+                const int pixels = std::max(8, int(std::lround(100.0 * kBannerCap * S * shrink / probe[0].height)));
+                if (!vendetta_menufont::letters(bytes, pixels, 0x21, 0x5A, letters))
+                    return;
+                int x = 1, y = 0;
+                fits = true;
+                for (int i = 0; i < N && fits; ++i)
+                {
+                    of[i] = nullptr;
+                    for (const auto &l : letters)
+                        if (l.code == kBannerChars[i] && l.width > 0)
+                            of[i] = &l;
+                    const int w = of[i] ? (of[i]->width + 2 * R + S - 1) / S : 8;
+                    if (x + w > 255)
+                        x = 1, y += kBannerRow + 1;
+                    if (y + kBannerRow > 256)
+                        fits = false;
+                    rect[i][0] = float(x), rect[i][1] = float(y), rect[i][2] = float(x + w), rect[i][3] = float(y + kBannerRow);
+                    x += w + 2;
+                }
+            }
+            if (!fits)
+                return;
+            const vendetta_menufont::Letter *H = nullptr;
+            for (const auto &l : letters)
+                if (l.code == 'H')
+                    H = &l;
+            if (!H)
+                return;
+            // each letter white with a black edge (the game's look): the edge its coverage spread R pixels (a square)
+            const int side = 256 * S;
+            std::vector<uint32_t> rgba(size_t(side) * side, 0u);
+            for (int i = 0; i < N; ++i)
+            {
+                if (!of[i])
+                    continue;
+                const auto &l = *of[i];
+                const int cx = int(rect[i][0]) * S, cy = int(rect[i][1]) * S, cw = int(rect[i][2] - rect[i][0]) * S, ch = kBannerRow * S;
+                std::vector<float> fill(size_t(cw) * ch, 0.0f), wide(fill.size(), 0.0f), edge(fill.size(), 0.0f);
+                const int top = (ch - H->height) / 2 + (l.offsetY - H->offsetY); // the capitals' middle on the row's
+                for (int y = 0; y < l.height; ++y)
+                    for (int x = 0; x < l.width; ++x)
+                    {
+                        const int dx = R + x, dy = top + y;
+                        if (dx >= 0 && dy >= 0 && dx < cw && dy < ch)
+                            fill[size_t(dy) * cw + dx] = l.coverage[size_t(y) * l.width + x] / 255.0f;
+                    }
+                for (int y = 0; y < ch; ++y)
+                    for (int x = 0; x < cw; ++x)
+                    {
+                        float m = 0.0f;
+                        for (int k = std::max(0, x - R); k <= std::min(cw - 1, x + R); ++k)
+                            m = std::max(m, fill[size_t(y) * cw + k]);
+                        wide[size_t(y) * cw + x] = m;
+                    }
+                for (int y = 0; y < ch; ++y)
+                    for (int x = 0; x < cw; ++x)
+                    {
+                        float m = 0.0f;
+                        for (int k = std::max(0, y - R); k <= std::min(ch - 1, y + R); ++k)
+                            m = std::max(m, wide[size_t(k) * cw + x]);
+                        edge[size_t(y) * cw + x] = m;
+                    }
+                for (int y = 0; y < ch; ++y)
+                    for (int x = 0; x < cw; ++x)
+                    {
+                        const float f = fill[size_t(y) * cw + x], o = edge[size_t(y) * cw + x];
+                        const float a = f + o * (1.0f - f);
+                        if (a <= 0.0f)
+                            continue;
+                        const uint32_t v = uint32_t(std::lround(255.0f * f / a)), ga = uint32_t(std::lround(a * 128.0f));
+                        const size_t at = size_t(cy + y) * side + (cx + x);
+                        if (cy + y < side && cx + x < side)
+                            rgba[at] = v | (v << 8) | (v << 16) | (ga << 24);
+                    }
+            }
+            g_bannerImage = vendetta_pictures::addPixels(256u, 256u, uint32_t(side), uint32_t(side), std::move(rgba));
+            if (!g_bannerImage)
+                return;
+            for (int i = 0; i < N; ++i)
+                for (int k = 0; k < 4; ++k)
+                    std::memcpy(rdram + ((kBannerEdges + 16u * uint32_t(i) + 4u * uint32_t(k)) & PS2_RAM_MASK), &rect[i][k], 4);
+            std::cerr << "[menus] the banner font: " << N << " letters from " << g_fontTheme << "'s " << g_fontFile[2].filename().string()
+                      << (shrink < 1.0 ? " (made smaller to fit)" : "") << std::endl;
+        }
+
         void quad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t q = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
             const uint8_t *qp = rdram + (q & PS2_RAM_MASK);
             uint32_t textured = 0;
             std::memcpy(&textured, qp + 4, 4);
+            // the banner font's letters: their UVs are already our sheet's (the table rewritten), the sheet bound for them
+            if (!g_bannerBuilt && !g_fontFile[2].empty())
+                buildBanner(rdram);
+            if (g_bannerImage && ra == kBannerQuadRa && textured && g_srcKind == 1u && g_srcA == kBannerPack && g_srcB == kBannerRecord)
+            {
+                uint64_t tex0 = 0;
+                std::memcpy(&tex0, rdram + kTex0, 8);
+                const uint32_t tbp = uint32_t(tex0 & 0x3FFFu);
+                if (vendetta_pictures::bindNow(tbp, g_bannerImage))
+                {
+                    static bool said = false;
+                    if (g_log && !said)
+                        said = true, std::cerr << "[menus] a banner drawn in " << g_fontTheme << "'s banner font" << std::endl;
+                    callThen(rdram, ctx, runtime, g_quad, [tbp](uint8_t *, R5900Context *) { vendetta_pictures::unbindNow(tbp); });
+                    return;
+                }
+            }
             const bool picked = textured && g_srcKind >= 1u && g_srcKind <= 2u;
             const int index = picked ? findPiece(qp, ra) : -1;
             const auto it = index < 0 ? g_changes.end() : g_changes.find(uint32_t(index));
@@ -782,7 +930,7 @@ namespace vendetta_menus
                 const std::string folder = std::filesystem::path(relative).parent_path().generic_string();
                 for (const auto &[which, value] : fonts->members)
                 {
-                    const int slot = which == "menu" ? 0 : which == "header" ? 1 : -1;
+                    const int slot = which == "menu" ? 0 : which == "header" ? 1 : which == "banner" ? 2 : -1;
                     if (slot < 0 || !value.isString())
                         continue;
                     const std::filesystem::path font = vendetta_mods::modFile(mod, folder.empty() ? value.text : folder + "/" + value.text, "menu font");
@@ -819,6 +967,12 @@ namespace vendetta_menus
                 if (piece.kind == 2 || piece.kind == 3)
                 {
                     readWords(mod, found->second, entry);
+                    continue;
+                }
+                if (piece.kind == 6)
+                {
+                    vendetta_mods::problem() << "[menus] " << mod.name << ": " << name << " is a letter of the banner font: the theme's "
+                                             << "banner font changes it (shared.json \"fonts\": {\"banner\": ...})" << std::endl;
                     continue;
                 }
                 const vendetta_mods::Json *picture = entry.find("picture");
@@ -920,9 +1074,9 @@ namespace vendetta_menus
                 std::cerr << "[menus] " << c->second.theme << "'s backdrop is 16:9: menu screens shown wide, the menus in the 4:3 middle" << std::endl;
         }
         const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || !g_fontFile[0].empty() || !g_fontFile[1].empty();
-        if (g_changes.empty() && !words)
+        if (g_changes.empty() && !words && g_fontFile[2].empty())
             return; // no menu theme: nothing hooked, the game's menus untouched
-        if (!g_changes.empty() &&
+        if ((!g_changes.empty() || !g_fontFile[2].empty()) &&
             (g_scratch = vendetta_store::allocate(vendetta_store::Area::Boot, 0x100u, "menu themes: a changed quad")) != 0u)
         {
             // last among the picture hooks, so these see the game's own arguments (the wrestlers' and arenas' hooks run inside)
@@ -940,7 +1094,7 @@ namespace vendetta_menus
                 hook(runtime, kTint, g_tint, tint);
         }
         std::cerr << "[menus] the project's menu themes change " << g_changes.size() << " pictures, " << g_words.size() + g_builtWords.size()
-                  << " words" << (g_highlightOn ? ", the highlight colour" : "") << std::endl;
+                  << " words" << (g_highlightOn ? ", the highlight colour" : "") << (g_fontFile[2].empty() ? "" : ", the banner font") << std::endl;
     }
 }
 
