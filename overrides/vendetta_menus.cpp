@@ -12,6 +12,7 @@
 #include "vendetta_store.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -363,6 +364,8 @@ namespace vendetta_menus
         constexpr int kBannerEdge = 2;   // the black edge round each letter, in the sheet's texels
         uint32_t g_bannerImage = 0;
         bool g_bannerBuilt = false;
+        // the game's own rects of the letters the theme's font lacks: kept in the table, their quads drawn by the game
+        std::vector<std::array<float, 4>> g_bannerKept;
 
         void buildBanner(uint8_t *rdram)
         {
@@ -382,13 +385,49 @@ namespace vendetta_menus
                 return;
             }
             constexpr int S = kBannerScale, R = kBannerEdge * S, N = int(sizeof(kBannerChars) - 1);
+            // the game's rects (the table as the game has it) and the letters the theme's font has: a letter it lacks
+            // (no glyph: no picture) keeps the game's rect and is drawn by the game from its own picture
+            float game[N][4] = {};
+            for (int i = 0; i < N; ++i)
+                for (int k = 0; k < 4; ++k)
+                    std::memcpy(&game[i][k], rdram + ((kBannerEdges + 16u * uint32_t(i) + 4u * uint32_t(k)) & PS2_RAM_MASK), 4);
+            bool has[N] = {};
+            {
+                std::vector<vendetta_menufont::Letter> all;
+                vendetta_menufont::letters(bytes, 64, 0x21, 0x5A, all);
+                for (int i = 0; i < N; ++i)
+                    for (const auto &l : all)
+                        has[i] = has[i] || (l.code == kBannerChars[i] && l.width > 0);
+            }
+            std::string lacks;
+            g_bannerKept.clear();
+            for (int i = 0; i < N; ++i)
+                if (!has[i])
+                {
+                    lacks += kBannerChars[i];
+                    g_bannerKept.push_back({game[i][0], game[i][1], game[i][2], game[i][3]});
+                }
+            if (lacks.size() == size_t(N))
+            {
+                vendetta_mods::problem() << "[menus] " << g_fontTheme << ": " << g_fontFile[2].filename().string()
+                                         << " has none of the banner's letters (A-Z ' . ! & -): the game's banner font kept" << std::endl;
+                g_bannerKept.clear();
+                return;
+            }
+            auto isKept = [](float x0, float y0, float x1, float y1)
+            {
+                for (const auto &k : g_bannerKept)
+                    if (k[0] == x0 && k[1] == y0 && k[2] == x1 && k[3] == y1)
+                        return true;
+                return false;
+            };
             std::vector<vendetta_menufont::Letter> letters;
             const vendetta_menufont::Letter *of[N] = {};
             float rect[N][4] = {};
             double shrink = 1.0;
             bool fits = false;
-            // laid out in rows like the game's (50 tall, a texel apart), each letter as wide as it is; a font too wide
-            // for the sheet is made smaller until it fits
+            // laid out in rows like the game's (50 tall, a texel apart), each letter as wide as it is, never on a kept
+            // rect exactly (its quad is the game's); a font too wide for the sheet is made smaller until it fits
             for (int attempt = 0; attempt < 10 && !fits; ++attempt, shrink *= 0.9)
             {
                 const int pixels = std::max(8, int(std::lround(100.0 * kBannerCap * S * shrink / probe[0].height)));
@@ -399,10 +438,16 @@ namespace vendetta_menus
                 for (int i = 0; i < N && fits; ++i)
                 {
                     of[i] = nullptr;
+                    if (!has[i])
+                        continue;
                     for (const auto &l : letters)
                         if (l.code == kBannerChars[i] && l.width > 0)
                             of[i] = &l;
                     const int w = of[i] ? (of[i]->width + 2 * R + S - 1) / S : 8;
+                    if (x + w > 255)
+                        x = 1, y += kBannerRow + 1;
+                    if (isKept(float(x), float(y), float(x + w), float(y + kBannerRow)))
+                        ++x;
                     if (x + w > 255)
                         x = 1, y += kBannerRow + 1;
                     if (y + kBannerRow > 256)
@@ -470,10 +515,12 @@ namespace vendetta_menus
             if (!g_bannerImage)
                 return;
             for (int i = 0; i < N; ++i)
-                for (int k = 0; k < 4; ++k)
-                    std::memcpy(rdram + ((kBannerEdges + 16u * uint32_t(i) + 4u * uint32_t(k)) & PS2_RAM_MASK), &rect[i][k], 4);
-            std::cerr << "[menus] the banner font: " << N << " letters from " << g_fontTheme << "'s " << g_fontFile[2].filename().string()
-                      << (shrink < 1.0 ? " (made smaller to fit)" : "") << std::endl;
+                if (has[i])
+                    for (int k = 0; k < 4; ++k)
+                        std::memcpy(rdram + ((kBannerEdges + 16u * uint32_t(i) + 4u * uint32_t(k)) & PS2_RAM_MASK), &rect[i][k], 4);
+            std::cerr << "[menus] the banner font: " << (N - int(lacks.size())) << " letters from " << g_fontTheme << "'s "
+                      << g_fontFile[2].filename().string() << (shrink < 1.0 ? " (made smaller to fit)" : "")
+                      << (lacks.empty() ? std::string() : "; the game's own for the ones it lacks: " + lacks) << std::endl;
         }
 
         void quad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -485,7 +532,20 @@ namespace vendetta_menus
             // the banner font's letters: their UVs are already our sheet's (the table rewritten), the sheet bound for them
             if (!g_bannerBuilt && !g_fontFile[2].empty())
                 buildBanner(rdram);
-            if (g_bannerImage && ra == kBannerQuadRa && textured && g_srcKind == 1u && g_srcA == kBannerPack && g_srcB == kBannerRecord)
+            bool keptLetter = false;
+            if (g_bannerImage && !g_bannerKept.empty() && ra == kBannerQuadRa)
+            {
+                float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
+                for (int i = 0; i < 4; ++i)
+                {
+                    const uint8_t *vtx = qp + 8 + 0x24 * i;
+                    const float u = readFloat(vtx + 0x1C), v = readFloat(vtx + 0x20);
+                    u0 = std::min(u0, u), u1 = std::max(u1, u), v0 = std::min(v0, v), v1 = std::max(v1, v);
+                }
+                for (const auto &k : g_bannerKept)
+                    keptLetter = keptLetter || (k[0] == u0 && k[1] == v0 && k[2] == u1 && k[3] == v1);
+            }
+            if (g_bannerImage && !keptLetter && ra == kBannerQuadRa && textured && g_srcKind == 1u && g_srcA == kBannerPack && g_srcB == kBannerRecord)
             {
                 uint64_t tex0 = 0;
                 std::memcpy(&tex0, rdram + kTex0, 8);

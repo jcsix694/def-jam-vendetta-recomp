@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace VendettaSettings.Services;
 
-public enum ProblemKind { NotInstalled, Unreadable, NeedMissing, Clash, NoSuchWrestler, MoveMissing, AnimationMissing }
+public enum ProblemKind { NotInstalled, Unreadable, NeedMissing, Clash, NoSuchWrestler, NoSuchArena, MoveMissing, AnimationMissing }
 
 /// <summary>One problem that stops a project from starting: the line shown (word for word the game's), the mod at fault
 /// (its folder, or the name project.json gives) and, for a need, the need's name.</summary>
@@ -14,12 +14,40 @@ public sealed class ModProblem
     public string Other { get; init; } = "";
 }
 
-/// <summary>The game's check at start (vendetta_modcheck.cpp and the lines vendetta_mods.cpp, vendetta_wrestlers.cpp and
-/// vendetta_moves.cpp mark), done the same way here, so the project shows the same problems and PLAY waits until they are
-/// fixed: a mod on but not installed, a mod.json that can't be read, a need missing, two mods replacing the same attire, a
-/// wrestler to replace who isn't in the game, a moveset naming a move the project doesn't have, a move's animation missing.</summary>
+/// <summary>The game's check at start (vendetta_modcheck.cpp and the lines vendetta_mods.cpp, vendetta_wrestlers.cpp,
+/// vendetta_moves.cpp and vendetta_arenas.cpp mark), done the same way here, so the project shows the same problems and PLAY
+/// waits until they are fixed: a mod on but not installed, a mod.json that can't be read, a need missing, two mods
+/// replacing the same attire, a wrestler to replace who isn't in the game, an arena to replace that isn't in the game, two
+/// mods replacing the same arena, a moveset naming a move the project doesn't have, a move's animation missing.</summary>
 public static class ProjectCheck
 {
+    /// <summary>A mod's arena folder the game takes (vendetta_arenas.cpp findModArenas): its arena.json's "from the game"
+    /// naming a game arena's model, or a model.arena in the game's format ("DJARENA1") made from one of the 12 arenas.</summary>
+    private static bool UsableArena(string dir)
+    {
+        try
+        {
+            if (!Directory.Exists(dir))
+                return false;
+            var json = Path.Combine(dir, "arena.json");
+            if (File.Exists(json) && JsonNode.Parse(File.ReadAllText(json))?["from the game"]?["model"] is JsonValue m &&
+                m.TryGetValue<string>(out var model) && GameArenas.Find(model) >= 0)
+                return true;
+            var file = Path.Combine(dir, "model.arena");
+            if (!File.Exists(file))
+                return false;
+            using var f = File.OpenRead(file);
+            var head = new byte[0x40];
+            if (f.Read(head, 0, head.Length) != head.Length || System.Text.Encoding.ASCII.GetString(head, 0, 8) != "DJARENA1")
+                return false;
+            return BitConverter.ToUInt32(head, 0x0C) < 12;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     public static List<ModProblem> Problems(GameFolder folder, string project) => Problems(folder, project, null, null);
 
     /// <summary>As if <paramref name="staged"/> were installed (on) in its folder's place (the Install dialog's "what would
@@ -110,6 +138,28 @@ public static class ProjectCheck
                     else
                         taken[(game.Full, n)] = mod.Name;
                 }
+            }
+
+        // the arenas: each one replaced is one of the game's 12, by one mod (in the game's order: the name, then a mod
+        // earlier in the load order whose arena the game took, then this mod's own arena)
+        var arenaTaken = new Dictionary<int, string>();
+        foreach (var mod in usable)
+            foreach (var (arena, arenaFolder) in mod.ArenaReplacements)
+            {
+                var venue = GameArenas.Find(arena);
+                if (venue < 0)
+                {
+                    Add(ProblemKind.NoSuchArena, $"{mod.Name} replaces the arena \"{arena}\", which isn't in the game.", mod.FolderName, arenaFolder);
+                    continue;
+                }
+                if (arenaTaken.TryGetValue(venue, out var was))
+                {
+                    Add(ProblemKind.Clash, $"{was} and {mod.Name} both replace {GameArenas.Names[venue]}.", mod.FolderName, arenaFolder);
+                    continue;
+                }
+                if (arenaFolder.Length == 0 || !UsableArena(Path.Combine(mod.Folder, arenaFolder)))
+                    continue; // the game leaves it out with a note (the game's arena stays)
+                arenaTaken[venue] = mod.Name;
             }
 
         // the new moves by name (their name on screen and their folder's, each also as "<id>/<name>"); their animations

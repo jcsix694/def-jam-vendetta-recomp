@@ -583,11 +583,11 @@ namespace
         installVendettaTestMatch(runtime);
         installVendettaPictures(runtime);
         installVendettaWrestlers(runtime);
-        installVendettaModCheck(runtime); // after the mods, moves and wrestlers are read
         installVendettaArenas(runtime);
         installVendettaWrestlerDraw(runtime);
         installVendettaVoiceLines(runtime);
         installVendettaMenus(runtime); // after the wrestlers' and arenas' picture hooks: it wraps them
+        installVendettaModCheck(runtime); // last: after every mod reader has marked its problems (the arenas' too)
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         // a project keeps its own memory cards: projects\<name>\saves\mc0 (and mc1 beside it); the original game keeps
         // the ones beside the program's game folder

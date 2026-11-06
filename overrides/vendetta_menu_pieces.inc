@@ -1,6 +1,6 @@
 // The menu themes' catalogue as a table: made by tools/make_menu_pieces.py from config/menu_pieces.csv (do not
 // edit; run the tool after the csv changes). See the tool for the columns.
-static const uint32_t kMenuPieceRas[939] = {
+static const uint32_t kMenuPieceRas[962] = {
     0x156C3Cu, 0x17120Cu, 0x157FA0u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u,
     0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157CA4u, 0x157E10u, 0x1A0F4Cu, 0x1802F8u, 0x1803DCu,
     0x1804C0u, 0x180594u, 0x180678u, 0x180B3Cu, 0x188F40u, 0x180CDCu, 0x18C2DCu, 0x18C688u, 0x18EE9Cu, 0x176810u,
@@ -94,10 +94,13 @@ static const uint32_t kMenuPieceRas[939] = {
     0x185F00u, 0x185D10u, 0x185D74u, 0x185DECu, 0x185E48u, 0x185EA4u, 0x185F00u, 0x185D10u, 0x185D74u, 0x185DECu,
     0x185E48u, 0x185EA4u, 0x185F00u, 0x185D10u, 0x185D74u, 0x185DECu, 0x185E48u, 0x185EA4u, 0x185F00u, 0x158B78u,
     0x171864u, 0x14C184u, 0x1861B8u, 0x18629Cu, 0x186380u, 0x186454u, 0x186538u, 0x186B04u, 0x186B58u, 0x186BE8u,
-    0x186D68u, 0x186EE0u, 0x186F38u, 0x186E0Cu, 0x186E60u, 0x171864u, 0x189270u, 0x16CA0Cu, 0x16CA74u,
+    0x186D68u, 0x186EE0u, 0x186F38u, 0x186E0Cu, 0x186E60u, 0x171864u, 0x189270u, 0x16CA0Cu, 0x16CA74u, 0x16E034u,
+    0x16E338u, 0x16E918u, 0x16E944u, 0x16E9A0u, 0x16E9D8u, 0x16EA2Cu, 0x16EA6Cu, 0x16EABCu, 0x16EAFCu, 0x16EB6Cu,
+    0x16EBACu, 0x16EC28u, 0x16EC54u, 0x16ED28u, 0x16ED68u, 0x16EDE4u, 0x16EE10u, 0x16F034u, 0x16F2F4u, 0x16F380u,
+    0x16F760u, 0x16F824u,
 };
 
-static const MenuPiece kMenuPieces[673] = {
+static const MenuPiece kMenuPieces[687] = {
     {"arrows.g0-0", 1, 0, 2, 0x0u, 0u, 97, 52, 131, 103, 0u, 1u, 0},
     {"backdrop.background", 1, 0, 1, 0x2u, 0u, 0, 0, 512, 224, 1u, 1u, 0},
     {"big-pictures.p1-0", 1, 2, 1, 0x1u, 0u, 0, 224, 256, 256, 2u, 1u, 0},
@@ -771,4 +774,18 @@ static const MenuPiece kMenuPieces[673] = {
     {"story-save-stub.text-2854a0", 2, 0, 0, 0x2854A0u, 0u, 0, 0, 0, 0, 936u, 1u, 0},
     {"letterbox.plain-16ca0c", 4, 0, 0, 0x0u, 0u, 0, 0, 0, 0, 937u, 1u, 0},
     {"letterbox.plain-16ca74", 4, 0, 0, 0x0u, 0u, 0, 0, 0, 0, 938u, 1u, 0},
+    {"story-end-save.plain-16e034", 4, 0, 0, 0x0u, 0u, 0, 0, 0, 0, 939u, 1u, 0},
+    {"header.title.16", 1, 0, 2, 0x1u, 1u, 256, 0, 512, 32, 940u, 1u, 0},
+    {"story-end-save.text-295898", 2, 0, 0, 0x295898u, 0u, 0, 0, 0, 0, 941u, 2u, 0},
+    {"story-end-save.text-27def0", 2, 0, 0, 0x27DEF0u, 0u, 0, 0, 0, 0, 943u, 2u, 0},
+    {"story-end-save.text-27df38", 2, 0, 0, 0x27DF38u, 0u, 0, 0, 0, 0, 945u, 2u, 0},
+    {"story-end-save.text-27df48", 2, 0, 0, 0x27DF48u, 0u, 0, 0, 0, 0, 947u, 2u, 0},
+    {"story-end-save.text-27df58", 2, 0, 0, 0x27DF58u, 0u, 0, 0, 0, 0, 949u, 2u, 0},
+    {"story-end-save.text-27df68", 2, 0, 0, 0x27DF68u, 0u, 0, 0, 0, 0, 951u, 2u, 0},
+    {"story-end-save.text-27df90", 2, 0, 0, 0x27DF90u, 0u, 0, 0, 0, 0, 953u, 2u, 0},
+    {"story-end-save.text-27dfa0", 2, 0, 0, 0x27DFA0u, 0u, 0, 0, 0, 0, 955u, 2u, 0},
+    {"story-end-save.built-16f034", 3, 0, 0, 0x0u, 0u, 0, 0, 0, 0, 957u, 1u, 0},
+    {"story-end-save.built-16f2f4", 3, 0, 0, 0x0u, 0u, 0, 0, 0, 0, 958u, 1u, 0},
+    {"story-end-save.built-16f380", 3, 0, 0, 0x0u, 0u, 0, 0, 0, 0, 959u, 1u, 0},
+    {"story-end-save.p5-0", 1, 0, 1, 0x5u, 0u, 0, 0, 63, 41, 960u, 2u, 0},
 };

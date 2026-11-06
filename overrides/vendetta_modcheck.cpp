@@ -3,8 +3,9 @@
 //
 // The problems are the ones that would break the project's matches or leave something out: a mod on in project.json but
 // not in its mods\ folder, a mod.json that can't be read, a need missing, two mods replacing the same attire, a move
-// whose animation isn't there (vendetta_mods.cpp, vendetta_wrestlers.cpp and vendetta_moves.cpp mark those as they
-// read), and, checked here, every moveset slot a mod sets naming something the project doesn't have and every moveset
+// whose animation isn't there, an arena replaced that the game doesn't have or replaced by two mods
+// (vendetta_mods.cpp, vendetta_wrestlers.cpp, vendetta_moves.cpp and vendetta_arenas.cpp mark those as they read; so
+// this check is installed after all of them), and, checked here, every moveset slot a mod sets naming something the project doesn't have and every moveset
 // change for a wrestler the game doesn't have. With any of them the game shows them all and closes (the settings
 // program shows the same list on the project, with the fixes). Test runs (VENDETTA_MODS_DIR) and
 // VENDETTA_MODCHECK=log only write them to stderr and mods.log.

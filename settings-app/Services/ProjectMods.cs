@@ -38,6 +38,10 @@ public sealed class ModInfo
     public required IReadOnlyList<string> Animations { get; init; }
     /// <summary>"wrestlers": { "&lt;wrestler&gt;": "&lt;moveset change's file&gt;" }.</summary>
     public required IReadOnlyList<(string Wrestler, string File)> MovesetChanges { get; init; }
+    /// <summary>"replace": { "arenas": { "&lt;game arena&gt;": "&lt;folder&gt;" } }, in mod.json's order.</summary>
+    public IReadOnlyList<(string Arena, string Folder)> ArenaReplacements { get; init; } = [];
+    /// <summary>"new": { "arenas": [ "&lt;folder&gt;", ... ] }.</summary>
+    public IReadOnlyList<string> NewArenas { get; init; } = [];
 
     /// <summary>Does this name (as project.json or a "needs" gives it: the folder, the name or the id) mean this mod?</summary>
     public bool Is(string name) =>
@@ -62,6 +66,31 @@ public sealed class ModInfo
             return string.Join(" · ", parts);
         }
     }
+
+    /// <summary>"replaces Sanctuary", "new arena", "2 arenas replaced · 1 new arena"; "" without arenas.</summary>
+    public string ArenasSummary
+    {
+        get
+        {
+            var count = ArenaReplacements.Count + NewArenas.Count;
+            if (count == 0)
+                return "";
+            if (count == 1)
+                return NewArenas.Count == 1 ? "new arena"
+                    : "replaces " + (GameArenas.Find(ArenaReplacements[0].Arena) is var v and >= 0 ? GameArenas.Names[v] : ArenaReplacements[0].Arena);
+            var parts = new List<string>();
+            if (ArenaReplacements.Count > 0)
+                parts.Add(ArenaReplacements.Count == 1 ? "1 arena replaced" : $"{ArenaReplacements.Count} arenas replaced");
+            if (NewArenas.Count > 0)
+                parts.Add(NewArenas.Count == 1 ? "1 new arena" : $"{NewArenas.Count} new arenas");
+            return string.Join(" · ", parts);
+        }
+    }
+
+    /// <summary>What its row in a project's list says: where its wrestlers and arenas go ("replaces Briggs · replaces
+    /// Sanctuary"), else what it holds (<see cref="Contents"/>).</summary>
+    public string Summary =>
+        string.Join(" · ", new[] { PlacesSummary, ArenasSummary }.Where(s => s.Length > 0)) is { Length: > 0 } places ? places : Contents;
 }
 
 /// <summary>A mod picked to install (a zip or a folder), read and unpacked to look at, not installed yet.</summary>
@@ -155,6 +184,11 @@ public static class ProjectMods
             foreach (var (gameName, value) in replaced)
                 if (value is JsonValue v && v.TryGetValue<string>(out var w) && w.Length > 0)
                     wrestlers.Add(new WrestlerPlace { Folder = w, Name = WrestlerName(dir, w), Place = gameName });
+        var newArenas = Strings(newer?["arenas"]);
+        var arenas = new List<(string, string)>();
+        if (replace?["arenas"] is JsonObject replacedArenas)
+            foreach (var (arena, value) in replacedArenas)
+                arenas.Add((arena, value is JsonValue v && v.TryGetValue<string>(out var f) ? f : ""));
         var changes = new List<(string, string)>();
         if (json["wrestlers"] is JsonObject edits)
             foreach (var (wrestler, value) in edits)
@@ -174,11 +208,14 @@ public static class ProjectMods
             Version = Text(json, "version"),
             Category = CategoryOf(json, wrestlers.Count),
             Needs = Strings(json["needs"]),
-            Contents = ContentsOf(wrestlers.Count, moves.Count, animations.Count, (replace?["animations"] as JsonObject)?.Count ?? 0, changes.Count),
+            Contents = ContentsOf(wrestlers.Count, moves.Count, animations.Count, (replace?["animations"] as JsonObject)?.Count ?? 0, changes.Count,
+                                  arenas.Count + newArenas.Count, json["menus"] is JsonObject),
             Wrestlers = wrestlers,
             Moves = moves,
             Animations = animations,
             MovesetChanges = changes,
+            ArenaReplacements = arenas,
+            NewArenas = newArenas,
         };
     }
 
@@ -222,11 +259,13 @@ public static class ProjectMods
         return animations > 0 ? "Movesets" : "Other";
     }
 
-    private static string ContentsOf(int wrestlers, int moves, int animations, int replaced, int changes)
+    private static string ContentsOf(int wrestlers, int moves, int animations, int replaced, int changes, int arenas, bool menus)
     {
         static string Plural(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n} {many}";
         var parts = new List<string>();
         if (wrestlers > 0) parts.Add(Plural(wrestlers, "wrestler", "wrestlers"));
+        if (arenas > 0) parts.Add(Plural(arenas, "arena", "arenas"));
+        if (menus) parts.Add("a menu theme");
         if (moves > 0) parts.Add(Plural(moves, "move", "moves"));
         if (animations > 0) parts.Add(Plural(animations, "animation", "animations"));
         if (replaced > 0) parts.Add(Plural(replaced, "game animation replaced", "game animations replaced"));

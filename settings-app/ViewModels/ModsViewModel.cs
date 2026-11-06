@@ -243,7 +243,7 @@ public partial class ModsViewModel : ObservableObject
         }
         else
         {
-            var what = mod is { Wrestlers.Count: > 0 } ? Capital(mod.PlacesSummary) : mod?.Contents ?? "";
+            var what = mod != null ? Capital(mod.Summary) : "";
             var users = mod == null || on ? new List<string>() : _mods.Where(x => x != mod && IsOn(x) && x.Needs.Any(mod.Is)).Select(x => x.Name).ToList();
             line = users.Count > 0 ? $"Off · needed by {string.Join(", ", users)}" : on ? what : "Off · " + what;
         }
