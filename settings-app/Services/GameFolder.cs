@@ -260,17 +260,31 @@ public sealed class GameFolder
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool AllowSetForegroundWindow(int processId);
 
+    /// <summary>A folder (made first when missing), a file or a web page, opened by Windows. Never throws: a button
+    /// that can't open something must not close the program.</summary>
     public static void Open(string pathOrUrl)
     {
-        if (!pathOrUrl.StartsWith("http") && !Directory.Exists(pathOrUrl))
-            Directory.CreateDirectory(pathOrUrl);
-        Process.Start(new ProcessStartInfo(pathOrUrl) { UseShellExecute = true });
+        try
+        {
+            if (!pathOrUrl.StartsWith("http") && !Directory.Exists(pathOrUrl) && !File.Exists(pathOrUrl))
+                Directory.CreateDirectory(pathOrUrl);
+            Process.Start(new ProcessStartInfo(pathOrUrl) { UseShellExecute = true });
+        }
+        catch (Exception)
+        {
+        }
     }
 
-    /// <summary>A text file in Notepad (LICENSE has no extension for Windows to go by).</summary>
+    /// <summary>A text file in Notepad (LICENSE has no extension for Windows to go by). Never throws.</summary>
     public static void OpenText(string path)
     {
-        if (File.Exists(path))
-            Process.Start(new ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true });
+        try
+        {
+            if (File.Exists(path))
+                Process.Start(new ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception)
+        {
+        }
     }
 }

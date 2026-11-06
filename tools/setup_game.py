@@ -63,9 +63,10 @@ class SetupError(Exception):
         self.details = list(details)  # the tool's own error lines
 
 
-# the lines of a failed tool's output worth showing a player (the compiler's, the linker's, CMake's, Ninja's errors)
-ERROR_LINE = re.compile(r'\berror\b|\bfatal\b|^FAILED:|CMake Error|cannot open|out of (heap|memory)|Permission denied',
-                        re.IGNORECASE)
+# the lines of a failed tool's output worth showing a player (the compiler's, the linker's, CMake's, Ninja's errors;
+# the compiler's and linker's codes, C1060 / LNK1104, too, for build tools in another language)
+ERROR_LINE = re.compile(r'\berror\b|\bfatal\b|^FAILED:|CMake Error|cannot open|out of (heap|memory)|Permission denied'
+                        r'|\b(C|LNK)\d{4}\b', re.IGNORECASE)
 # what a few well known errors mean, in plain words
 KNOWN_ERRORS = [
     (re.compile(r'C1060|C1002|C3859|out of (heap|memory)|not enough (memory|space)|insufficient memory', re.IGNORECASE),
@@ -178,13 +179,23 @@ def has_tools(env):
 
 
 def compiler_version(env):
-    """The C++ compiler's version, (19, 44, 35229), from the banner cl prints; None when it can't be run."""
+    """The C++ compiler's version, (19, 44, 35229), from the banner cl prints; None when it can't be run. The banner is
+    in the build tools' language ("Version 19.44.35219" in English, translated in Portuguese, the number before the
+    word in Chinese: GitHub issue #8), so only its numbers are read: the first three dotted ones are the version."""
     cl = shutil.which('cl', path=env.get('PATH', env.get('Path', '')))
     if not cl:
         return None
-    out = subprocess.run([cl], env=env, capture_output=True, text=True, errors='replace')
-    m = re.search(r'Version (\d+)\.(\d+)\.(\d+)', out.stdout + out.stderr)
-    return tuple(int(x) for x in m.groups()) if m else None
+    try:
+        out = subprocess.run([cl], env=env, capture_output=True, text=True, errors='replace', timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        say(f'[tools] {cl} could not be started: {error}')
+        return None
+    banner = out.stdout + out.stderr
+    m = re.search(r'\b(\d+)\.(\d+)\.(\d+)\b', banner)
+    if not m:
+        say(f'[tools] {cl} (exit code {out.returncode}) printed: ' + ' | '.join(banner.strip().splitlines()[:4]))
+        return None
+    return tuple(int(x) for x in m.groups())
 
 
 def has_sdk(env):

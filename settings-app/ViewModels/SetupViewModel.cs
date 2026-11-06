@@ -405,7 +405,7 @@ public partial class SetupViewModel : ObservableObject
     private void Continue() => _finished();
 
     [RelayCommand]
-    private void OpenLog() => GameFolder.Open(LogPath);
+    private void OpenLog() => GameFolder.OpenText(LogPath);
 
     /// <summary>For pictures (--shot setup2): the build page part-way.</summary>
     public void ShowSample(double percent, bool done)
