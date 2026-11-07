@@ -114,7 +114,7 @@ public sealed class ModPackage
 public static class ProjectMods
 {
     /// <summary>The categories in the order the Mods page shows them (any other a mod names comes after).</summary>
-    public static readonly string[] KnownCategories = { "Wrestlers", "Moves", "Movesets", "Animations", "Arenas", "Music", "Other" };
+    public static readonly string[] KnownCategories = { "Wrestlers", "Moves", "Movesets", "Animations", "Arenas", "Menus", "Videos", "Music", "Other" };
 
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -209,7 +209,7 @@ public static class ProjectMods
             Category = CategoryOf(json, wrestlers.Count),
             Needs = Strings(json["needs"]),
             Contents = ContentsOf(wrestlers.Count, moves.Count, animations.Count, (replace?["animations"] as JsonObject)?.Count ?? 0, changes.Count,
-                                  arenas.Count + newArenas.Count, json["menus"] is JsonObject),
+                                  arenas.Count + newArenas.Count, json["menus"] is JsonObject, json["videos"] is JsonObject),
             Wrestlers = wrestlers,
             Moves = moves,
             Animations = animations,
@@ -236,7 +236,7 @@ public static class ProjectMods
     }
 
     /// <summary>"category" as the mod gives it, else: wrestlers = Wrestlers, new moves = Moves, moveset changes only =
-    /// Movesets, animations only = Animations, anything else = Other.</summary>
+    /// Movesets, animations only = Animations, a menu theme = Menus, a video theme = Videos, anything else = Other.</summary>
     private static string CategoryOf(JsonObject json, int wrestlers)
     {
         if (json["category"] is JsonValue v && v.TryGetValue<string>(out var given) && given.Trim().Length > 0)
@@ -256,16 +256,19 @@ public static class ProjectMods
             return "Movesets";
         if (animations > 0 && changes == 0)
             return "Animations";
-        return animations > 0 ? "Movesets" : "Other";
+        if (animations > 0)
+            return "Movesets";
+        return json["menus"] is JsonObject ? "Menus" : json["videos"] is JsonObject ? "Videos" : "Other";
     }
 
-    private static string ContentsOf(int wrestlers, int moves, int animations, int replaced, int changes, int arenas, bool menus)
+    private static string ContentsOf(int wrestlers, int moves, int animations, int replaced, int changes, int arenas, bool menus, bool videos)
     {
         static string Plural(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n} {many}";
         var parts = new List<string>();
         if (wrestlers > 0) parts.Add(Plural(wrestlers, "wrestler", "wrestlers"));
         if (arenas > 0) parts.Add(Plural(arenas, "arena", "arenas"));
         if (menus) parts.Add("a menu theme");
+        if (videos) parts.Add("a video theme");
         if (moves > 0) parts.Add(Plural(moves, "move", "moves"));
         if (animations > 0) parts.Add(Plural(animations, "animation", "animations"));
         if (replaced > 0) parts.Add(Plural(replaced, "game animation replaced", "game animations replaced"));
@@ -314,9 +317,12 @@ public static class ProjectMods
             if (mod.FolderName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || mod.FolderName is "." or "..")
                 return (Fail(temp), $"\"{mod.FolderName}\" can't be a folder's name.");
             var mods = List(folder, project);
+            // the copy it replaces: the same id, else the same folder, else the same name and kind (a WCW menu theme and a
+            // WCW video theme are two mods, side by side)
             var replaces = mods.FirstOrDefault(m => m.Id.Equals(mod.Id, StringComparison.OrdinalIgnoreCase))
                            ?? mods.FirstOrDefault(m => m.FolderName.Equals(mod.FolderName, StringComparison.OrdinalIgnoreCase))
-                           ?? mods.FirstOrDefault(m => m.Name.Equals(mod.Name, StringComparison.OrdinalIgnoreCase));
+                           ?? mods.FirstOrDefault(m => m.Name.Equals(mod.Name, StringComparison.OrdinalIgnoreCase) &&
+                                                       m.Category.Equals(mod.Category, StringComparison.OrdinalIgnoreCase));
             if (replaces != null && Path.GetFullPath(replaces.Folder).Equals(Path.GetFullPath(staged), StringComparison.OrdinalIgnoreCase))
                 return (Fail(temp), "That's the installed mod itself.");
             var needs = mod.Needs.Select(n => (mods.FirstOrDefault(m => m.Is(n))?.Name ?? n, mods.Any(m => m.Is(n)))).ToList();

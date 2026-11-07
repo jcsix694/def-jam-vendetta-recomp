@@ -43,6 +43,12 @@ namespace vendetta_menus
             int16_t u0, v0, u1, v1;
             uint32_t firstRa, raCount;
             uint8_t grows;  // 1: a bar, drawn from its left edge as wide as a value (u1 = the widest seen)
+            // a picture the game draws in parts (the title's logo in two halves, the help box's frame in eight): a theme
+            // names the one piece (kMenuJoined[joined]) and each part draws its share s0 t0 s1 t1 (0-1) of that picture;
+            // join 1 = halves at a fixed layout (Fit / Fill / Stretch on the whole), 2 = a frame whose middles stretch
+            int16_t joined; // -1: drawn whole
+            uint8_t join;
+            float s0, t0, s1, t1;
         };
 #include "vendetta_menu_pieces.inc"
         constexpr size_t kPieceCount = sizeof(kMenuPieces) / sizeof(kMenuPieces[0]);
@@ -111,6 +117,8 @@ namespace vendetta_menus
         std::string g_fontTheme;
         bool g_fontsBuilt = false;
         std::unordered_map<std::string, uint32_t> g_byName;
+        std::unordered_map<std::string, uint32_t> g_joinedByName;         // a picture drawn in parts: its one name -> kMenuJoined
+        std::vector<std::vector<uint32_t>> g_joinedParts;                 // kMenuJoined -> its parts (catalogue indices)
         std::unordered_multimap<uint64_t, uint32_t> g_byKey; // a picture's source + UV rect -> its pieces
         std::unordered_multimap<uint64_t, uint32_t> g_bars;  // a bar's source + its row (u0, v0, v1; u1 0) -> its pieces
         std::unordered_map<uint32_t, Change> g_changes;      // piece -> the theme's change
@@ -255,7 +263,10 @@ namespace vendetta_menus
             return first;
         }
 
-        // The changed quad: its UVs over the whole picture (fit / fill), its corners (fit inside), its colour.
+        // The changed quad: its UVs over the whole picture (fit / fill), its corners (fit inside), its colour. A part of a
+        // picture the game draws in parts: its UVs over its share of the one picture, Fit and Fill worked out on the whole
+        // (its box found from this part's box and share: the parts keep one layout in every frame), a stretching frame
+        // always stretched (its corners keep their share, its middles stretch with the frame as the game's do).
         void changeQuad(uint8_t *q, const MenuPiece &piece, const Change &c, uint32_t texW, uint32_t texH, float widen)
         {
             float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
@@ -265,11 +276,41 @@ namespace vendetta_menus
                 x0 = std::min(x0, readFloat(vtx)), x1 = std::max(x1, readFloat(vtx));
                 y0 = std::min(y0, readFloat(vtx + 4)), y1 = std::max(y1, readFloat(vtx + 4));
             }
+            const bool part = piece.joined >= 0;
+            const float sw = part ? std::max(1e-4f, piece.s1 - piece.s0) : 1.0f, sh = part ? std::max(1e-4f, piece.t1 - piece.t0) : 1.0f;
+            if (part) // the whole picture's box on the screen
+            {
+                const float w = (x1 - x0) / sw, h = (y1 - y0) / sh;
+                x0 -= piece.s0 * w, y0 -= piece.t0 * h;
+                x1 = x0 + w, y1 = y0 + h;
+            }
+            // the part's own share: its share less the strips a later part of the same picture draws over
+            struct { float s0, t0, s1, t1; } own = {piece.s0, piece.t0, piece.s1, piece.t1};
+            if (part && piece.join == 1)
+            {
+                const uint32_t self = uint32_t(&piece - kMenuPieces);
+                for (const uint32_t other : g_joinedParts[piece.joined])
+                {
+                    if (other <= self)
+                        continue;
+                    const MenuPiece &o = kMenuPieces[other];
+                    const bool rows = o.t0 <= piece.t0 + 1e-4f && o.t1 >= piece.t1 - 1e-4f;
+                    const bool cols = o.s0 <= piece.s0 + 1e-4f && o.s1 >= piece.s1 - 1e-4f;
+                    if (rows && o.s0 > piece.s0 && o.s0 < own.s1)
+                        own.s1 = o.s0;
+                    if (rows && o.s1 < piece.s1 && o.s1 > own.s0)
+                        own.s0 = o.s1;
+                    if (cols && o.t0 > piece.t0 && o.t0 < own.t1)
+                        own.t1 = o.t0;
+                    if (cols && o.t1 < piece.t1 && o.t1 > own.t0)
+                        own.t0 = o.t1;
+                }
+            }
             // widen: the box is shown that much wider than drawn (a wide frame), so a 16:9 backdrop fills the wide frame
             const float boxW = std::max(1e-3f, x1 - x0), boxH = std::max(1e-3f, y1 - y0), boxA = boxW / boxH * widen;
             const float imgA = c.height ? float(c.width) / float(c.height) : boxA;
             // a 16:9 backdrop: filled, so the wide frame shows all of it and a 4:3 frame its middle (never squashed)
-            const Fit fit = c.wide ? Fit::Fill : c.fit;
+            const Fit fit = c.wide ? Fit::Fill : piece.join == 2 ? Fit::Stretch : c.fit;
             float du = std::max(1.0f, float(piece.u1 - piece.u0));
             const float dv = std::max(1.0f, float(piece.v1 - piece.v0));
             if (piece.grows) // a bar: its picture over its full width, so a part-full bar shows that part of it
@@ -279,6 +320,24 @@ namespace vendetta_menus
             {
                 uint8_t *vtx = q + 8 + 0x24 * i;
                 float tu = (readFloat(vtx + 0x1C) - piece.u0) / du, tv = (readFloat(vtx + 0x20) - piece.v0) / dv;
+                if (part)
+                {
+                    tu = piece.s0 + tu * sw, tv = piece.t0 + tv * sh;
+                    // halves that overlap on the screen (the title's logo: 5 pixels): the strip drawn once, by the later
+                    // part, so the picture's see-through edges there aren't blended twice (a seam); this part's corner
+                    // moved to where the later part starts, its UV with it (a half is an upright rectangle)
+                    if (piece.join == 1)
+                    {
+                        if (tu > own.s1 + 1e-5f)
+                            writeFloat(vtx, x0 + own.s1 * boxW), tu = own.s1;
+                        if (tu < own.s0 - 1e-5f)
+                            writeFloat(vtx, x0 + own.s0 * boxW), tu = own.s0;
+                        if (tv > own.t1 + 1e-5f)
+                            writeFloat(vtx + 4, y0 + own.t1 * boxH), tv = own.t1;
+                        if (tv < own.t0 - 1e-5f)
+                            writeFloat(vtx + 4, y0 + own.t0 * boxH), tv = own.t0;
+                    }
+                }
                 if (fit == Fit::Fill)
                 {
                     if (imgA > boxA)
@@ -971,6 +1030,48 @@ namespace vendetta_menus
                     g_builtWords[kMenuPieceRas[piece.firstRa + i]] = w;
         }
 
+        // A picture entry ({"picture": file, "fit", "colour", "shape"}) read into a change: false (a line in mods.log)
+        // when it names no picture or its file can't be read.
+        bool readPicture(const vendetta_mods::Mod &mod, const std::string &folder, const vendetta_mods::Json &entry, Change &c)
+        {
+            const vendetta_mods::Json *picture = entry.find("picture");
+            if (!picture || !picture->isString())
+                return false;
+            c.theme = mod.name;
+            c.file = picture->text;
+            const std::string within = folder.empty() ? picture->text : folder + "/" + picture->text;
+            const std::filesystem::path path = vendetta_mods::modFile(mod, within, "menu picture");
+            if (path.empty())
+                return false;
+            vendetta_pictures::fileSize(path, c.width, c.height);
+            if (!c.width || !c.height)
+            {
+                vendetta_mods::problem() << "[menus] " << mod.name << ": " << within << " can't be read as a picture" << std::endl;
+                return false;
+            }
+            uint32_t w = c.width, h = c.height; // kept at its own size, at most 4096 a side
+            while (w > 4096u || h > 4096u)
+                w = std::max(1u, w / 2u), h = std::max(1u, h / 2u);
+            c.image = vendetta_pictures::add(path, w, h, 1u);
+            vendetta_pictures::want(c.image);
+            if (const vendetta_mods::Json *fit = entry.find("fit"); fit && fit->isString())
+                c.fit = fit->text == "fit" ? Fit::Inside : fit->text == "fill" ? Fit::Fill : Fit::Stretch;
+            if (const vendetta_mods::Json *colour = entry.find("colour"))
+            {
+                if (colour->isString() && colour->text == "white")
+                    c.colour = 1;
+                else if (colour->isArray() && colour->items.size() == 3)
+                {
+                    c.colour = 2;
+                    for (int k = 0; k < 3; ++k)
+                        c.rgb[k] = float(std::clamp(colour->items[k].number, 0.0, 255.0) / 255.0);
+                }
+            }
+            if (const vendetta_mods::Json *shape = entry.find("shape"); shape && shape->isString())
+                c.wide = shape->text == "16:9";
+            return true;
+        }
+
         void readPieces(const vendetta_mods::Mod &mod, const std::string &relative, const std::string &screen)
         {
             const std::filesystem::path file = vendetta_mods::modFile(mod, relative, "menu theme file");
@@ -1007,6 +1108,27 @@ namespace vendetta_menus
             const std::string folder = std::filesystem::path(relative).parent_path().generic_string();
             for (const auto &[name, entry] : pieces->members)
             {
+                // a picture the game draws in parts: named as its one piece, one picture for all its parts
+                auto joined = screen.empty() ? g_joinedByName.end() : g_joinedByName.find(screen + "." + name);
+                if (joined == g_joinedByName.end())
+                    joined = g_joinedByName.find(name);
+                if (joined != g_joinedByName.end())
+                {
+                    Change c;
+                    if (!readPicture(mod, folder, entry, c))
+                        continue;
+                    for (const uint32_t part : g_joinedParts[joined->second])
+                    {
+                        if (const auto had = g_changes.find(part); had != g_changes.end() && had->second.theme != mod.name)
+                        {
+                            vendetta_mods::problem() << "[menus] " << kMenuJoined[joined->second] << ": " << mod.name << "'s picture used, not "
+                                                     << had->second.theme << "'s (the later in the project wins)" << std::endl;
+                            had->second.theme = mod.name; // said once
+                        }
+                        g_changes[part] = c;
+                    }
+                    continue;
+                }
                 auto found = screen.empty() ? g_byName.end() : g_byName.find(screen + "." + name);
                 if (found == g_byName.end())
                     found = g_byName.find(name);
@@ -1035,42 +1157,18 @@ namespace vendetta_menus
                                              << "banner font changes it (shared.json \"fonts\": {\"banner\": ...})" << std::endl;
                     continue;
                 }
-                const vendetta_mods::Json *picture = entry.find("picture");
-                if (piece.kind != 1 || !picture || !picture->isString())
+                if (piece.joined >= 0)
+                {
+                    vendetta_mods::problem() << "[menus] " << mod.name << ": " << name << " is a part of " << kMenuJoined[piece.joined]
+                                             << ", which the game draws in parts: a theme names " << kMenuJoined[piece.joined]
+                                             << " with one picture" << std::endl;
+                    continue;
+                }
+                if (piece.kind != 1)
                     continue;
                 Change c;
-                c.theme = mod.name;
-                c.file = picture->text;
-                const std::string within = folder.empty() ? picture->text : folder + "/" + picture->text;
-                const std::filesystem::path path = vendetta_mods::modFile(mod, within, "menu picture");
-                if (path.empty())
+                if (!readPicture(mod, folder, entry, c))
                     continue;
-                vendetta_pictures::fileSize(path, c.width, c.height);
-                if (!c.width || !c.height)
-                {
-                    vendetta_mods::problem() << "[menus] " << mod.name << ": " << within << " can't be read as a picture" << std::endl;
-                    continue;
-                }
-                uint32_t w = c.width, h = c.height; // kept at its own size, at most 4096 a side
-                while (w > 4096u || h > 4096u)
-                    w = std::max(1u, w / 2u), h = std::max(1u, h / 2u);
-                c.image = vendetta_pictures::add(path, w, h, 1u);
-                vendetta_pictures::want(c.image);
-                if (const vendetta_mods::Json *fit = entry.find("fit"); fit && fit->isString())
-                    c.fit = fit->text == "fit" ? Fit::Inside : fit->text == "fill" ? Fit::Fill : Fit::Stretch;
-                if (const vendetta_mods::Json *colour = entry.find("colour"))
-                {
-                    if (colour->isString() && colour->text == "white")
-                        c.colour = 1;
-                    else if (colour->isArray() && colour->items.size() == 3)
-                    {
-                        c.colour = 2;
-                        for (int k = 0; k < 3; ++k)
-                            c.rgb[k] = float(std::clamp(colour->items[k].number, 0.0, 255.0) / 255.0);
-                    }
-                }
-                if (const vendetta_mods::Json *shape = entry.find("shape"); shape && shape->isString())
-                    c.wide = shape->text == "16:9";
                 if (const auto had = g_changes.find(found->second); had != g_changes.end())
                     vendetta_mods::problem() << "[menus] " << piece.name << ": " << mod.name << "'s picture used, not "
                                              << had->second.theme << "'s (the later in the project wins)" << std::endl;
@@ -1115,10 +1213,16 @@ namespace vendetta_menus
             return;
         g_runtime = &runtime;
         g_log = std::getenv("VENDETTA_MENULOG") && *std::getenv("VENDETTA_MENULOG") != '0';
+        g_joinedParts.assign(sizeof(kMenuJoined) / sizeof(kMenuJoined[0]), {});
+        for (uint32_t j = 0; j < g_joinedParts.size(); ++j)
+            if (*kMenuJoined[j])
+                g_joinedByName.emplace(kMenuJoined[j], j);
         for (uint32_t i = 0; i < kPieceCount; ++i)
         {
             const MenuPiece &p = kMenuPieces[i];
             g_byName.emplace(p.name, i);
+            if (p.joined >= 0 && uint32_t(p.joined) < g_joinedParts.size())
+                g_joinedParts[p.joined].push_back(i);
             if (p.kind == 1 && p.source && p.grows)
                 g_bars.emplace(key(p.source, p.a, p.b, p.u0, p.v0, 0, p.v1), i);
             else if (p.kind == 1 && p.source)

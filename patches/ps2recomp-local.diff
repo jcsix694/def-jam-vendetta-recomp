@@ -3715,10 +3715,10 @@ index 4c3f641..b106c89 100644
  #endif
 diff --git a/ps2xRuntime/include/runtime/gs/gs_gpu.h b/ps2xRuntime/include/runtime/gs/gs_gpu.h
 new file mode 100644
-index 0000000..a9e8917
+index 0000000..3708bba
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_gpu.h
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,212 @@
 +#pragma once
 +
 +// The GS drawn on the graphics card (paraLLEl-GS, Vulkan compute), next to the CPU renderer.
@@ -3911,6 +3911,15 @@ index 0000000..a9e8917
 +    // Idempotent; joins the renderer's thread, which owns (and destroys) every Vulkan object.
 +    virtual void shutdown() = 0;
 +};
++
++// The window's overlay (gs_vulkan_present.cpp, a local addition): a picture of the program's own drawn over the game's
++// at each present, inside the game's picture, fitted to its own shape (`aspect` = its width / height as shown) on black;
++// e.g. a movie played from a file. rgba: width x height RGBA8 (straight; drawn opaque). Any thread: the window takes
++// the newest when it next presents and uploads it into one image of its own. gsClearPresentOverlay(): none again.
++// gsPresentOverlayAvailable(): the window is shown through Vulkan (else nothing is drawn).
++void gsSetPresentOverlay(uint32_t width, uint32_t height, std::vector<uint32_t> rgba, double aspect);
++void gsClearPresentOverlay();
++bool gsPresentOverlayAvailable();
 +
 +// A picture file (PNG, or any format raylib reads) as RGBA8, for host images. Any thread. Resized to exactly
 +// width x height when both are given and differ from the file's size (0, 0: the file's own size). False if it can't
@@ -4310,7 +4319,7 @@ index c784ff7..bb5eb6a 100644
  }
 \ No newline at end of file
 diff --git a/ps2xRuntime/include/runtime/ps2_audio.h b/ps2xRuntime/include/runtime/ps2_audio.h
-index a8c2a55..4ba7728 100644
+index a8c2a55..abd48c7 100644
 --- a/ps2xRuntime/include/runtime/ps2_audio.h
 +++ b/ps2xRuntime/include/runtime/ps2_audio.h
 @@ -10,6 +10,8 @@
@@ -4322,7 +4331,7 @@ index a8c2a55..4ba7728 100644
      PS2AudioBackend();
      ~PS2AudioBackend();
  
-@@ -25,6 +27,10 @@ public:
+@@ -25,6 +27,16 @@ public:
      void stopAll();
      void setAudioReady(bool ready) { m_audioReady = ready; }
  
@@ -4330,10 +4339,16 @@ index a8c2a55..4ba7728 100644
 +    // software mix. Buffered (~1/4 s at most) and played through one raylib audio stream.
 +    void submitPcmStream(const int16_t *frames, size_t frameCount);
 +
++    // A mixer of the program's own (e.g. a movie player's sound): called with each chunk of the stream before it is
++    // queued, on the thread that submits it, to add its own samples in place; `queuedFrames` = the frames already
++    // waiting to be played (so the mixer knows how far ahead of the speakers it is). nullptr = none. Any thread.
++    using PcmMixer = void (*)(int16_t *frames, size_t frameCount, size_t queuedFrames);
++    static void setPcmMixer(PcmMixer mixer);
++
  private:
      struct DecodedSample
      {
-@@ -32,7 +38,6 @@ private:
+@@ -32,7 +44,6 @@ private:
          uint32_t sampleRate = 44100;
      };
  
@@ -12640,10 +12655,10 @@ index 0000000..7b28d1d
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_none.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_none.cpp
 new file mode 100644
-index 0000000..6085f2a
+index 0000000..39dc2de
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_gpu_none.cpp
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,13 @@
 +#include "runtime/gs/gs_gpu.h"
 +
 +// Built without paraLLEl-GS (no PS2X_PARALLEL_GS_DIR): the CPU renderer only.
@@ -12652,6 +12667,11 @@ index 0000000..6085f2a
 +    whyNot = "built without paraLLEl-GS (configure with -DPS2X_PARALLEL_GS_DIR=<its source tree>)";
 +    return nullptr;
 +}
++
++// No Vulkan window either: no overlay (gsPresentOverlayAvailable() says so, the rest do nothing).
++void gsSetPresentOverlay(uint32_t, uint32_t, std::vector<uint32_t>, double) {}
++void gsClearPresentOverlay() {}
++bool gsPresentOverlayAvailable() { return false; }
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
 new file mode 100644
 index 0000000..f5d72b2
@@ -15018,10 +15038,10 @@ index 0000000..96eeb8a
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_vulkan_present.cpp b/ps2xRuntime/src/lib/gs/gs_vulkan_present.cpp
 new file mode 100644
-index 0000000..17c158c
+index 0000000..2498b00
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_vulkan_present.cpp
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,546 @@
 +// The window's own Vulkan device: the drawing thread's shared pictures drawn into Granite's swapchain (see
 +// gs_vulkan_present.h).
 +
@@ -15047,9 +15067,12 @@ index 0000000..17c158c
 +#endif
 +
 +#include <algorithm>
++#include <atomic>
 +#include <cstddef>
++#include <cstdlib>
 +#include <cstring>
 +#include <iostream>
++#include <mutex>
 +#include <vector>
 +
 +namespace
@@ -15133,9 +15156,50 @@ index 0000000..17c158c
 +namespace
 +{
 +    ImDrawData *g_ui = nullptr;
++
++    // the overlay picture (gsSetPresentOverlay): the newest one given, taken by the window at its next present
++    struct Overlay
++    {
++        std::mutex lock;
++        uint32_t width = 0, height = 0;
++        std::vector<uint32_t> rgba;
++        double aspect = 0.0;
++        uint64_t seq = 0;
++        bool on = false;
++    };
++    Overlay g_overlay;
++    std::atomic<uint64_t> g_overlaySeq{0}; // g_overlay.seq, read without the lock (the window's loop, each turn)
++    std::atomic<int> g_presenters{0};
 +}
 +
 +void setPresentUi(ImDrawData *data) { g_ui = data; }
++
++void gsSetPresentOverlay(uint32_t width, uint32_t height, std::vector<uint32_t> rgba, double aspect)
++{
++    if (!width || !height || rgba.size() != size_t(width) * height)
++        return;
++    std::lock_guard<std::mutex> lock(g_overlay.lock);
++    g_overlay.width = width;
++    g_overlay.height = height;
++    g_overlay.rgba = std::move(rgba);
++    g_overlay.aspect = aspect > 0.0 ? aspect : double(width) / double(height);
++    ++g_overlay.seq;
++    g_overlay.on = true;
++    g_overlaySeq.store(g_overlay.seq, std::memory_order_release);
++}
++
++void gsClearPresentOverlay()
++{
++    std::lock_guard<std::mutex> lock(g_overlay.lock);
++    g_overlay.rgba.clear();
++    g_overlay.on = false;
++    ++g_overlay.seq;
++    g_overlaySeq.store(g_overlay.seq, std::memory_order_release);
++}
++
++bool gsPresentOverlayAvailable() { return g_presenters.load(std::memory_order_acquire) > 0; }
++
++uint64_t gsPresentOverlaySeq() { return g_overlaySeq.load(std::memory_order_acquire); }
 +
 +void paintWindowBlack(GLFWwindow *window)
 +{
@@ -15166,6 +15230,12 @@ index 0000000..17c158c
 +    // the debug panel: paraLLEl-GS's UI shaders (textured, no sRGB conversion), Dear ImGui's textures by their id - 1
 +    Vulkan::Program *uiProgram = nullptr;
 +    std::vector<Vulkan::ImageHandle> uiTextures;
++    // the overlay: one image of ours, filled again when a new picture comes (made again only at a new size)
++    Vulkan::ImageHandle overlay;
++    uint64_t overlaySeq = 0;
++    double overlayAspect = 0.0;
++    bool overlayOn = false;
++    uint64_t overlayPresents = 0, overlayUploads = 0, overlayDraws = 0; // VENDETTA_VIDEOLOG's lines
 +
 +    void updateUiTextures();
 +    void drawUi(Vulkan::CommandBuffer &cmd, uint32_t width, uint32_t height);
@@ -15211,6 +15281,7 @@ index 0000000..17c158c
 +        return whyNot = "no program for the picture", false;
 +    m.uiProgram = device.request_program(suite.ui_vert, suite.ui_frag[1][0]);
 +    m.ready = true;
++    g_presenters.fetch_add(1, std::memory_order_acq_rel);
 +    std::cerr << "[present] Vulkan on \"" << context->get_gpu_props().deviceName << "\"" << std::endl;
 +    return true;
 +}
@@ -15291,6 +15362,51 @@ index 0000000..17c158c
 +    dep.pImageMemoryBarriers = &acquire;
 +    cmd->barrier(dep);
 +
++    // the overlay's newest picture, into its image (outside the render pass)
++    {
++        std::vector<uint32_t> pixels;
++        uint32_t width = 0, height = 0;
++        {
++            std::lock_guard<std::mutex> lock(g_overlay.lock);
++            m.overlayOn = g_overlay.on;
++            m.overlayAspect = g_overlay.aspect;
++            if (g_overlay.seq != m.overlaySeq)
++            {
++                m.overlaySeq = g_overlay.seq;
++                pixels.swap(g_overlay.rgba);
++                width = g_overlay.width;
++                height = g_overlay.height;
++            }
++        }
++        if (!m.overlayOn)
++            m.overlay.reset();
++        else if (!pixels.empty())
++        {
++            VkImageLayout from = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
++            if (!m.overlay || m.overlay->get_width() != width || m.overlay->get_height() != height)
++            {
++                Vulkan::ImageCreateInfo info = Vulkan::ImageCreateInfo::immutable_2d_image(width, height, VK_FORMAT_R8G8B8A8_UNORM);
++                info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++                info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
++                m.overlay = device.create_image(info);
++                from = VK_IMAGE_LAYOUT_UNDEFINED;
++            }
++            if (m.overlay)
++            {
++                cmd->image_barrier(*m.overlay, from, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
++                                   VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
++                if (void *dst = cmd->update_image(*m.overlay))
++                {
++                    std::memcpy(dst, pixels.data(), pixels.size() * sizeof(uint32_t));
++                    ++m.overlayUploads;
++                }
++                cmd->image_barrier(*m.overlay, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
++                                   VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
++                                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
++            }
++        }
++    }
++
 +    m.updateUiTextures();
 +    Vulkan::RenderPassInfo pass = device.get_swapchain_render_pass(Vulkan::SwapchainRenderPass::ColorOnly);
 +    pass.clear_attachments = 1u;
@@ -15298,6 +15414,8 @@ index 0000000..17c158c
 +    pass.clear_color[0] = {};
 +    pass.clear_color[0].float32[3] = 1.0f;
 +    cmd->begin_render_pass(pass);
++    // while the overlay is shown, it alone (the rest black): what the game's picture holds under it doesn't show
++    const bool overlayShown = m.overlayOn && m.overlay && m.overlayAspect > 0.0;
 +    if (dstWidth > 0 && dstHeight > 0)
 +    {
 +        cmd->set_program(m.program);
@@ -15308,7 +15426,32 @@ index 0000000..17c158c
 +                           static_cast<float>(dstHeight), 0.0f, 1.0f});
 +        const int x0 = std::max(dstX, 0), y0 = std::max(dstY, 0);
 +        cmd->set_scissor({{x0, y0}, {static_cast<uint32_t>(dstX + dstWidth - x0), static_cast<uint32_t>(dstY + dstHeight - y0)}});
-+        cmd->draw(3);
++        if (!overlayShown)
++            cmd->draw(3);
++        // the overlay instead: inside the game's picture's place, fitted to its own shape, the bars black
++        if (overlayShown)
++        {
++            float w = static_cast<float>(dstWidth), h = static_cast<float>(dstHeight);
++            const float shape = w / h;
++            if (m.overlayAspect > shape)
++                h = w / static_cast<float>(m.overlayAspect);
++            else
++                w = h * static_cast<float>(m.overlayAspect);
++            const float x = dstX + (dstWidth - w) * 0.5f, y = dstY + (dstHeight - h) * 0.5f;
++            cmd->set_texture(0, 0, m.overlay->get_view(), Vulkan::StockSampler::LinearClamp);
++            cmd->set_viewport({x, y, w, h, 0.0f, 1.0f});
++            cmd->draw(3);
++            ++m.overlayDraws;
++        }
++    }
++    if (m.overlayOn && ++m.overlayPresents % 120u == 1u)
++    {
++        static const bool log = std::getenv("VENDETTA_VIDEOLOG") != nullptr;
++        if (log)
++            std::cerr << "[present] overlay: " << m.overlayPresents << " presents, " << m.overlayUploads << " pictures uploaded, "
++                      << m.overlayDraws << " drawn; image " << (m.overlay ? m.overlay->get_width() : 0u) << " x "
++                      << (m.overlay ? m.overlay->get_height() : 0u) << ", aspect " << m.overlayAspect << ", in " << dstWidth
++                      << " x " << dstHeight << " at " << dstX << "," << dstY << std::endl;
 +    }
 +    m.drawUi(*cmd, device.get_swapchain_view().get_image().get_width(), device.get_swapchain_view().get_image().get_height());
 +    cmd->end_render_pass();
@@ -15437,6 +15580,8 @@ index 0000000..17c158c
 +        return;
 +    Impl &m = *m_impl;
 +    m.wsi.get_device().wait_idle();
++    g_presenters.fetch_sub(1, std::memory_order_acq_rel);
++    m.overlay.reset();
 +    for (auto &image : m.images)
 +        image.reset();
 +    m.uiTextures.clear();
@@ -15445,10 +15590,10 @@ index 0000000..17c158c
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_vulkan_present.h b/ps2xRuntime/src/lib/gs/gs_vulkan_present.h
 new file mode 100644
-index 0000000..bf5d5bb
+index 0000000..2464529
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_vulkan_present.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,57 @@
 +#pragma once
 +
 +// Shows the graphics card's pictures in a window through Vulkan (vulkanPresentWanted): the window's own device,
@@ -15481,6 +15626,11 @@ index 0000000..bf5d5bb
 +// The window's client area painted black with Windows' own drawing (a window without OpenGL shows nothing of its own
 +// until its first Vulkan picture): for a black start, and the black cover before a fullscreen mode change.
 +void paintWindowBlack(GLFWwindow *window);
++
++// The overlay (gsSetPresentOverlay, gs_gpu.h): changes with each new picture of it and with its clearing. The main
++// thread's loop presents for each change, so the overlay plays on while the game's own picture stands still; while it
++// is shown the window draws it alone, black around it.
++uint64_t gsPresentOverlaySeq();
 +
 +class VulkanPresenter
 +{
@@ -15591,20 +15741,21 @@ index a8f9fa8..34aad62 100644
      void InitLookupTables()
      {
 diff --git a/ps2xRuntime/src/lib/ps2_audio.cpp b/ps2xRuntime/src/lib/ps2_audio.cpp
-index 6bb6494..686e029 100644
+index 6bb6494..7baaab0 100644
 --- a/ps2xRuntime/src/lib/ps2_audio.cpp
 +++ b/ps2xRuntime/src/lib/ps2_audio.cpp
-@@ -1,6 +1,9 @@
+@@ -1,6 +1,10 @@
  #include "runtime/ps2_audio.h"
  #include "runtime/ps2_memory.h"
  #include "ps2_host_backend.h"
 +#include <algorithm>
++#include <atomic>
 +#include <cstdio>
 +#include <cstdlib>
  #include <cstring>
  #include <vector>
  
-@@ -77,8 +80,65 @@ struct PS2AudioBackend::Impl
+@@ -77,8 +81,65 @@ struct PS2AudioBackend::Impl
          uint32_t sampleKey;
      };
      std::vector<TrackedSound> activeSounds;
@@ -15670,7 +15821,7 @@ index 6bb6494..686e029 100644
  PS2AudioBackend::PS2AudioBackend() : m_impl(std::make_unique<Impl>())
  {
  }
-@@ -95,7 +155,7 @@ void PS2AudioBackend::onVagTransfer(const uint8_t *rdram, uint32_t srcAddr, uint
+@@ -95,7 +156,7 @@ void PS2AudioBackend::onVagTransfer(const uint8_t *rdram, uint32_t srcAddr, uint
          return;
  
      const uint32_t physAddr = srcAddr & PS2_RAM_MASK;
@@ -15679,7 +15830,7 @@ index 6bb6494..686e029 100644
          return;
  
      std::vector<int16_t> pcm;
-@@ -173,7 +233,7 @@ void PS2AudioBackend::onSoundCommand(uint32_t sid, uint32_t rpcNum,
+@@ -173,7 +234,7 @@ void PS2AudioBackend::onSoundCommand(uint32_t sid, uint32_t rpcNum,
              {
                  uint32_t cand = 0;
                  std::memcpy(&cand, sendBuf + off, sizeof(cand));
@@ -15688,10 +15839,17 @@ index 6bb6494..686e029 100644
                      sampleAddr = cand;
              }
          }
-@@ -307,6 +367,60 @@ void PS2AudioBackend::playDecodedSample(uint32_t sampleKey, DecodedSample &sampl
+@@ -307,6 +368,80 @@ void PS2AudioBackend::playDecodedSample(uint32_t sampleKey, DecodedSample &sampl
  #endif
  }
  
++namespace
++{
++    std::atomic<PS2AudioBackend::PcmMixer> g_pcmMixer{nullptr};
++}
++
++void PS2AudioBackend::setPcmMixer(PcmMixer mixer) { g_pcmMixer.store(mixer, std::memory_order_release); }
++
 +void PS2AudioBackend::submitPcmStream(const int16_t *frames, size_t frameCount)
 +{
 +#if defined(PLATFORM_VITA)
@@ -15701,6 +15859,19 @@ index 6bb6494..686e029 100644
 +    if (!m_audioReady || !frames || frameCount == 0u)
 +        return;
 +    Impl &impl = *m_impl;
++    if (PcmMixer mixer = g_pcmMixer.load(std::memory_order_acquire))
++    {
++        // the program's own sound added in place: a copy of the chunk, mixed, then queued as the stream's
++        static thread_local std::vector<int16_t> mixed;
++        mixed.assign(frames, frames + frameCount * 2u);
++        size_t queued = 0u;
++        {
++            std::lock_guard<std::mutex> lock(impl.pcmMutex);
++            queued = impl.pcmQueued;
++        }
++        mixer(mixed.data(), frameCount, queued);
++        frames = mixed.data();
++    }
 +    static const bool audioLog = std::getenv("VENDETTA_AUDIOLOG") != nullptr;
 +    static const char *dumpPath = std::getenv("VENDETTA_AUDIODUMP");
 +    if (dumpPath && !impl.pcmDump)
@@ -15749,7 +15920,7 @@ index 6bb6494..686e029 100644
  void PS2AudioBackend::stop(uint32_t voiceId)
  {
      (void)voiceId;
-@@ -324,5 +438,14 @@ void PS2AudioBackend::stopAll()
+@@ -324,5 +459,14 @@ void PS2AudioBackend::stopAll()
          UnloadSound(t.snd);
      }
      m_impl->activeSounds.clear();
@@ -19956,7 +20127,7 @@ index 0000000..c24f5c8
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d2..440b4b8 100644
+index 45cb9d2..f676b17 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -1,3 +1,7 @@
@@ -20266,7 +20437,9 @@ index 45cb9d2..440b4b8 100644
 +
 +// The graphics card's newest picture (VENDETTA_GS=gpu): the texture takes its size, which grows with super-sampling.
 +static bool UploadGpuFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight)
-+{
+ {
+-    static uint64_t s_lastPresentationTick = std::numeric_limits<uint64_t>::max();
+-    static bool s_hasLatchedInitialFrame = false;
 +    static uint64_t s_lastSeq = 0u;
 +    static uint32_t s_width = 0u;
 +    static uint32_t s_height = 0u;
@@ -20322,9 +20495,7 @@ index 45cb9d2..440b4b8 100644
 +
 +// true = a new picture was uploaded
 +static bool UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight)
- {
--    static uint64_t s_lastPresentationTick = std::numeric_limits<uint64_t>::max();
--    static bool s_hasLatchedInitialFrame = false;
++{
 +    // the scaling filter can change at any time (the debug panel); FSR is done on the graphics card, the window then
 +    // only places its picture (drawn at exactly the window's size)
 +    const int wantedFilter =
@@ -20897,7 +21068,7 @@ index 45cb9d2..440b4b8 100644
          try
          {
              m_eeScheduler->reset(m_memory.getRDRAM(), m_cpuContext);
-@@ -2422,23 +3009,74 @@ void PS2Runtime::run()
+@@ -2422,23 +3009,91 @@ void PS2Runtime::run()
          });
          uint32_t presentWidth = FB_WIDTH;
          uint32_t presentHeight = DEFAULT_DISPLAY_HEIGHT;
@@ -20908,14 +21079,31 @@ index 45cb9d2..440b4b8 100644
 +        // drifts against the game's 59.94 and jitters by a millisecond, a picture was now and then shown twice and the
 +        // next one never — a slight stutter although every frame was on time. VENDETTA_WINDOW_PACING=timer = the old way.
 +        bool freshPicture = UploadFrame(frameTex, this, presentWidth, presentHeight);
++        // the window's overlay (gsSetPresentOverlay, e.g. a movie from a file): a new picture of it is shown too, while
++        // the game's own picture stands still
++        bool freshOverlay = false;
++#if defined(PS2X_VULKAN_PRESENT)
++        static uint64_t s_overlaySeq = 0u;
++        const auto takeOverlay = [&]
++        {
++            const uint64_t seq = gsPresentOverlaySeq();
++            const bool fresh = seq != s_overlaySeq;
++            s_overlaySeq = seq;
++            return fresh;
++        };
++        freshOverlay = takeOverlay();
++#endif
 +        if (!windowTimerPacing())
 +        {
 +            const auto waitStart = std::chrono::steady_clock::now();
-+            while (!freshPicture && !isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire) &&
++            while (!freshPicture && !freshOverlay && !isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire) &&
 +                   std::chrono::steady_clock::now() - waitStart < std::chrono::milliseconds(20))
 +            {
 +                std::this_thread::sleep_for(std::chrono::microseconds(250));
 +                freshPicture = UploadFrame(frameTex, this, presentWidth, presentHeight);
++#if defined(PS2X_VULKAN_PRESENT)
++                freshOverlay = takeOverlay();
++#endif
 +            }
 +        }
 +        ps2_host_profile::count(freshPicture ? ps2_host_profile::WindowFrames : ps2_host_profile::WindowRepeats);
@@ -20980,7 +21168,7 @@ index 45cb9d2..440b4b8 100644
          DrawTexturePro(frameTex, srcRect, dstRect, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
          if (m_debugUiInitialized && m_debugUiDrawCallback)
          {
-@@ -2446,6 +3084,33 @@ void PS2Runtime::run()
+@@ -2446,6 +3101,33 @@ void PS2Runtime::run()
          }
          EndDrawing();
  
@@ -20988,7 +21176,7 @@ index 45cb9d2..440b4b8 100644
 +        if (presenterWindow)
 +            host_input::poll(); // the controllers' state for the pads (raylib's frame polled the events)
 +        // minimised (Alt-Tab from fullscreen): nothing to show (the swapchain would wait for a size on this thread)
-+        if (presenterWindow && s_sharedFrame && freshPicture && !glfwGetWindowAttrib(presenterWindow, GLFW_ICONIFIED))
++        if (presenterWindow && s_sharedFrame && (freshPicture || freshOverlay) && !glfwGetWindowAttrib(presenterWindow, GLFW_ICONIFIED))
 +        {
 +            GSGpuRenderer *gpu = m_gs.gpuRendererForSettings();
 +            if (presenter && gpu)
@@ -21014,7 +21202,7 @@ index 45cb9d2..440b4b8 100644
          if (WindowShouldClose())
          {
              RUNTIME_LOG("[run] window close requested, breaking out of loop");
-@@ -2459,12 +3124,22 @@ void PS2Runtime::run()
+@@ -2459,12 +3141,22 @@ void PS2Runtime::run()
      {
          gameThread.join();
      }
