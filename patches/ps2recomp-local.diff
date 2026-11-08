@@ -11114,7 +11114,7 @@ index f0ad507..8fa3249 100644
      result.displayFbp = displayFrame.fbp;
      result.sourceFbp = selected.fbp;
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 5658928..2a49935 100644
+index 5658928..17ff2c1 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -1,8 +1,17 @@
@@ -11135,7 +11135,19 @@ index 5658928..2a49935 100644
  #include <algorithm>
  #include <cmath>
  #include <cstdio>
-@@ -106,25 +115,216 @@ namespace
+@@ -14,6 +23,11 @@ namespace
+ {
+     static constexpr uint32_t kHostFrameWidth = 640u;
+ 
++    // In a centred frame, something game code drew this many screen pixels too far right (past anything a screen sliding
++    // in reaches) goes to the frame's left edge instead of the 4:3 middle: the offset travels with the drawing itself,
++    // however late the game sends it.
++    static constexpr float kPinLeftPixels = 1536.0f;
++
+     GSPrimReg decodePrimRegister(uint64_t value)
+     {
+         GSPrimReg prim{};
+@@ -106,25 +120,216 @@ namespace
  
  
  GS::GS()
@@ -11353,7 +11365,7 @@ index 5658928..2a49935 100644
      std::memset(m_ctx, 0, sizeof(m_ctx));
      m_prim = {};
      m_primRegister = {};
-@@ -164,7 +364,12 @@ void GS::reset()
+@@ -164,7 +369,12 @@ void GS::reset()
          m_backend->Flush();
          m_backend->Sync(GSSyncReason::Reset);
          m_backend->Reset();
@@ -11366,7 +11378,7 @@ index 5658928..2a49935 100644
      {
          std::lock_guard<std::mutex> presentationLock(m_presentationMutex);
          m_hostPresentationFrame.clear();
-@@ -200,10 +405,12 @@ void GS::snapshotVRAM()
+@@ -200,10 +410,12 @@ void GS::snapshotVRAM()
      // Presentation/debug snapshots run outside m_stateMutex so the EE can keep
      // feeding the GS while a backend performs host-side conversion. Keep the
      // selected backend alive and unswappable for the duration of the call.
@@ -11379,7 +11391,7 @@ index 5658928..2a49935 100644
      m_backend->Sync(GSSyncReason::DebugReadback);
      m_backend->SnapshotVram(snapshot);
      std::lock_guard<std::mutex> lock(m_snapshotMutex);
-@@ -503,19 +710,55 @@ void GS::refreshDisplaySnapshot()
+@@ -503,19 +715,55 @@ void GS::refreshDisplaySnapshot()
      snapshotVRAM();
  }
  
@@ -11446,7 +11458,7 @@ index 5658928..2a49935 100644
      request.contextFrames[0] = m_ctx[0].frame;
      request.contextFrames[1] = m_ctx[1].frame;
      request.preferredSource = m_preferredDisplaySourceFrame;
-@@ -524,55 +767,249 @@ GSPresentationRequest GS::buildPresentationRequestUnlocked() const
+@@ -524,55 +772,249 @@ GSPresentationRequest GS::buildPresentationRequestUnlocked() const
      return request;
  }
  
@@ -11620,7 +11632,8 @@ index 5658928..2a49935 100644
 +        return;
 +    presentUnlocked(regs, vsyncTick, false);
 +}
-+
+ 
+-    if (hasFrame)
 +bool GS::takePresentation(uint64_t &lastSeq, PresentationFrame &frame)
 +{
 +    if (m_presentation.sequence() == lastSeq)
@@ -11701,8 +11714,7 @@ index 5658928..2a49935 100644
 +    if (m_gpu)
 +        m_gpu->shutdown();
 +}
- 
--    if (hasFrame)
++
 +void GS::latchHostPresentationFrame()
 +{
 +    gateForeignCall();
@@ -11728,7 +11740,7 @@ index 5658928..2a49935 100644
  }
  
  bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
-@@ -638,13 +1075,48 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+@@ -638,13 +1080,48 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
      return true;
  }
  
@@ -11779,7 +11791,7 @@ index 5658928..2a49935 100644
          return;
  
      PS2_IF_AGRESSIVE_LOGS({
-@@ -668,7 +1140,6 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -668,7 +1145,6 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
          }
      });
  
@@ -11787,7 +11799,7 @@ index 5658928..2a49935 100644
      while (offset + 16 <= sizeBytes)
      {
          uint64_t tagLo = loadLE64(data + offset);
-@@ -684,6 +1155,7 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -684,6 +1160,7 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
              nreg = 16;
  
          recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
@@ -11795,7 +11807,7 @@ index 5658928..2a49935 100644
  
          bool pre = ((tagLo >> 46) & 1) != 0;
          if (pre)
-@@ -695,61 +1167,135 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -695,61 +1172,135 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
          for (uint32_t i = 0; i < nreg; ++i)
              regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
  
@@ -11963,7 +11975,7 @@ index 5658928..2a49935 100644
  
          const bool pre = ((tag.lo >> 46u) & 1u) != 0u;
          if (pre)
-@@ -762,8 +1308,10 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -762,8 +1313,10 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
              {
                  const uint64_t lo = loadLE64(data + offset);
                  const uint64_t hi = loadLE64(data + offset + 8u);
@@ -11974,7 +11986,7 @@ index 5658928..2a49935 100644
              }
          }
  
-@@ -783,7 +1331,9 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
+@@ -783,7 +1336,9 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
                             const uint8_t *data,
                             uint32_t sizeBytes)
  {
@@ -11984,7 +11996,7 @@ index 5658928..2a49935 100644
      uploadImageNativeUnlocked(bitbltbuf, trxpos, trxreg, trxdir, data, sizeBytes);
  }
  
-@@ -796,6 +1346,25 @@ void GS::uploadImageNativeUnlocked(uint64_t bitbltbuf,
+@@ -796,6 +1351,25 @@ void GS::uploadImageNativeUnlocked(uint64_t bitbltbuf,
  {
      if (!data || sizeBytes == 0 || !m_backend)
          return;
@@ -12010,7 +12022,7 @@ index 5658928..2a49935 100644
  
      writeRegisterUnlocked(GS_REG_BITBLTBUF, bitbltbuf);
      writeRegisterUnlocked(GS_REG_TRXPOS, trxpos);
-@@ -927,6 +1496,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -927,6 +1501,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -12018,7 +12030,7 @@ index 5658928..2a49935 100644
          vtx.x = static_cast<float>(x) / 16.0f;
          vtx.y = static_cast<float>(y) / 16.0f;
          vtx.z = static_cast<float>(z);
-@@ -964,6 +1534,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -964,6 +1539,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -12026,7 +12038,7 @@ index 5658928..2a49935 100644
          vtx.x = static_cast<float>(x) / 16.0f;
          vtx.y = static_cast<float>(y) / 16.0f;
          vtx.z = static_cast<float>(z);
-@@ -998,6 +1569,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -998,6 +1574,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -12034,7 +12046,7 @@ index 5658928..2a49935 100644
          vtx.x = static_cast<float>(lo & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((lo >> 32) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<float>((hi >> 4) & 0xFFFFFF);
-@@ -1029,6 +1601,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -1029,6 +1606,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
              }
          });
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -12042,7 +12054,7 @@ index 5658928..2a49935 100644
          vtx.x = static_cast<float>(lo & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((lo >> 32) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<float>(hi & 0xFFFFFFFF);
-@@ -1061,7 +1634,12 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -1061,7 +1639,12 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
  
  void GS::writeRegister(uint8_t regAddr, uint64_t value)
  {
@@ -12055,7 +12067,7 @@ index 5658928..2a49935 100644
      writeRegisterUnlocked(regAddr, value);
  }
  
-@@ -1186,6 +1764,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1186,6 +1769,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
      case GS_REG_XYZF3:
      {
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -12063,7 +12075,7 @@ index 5658928..2a49935 100644
          vtx.x = static_cast<float>(value & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((value >> 16) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<double>((value >> 32) & 0xFFFFFF);
-@@ -1206,6 +1785,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1206,6 +1790,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
      case GS_REG_XYZ3:
      {
          GSVertex &vtx = m_vtxQueue[m_vtxCount % kMaxVerts];
@@ -12071,7 +12083,7 @@ index 5658928..2a49935 100644
          vtx.x = static_cast<float>(value & 0xFFFF) / 16.0f;
          vtx.y = static_cast<float>((value >> 16) & 0xFFFF) / 16.0f;
          vtx.z = static_cast<double>((value >> 32) & 0xFFFFFFFF);
-@@ -1240,6 +1820,14 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1240,6 +1825,14 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
          t.csa = static_cast<uint8_t>((value >> 56) & 0x1F);
          t.cld = static_cast<uint8_t>((value >> 61) & 0x7);
          m_backend->LoadClut(t, m_texclut);
@@ -12086,7 +12098,7 @@ index 5658928..2a49935 100644
          break;
      }
      case GS_REG_CLAMP_1:
-@@ -1392,6 +1980,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1392,6 +1985,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
              command.trxreg = m_trxreg;
              command.direction = m_trxdir;
              m_backend->BeginTransfer(command);
@@ -12094,7 +12106,7 @@ index 5658928..2a49935 100644
          }
          recordTransferDebugEventUnlocked();
          break;
-@@ -1575,8 +2164,16 @@ void GS::vertexKick(bool drawing)
+@@ -1575,8 +2169,16 @@ void GS::vertexKick(bool drawing)
      if (drawing && m_backend)
      {
          GSPrimitiveBatch batch = buildDrawBatch(needed);
@@ -12112,7 +12124,7 @@ index 5658928..2a49935 100644
          recordDrawDebugEventUnlocked(needed);
      }
  
-@@ -1590,15 +2187,19 @@ void GS::vertexKick(bool drawing)
+@@ -1590,15 +2192,19 @@ void GS::vertexKick(bool drawing)
          break;
      case GS_PRIM_LINESTRIP:
          m_vtxQueue[0] = m_vtxQueue[1];
@@ -12132,7 +12144,7 @@ index 5658928..2a49935 100644
          m_vtxCount = 2;
          break;
      default:
-@@ -1607,28 +2208,313 @@ void GS::vertexKick(bool drawing)
+@@ -1607,28 +2213,314 @@ void GS::vertexKick(bool drawing)
      }
  }
  
@@ -12347,6 +12359,7 @@ index 5658928..2a49935 100644
 +        for (size_t pi : e.prims)
 +        {
 +            const OverlayPrimitive &p = m_overlay[pi];
++            const bool pinned = centred && p.minX >= kPinLeftPixels - 256.0f;
 +            for (uint8_t v = 0; v < p.count; ++v)
 +            {
 +                const VertexSource &src = p.vertices[v];
@@ -12362,8 +12375,8 @@ index 5658928..2a49935 100644
 +                uint8_t *bytes = m_held[held->second].bytes.data() + src.offset;
 +                const uint16_t x = static_cast<uint16_t>(bytes[0] | (bytes[1] << 8));
 +                const float screenX = static_cast<float>(x) / 16.0f - p.ofx;
-+                float placed = anchor + k * (screenX - anchor);
-+                if (centred)
++                float placed = pinned ? k * (screenX - kPinLeftPixels) : anchor + k * (screenX - anchor);
++                if (centred && !pinned)
 +                    placed = std::clamp(placed, w * 0.5f * (1.0f - k), w * 0.5f * (1.0f + k));
 +                const long fixed = std::lround((placed + p.ofx) * 16.0f);
 +                const uint16_t nx = static_cast<uint16_t>(std::clamp<long>(fixed, 0, 0xFFFF));
@@ -12448,7 +12461,7 @@ index 5658928..2a49935 100644
      return m_backend ? m_backend->ConsumeLocalToHostBytes(dst, maxBytes) : 0u;
  }
  
-@@ -1637,7 +2523,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1637,7 +2529,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
      if (!backend)
          backend = std::make_unique<GSCpuBackend>();
  
@@ -12458,7 +12471,7 @@ index 5658928..2a49935 100644
      std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
      if (m_backend)
      {
-@@ -1657,21 +2545,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1657,21 +2551,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
          }
      }
  

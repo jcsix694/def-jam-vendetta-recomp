@@ -54,6 +54,7 @@ namespace vendetta_menus
         constexpr size_t kPieceCount = sizeof(kMenuPieces) / sizeof(kMenuPieces[0]);
         constexpr int kFormat = 1; // the newest "menus" format this game reads
 
+        constexpr uint32_t kSongBox = 0x1857E0u;               // FUN_001857e0: the song box, its picture and its three lines
         constexpr uint32_t kQuad = 0x183C88u;                  // FUN_00183c88(ctx, quad): every menu picture
         constexpr uint32_t kPrm = 0x157570u, kPrmEnd = 0x157A70u; // FUN_00157570(pack, record): picker 1
         constexpr uint32_t kArt = 0x184D78u, kArtEnd = 0x185128u; // FUN_00184d78(ctx, group, record): picker 2
@@ -99,7 +100,7 @@ namespace vendetta_menus
         };
 
         PS2Runtime *g_runtime = nullptr;
-        Fn g_quad = nullptr, g_prm = nullptr, g_art = nullptr, g_texSet = nullptr;
+        Fn g_quad = nullptr, g_prm = nullptr, g_art = nullptr, g_texSet = nullptr, g_songBox = nullptr;
         Fn g_fontDraw = nullptr, g_fontMeasure = nullptr, g_fontColour = nullptr, g_tint = nullptr;
         std::unordered_map<uint32_t, Words> g_words;       // a text's address in the executable -> the theme's change
         std::unordered_map<uint32_t, Words> g_builtWords;  // words built at run time: by the draw's return address
@@ -113,7 +114,7 @@ namespace vendetta_menus
         constexpr uint32_t kGlyphBytes = 288u;    // a letter: 24 x 24 at 4 bits a pixel, uploaded straight from its chunk
         constexpr uint32_t kFontScale = 4u;       // our letters drawn at 4x the game's 32 x 32 texture
         constexpr uint32_t kFontImageBase = 0x51000000u;
-        std::filesystem::path g_fontFile[3]; // the menu font (every chunk), the header font (131: the header's words), the banner font
+        std::filesystem::path g_fontFile[3]; // the menu font (fonts 130, 132, 133), the header font (131), the banner font
         std::string g_fontTheme;
         bool g_fontsBuilt = false;
         std::unordered_map<std::string, uint32_t> g_byName;
@@ -405,6 +406,29 @@ namespace vendetta_menus
             return true;
         }
 
+        // A wide menu frame: the song box at the frame's far left, not in the 4:3 middle. Its picture and its words are
+        // drawn this far past the frame, which the widescreen code (kPinLeftPixels in gs_frontend.cpp) takes off again.
+        bool g_inSongBox = false;
+        constexpr float kPinLeftPixels = 1536.0f;
+        constexpr float kPinLeftGame = kPinLeftPixels * 1.25f; // 640 across in the quads, 512 on the GS
+
+        void songBox(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_wideBackdrop || !ps2_widescreen::centredNow(100))
+            {
+                g_songBox(rdram, ctx, runtime);
+                return;
+            }
+            g_inSongBox = true;
+            callThen(rdram, ctx, runtime, g_songBox, [](uint8_t *, R5900Context *) { g_inSongBox = false; });
+        }
+
+        void pinQuadLeft(uint8_t *q)
+        {
+            for (int i = 0; i < 4; ++i)
+                writeFloat(q + 8 + 0x24 * i, readFloat(q + 8 + 0x24 * i) + kPinLeftGame);
+        }
+
         // ---- the banner font ("fonts": { "banner": ... }): the winner banner's, the Blazin' banner's and the High Scores
         // banner's letters, drawn from a sheet made of the theme's font file ----
         // The banner font is one picture (PRM pack 0xF, record 7: 256 x 256 texels, 4-bit) holding 31 letters, each a
@@ -641,6 +665,8 @@ namespace vendetta_menus
                     ctx->pc = ra; // all of it outside the frame: not drawn
                     return;
                 }
+                if (g_inSongBox)
+                    pinQuadLeft(copy);
                 SET_GPR_U32(ctx, 5, g_scratch);
                 g_quad(rdram, ctx, runtime);
                 return;
@@ -659,6 +685,8 @@ namespace vendetta_menus
                 ctx->pc = ra;
                 return;
             }
+            if (cut && g_inSongBox)
+                pinQuadLeft(copy);
             if (!vendetta_pictures::bindNow(tbp, c.image))
             {
                 g_quad(rdram, ctx, runtime);
@@ -751,7 +779,8 @@ namespace vendetta_menus
             }
             for (uint32_t chunk = 0; chunk < 4u; ++chunk)
             {
-                const std::filesystem::path &file = chunk == 1u && !g_fontFile[1].empty() ? g_fontFile[1] : g_fontFile[0];
+                // font 131 takes the header font only: with none chosen it stays the game's, whatever the menu font is
+                const std::filesystem::path &file = g_fontFile[chunk == 1u ? 1 : 0];
                 if (file.empty())
                     continue;
                 std::vector<uint8_t> bytes;
@@ -912,6 +941,8 @@ namespace vendetta_menus
         {
             if (!g_fontsBuilt && (!g_fontFile[0].empty() || !g_fontFile[1].empty()))
                 buildFonts(rdram, runtime);
+            if (g_inSongBox) // x in 1/16 pixels on the GS
+                SET_GPR_U32(ctx, 5, getRegU32(ctx, 5) + uint32_t(kPinLeftPixels * 16.0f));
             const uint32_t text = getRegU32(ctx, 7), ra = getRegU32(ctx, 31);
             uint32_t key = 0;
             Words *w = wordsFor(text, ra, key);
@@ -1248,6 +1279,8 @@ namespace vendetta_menus
             hook(runtime, kArt, g_art, art);
             hook(runtime, kTexSet, g_texSet, texSet);
             hook(runtime, kQuad, g_quad, quad);
+            if (g_wideBackdrop)
+                hook(runtime, kSongBox, g_songBox, songBox);
         }
         if (words)
         {
@@ -1257,6 +1290,8 @@ namespace vendetta_menus
             if (g_highlightOn)
                 hook(runtime, kTint, g_tint, tint);
         }
+        else if (g_wideBackdrop)
+            hook(runtime, kFontDraw, g_fontDraw, fontDraw); // the song box's words, at the frame's far left
         std::cerr << "[menus] the project's menu themes change " << g_changes.size() << " pictures, " << g_words.size() + g_builtWords.size()
                   << " words" << (g_highlightOn ? ", the highlight colour" : "") << (g_fontFile[2].empty() ? "" : ", the banner font") << std::endl;
     }
