@@ -76,11 +76,29 @@ namespace vendetta_pictures
             uint32_t w = 0, h = 0;
             if (!gsDecodePicture(data.data(), data.size(), 0u, 0u, rgba, w, h))
                 return false;
-            // the game's shape, at the largest whole multiple the file has detail for (at most `scale`)
-            const uint32_t k = std::clamp<uint32_t>(std::min(w / p.width, h / p.height), 1u, p.scale);
-            gsResizePicture(rgba, w, h, p.width * k, p.height * k);
-            w = p.width * k;
-            h = p.height * k;
+            if (p.kind == Kind::Photo || p.kind == Kind::PhotoAcross)
+            {
+                const bool across = p.kind == Kind::PhotoAcross;
+                const uint32_t photoW = 512u, photoH = 768u, fileW = across ? photoH : photoW, fileH = across ? photoW : photoH;
+                const uint32_t k = std::clamp<uint32_t>(std::min(w / fileW, h / fileH), 1u, p.scale);
+                gsResizePicture(rgba, w, h, fileW * k, fileH * k);
+                const uint32_t tw = photoW * k, th = p.height * k, sw = fileW * k, sh = fileH * k;
+                std::vector<uint32_t> laid(size_t(tw) * th, 0u);
+                for (uint32_t v = 0; v < photoH * k; ++v)
+                    for (uint32_t u = 0; u < tw; ++u)
+                        laid[size_t(v) * tw + u] = across ? rgba[size_t(sh - 1u - u) * sw + v] : rgba[size_t(v) * sw + u];
+                rgba = std::move(laid);
+                w = tw;
+                h = th;
+            }
+            else
+            {
+                // the game's shape, at the largest whole multiple the file has detail for (at most `scale`)
+                const uint32_t k = std::clamp<uint32_t>(std::min(w / p.width, h / p.height), 1u, p.scale);
+                gsResizePicture(rgba, w, h, p.width * k, p.height * k);
+                w = p.width * k;
+                h = p.height * k;
+            }
             for (uint32_t &pixel : rgba)
             {
                 uint32_t a = pixel >> 24;

@@ -877,7 +877,7 @@ hud.g4-24,picture,wrestler,hud,15D200,15D4DC,group,4,24,0 0 64 64,3E80,"575,37-6
 hud.text-295908,words,menu,hud,159D20,15A64C 15A6A8,text,295908,,,,,,,,live,,,,,off
 options.text-2956c0,words,menu,options,143EF0,144024 144190,text,2956C0,,,,,,,,live,,,,,
 options.text-2956d0,words,menu,options,143EF0,144024 144190,text,2956D0,,,,,,,,live,,,,,
-options.text-2956d8,words,menu,options,143EF0,144024 144190,text,2956D8,,,,,,,,live,,,,,
+options.text-2956d8,words,menu,pause options,143EF0,144024 144190,text,2956D8,,,,,,,,live,,,,,shared-words
 high-scores.text-27d260,words,menu,high-scores,151E78,151F74 151FB8,text,27D260,,,,,,,,live,,,,,
 high-scores.text-2957f0,words,menu,high-scores,152608 152CB0 153378 153A20 1540C8 154900 154FA8,152758 1527A4 152DFC 152E48 1534C4 153510 153B6C 153BB8 15421C 154268 154A50 154A9C 1550F8 155144,text,2957F0,,,,,,,,live,,,,,
 high-scores.text-2957f8,words,menu,high-scores,152608 152CB0 153378 153A20 1540C8 154900 154FA8,152818 152864 152EBC 152F08 153584 1535D0 153C2C 153C78 1542DC 154328 154B10 154B5C 1551B8 155204,text,2957F8,,,,,,,,live,,,,,

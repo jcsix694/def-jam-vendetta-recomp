@@ -30,6 +30,8 @@ namespace vendetta_pictures
     {
         Plain,  // the file as it is
         Shadow, // a grid icon's shade: black, as dark as the file is dark, clear where it is clear
+        Photo,       // a gallery photo as the game lays one out: the file as the top 512 x 768 of a 512 x 1024 texture
+        PhotoAcross, // the same for a photo shown across: the file is as shown, the game's texture holds it a quarter turn round
     };
 
     // A picture from a file, shown on a GS texture of `width` x `height` texels (the game's shape: the file is

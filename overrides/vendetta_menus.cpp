@@ -62,6 +62,13 @@ namespace vendetta_menus
         constexpr uint32_t kTex0 = 0x23F600u;                  // the quad's texture (a TEX0 register)
         constexpr uint32_t kQuadSize = 8u + 4u * 0x24u;        // {blend, textured, 4 x {x, y, z, r, g, b, a, u, v}}
 
+        // The galleries' photos: FUN_0018B718(ctx, TOC entry, ...) reads a photo, FUN_0018E9C0(ctx, chunk) a gallery's 24 thumbnails,
+        // the quads below draw them. A photo's TOC entry is 5 + 24 x chunk + slot; the five tables at 0x240438 hold 24 {TOC entry, shown across}.
+        constexpr uint32_t kPhotoLoad = 0x18B718u, kPageLoad = 0x18E9C0u;
+        constexpr uint32_t kPhotoQuadRa = 0x18C000u, kThumbQuadRa = 0x18F0C4u;
+        constexpr uint32_t kPhotoTables = 0x240438u;
+        constexpr uint32_t kThumbTbp = 0x2800u, kThumbStep = 0x14u; // thumbnail i at 0x2800 + 0x14 i
+
         enum class Fit
         {
             Stretch,
@@ -86,6 +93,15 @@ namespace vendetta_menus
         constexpr uint32_t kFontColour = 0x1BA7D8u;  // FUN_001ba7d8(font, r, g, b, a): every word's colour (0x80 = full)
         constexpr uint32_t kTint = 0x1857B8u;        // FUN_001857b8(corner, r, g, b, a in f12-f15): a picture's tint
 
+        // a gallery photo a theme changes (its picture and / or its thumbnail, either 0 for the game's); shown: -1 the game's, 0 upright, 1 across
+        struct GalleryPhoto
+        {
+            uint32_t image = 0, thumb = 0;
+            int shown = -1;
+            bool wanted = false, logged = false;
+            std::string theme;
+        };
+
         // one words piece a theme changes
         struct Words
         {
@@ -102,6 +118,10 @@ namespace vendetta_menus
         PS2Runtime *g_runtime = nullptr;
         Fn g_quad = nullptr, g_prm = nullptr, g_art = nullptr, g_texSet = nullptr, g_songBox = nullptr, g_messageBox = nullptr;
         bool g_storyCardPlain = false; // shared.json "story card": "none"
+        Fn g_photoLoad = nullptr, g_pageLoad = nullptr;
+        std::unordered_map<uint32_t, GalleryPhoto> g_photos; // by the photo's TOC entry
+        uint32_t g_photoNow = 0, g_pageChunk = ~0u;          // the photo shown, the gallery page's chunk
+        bool g_photoTablesSet = false;
         constexpr uint32_t kMessageBox = 0x186FF8u, kStoryCardRa = 0x17E200u;
         Fn g_fontDraw = nullptr, g_fontMeasure = nullptr, g_fontColour = nullptr, g_tint = nullptr;
         std::unordered_map<uint32_t, Words> g_words;       // a text's address in the executable -> the theme's change
@@ -629,10 +649,81 @@ namespace vendetta_menus
             g_messageBox(rdram, ctx, runtime);
         }
 
+        // a photo's or thumbnail's quad: its picture drawn from the theme's file (laid out as the game's own, vendetta_pictures' Kind::Photo)
+        bool galleryQuad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, const uint8_t *qp, uint32_t ra)
+        {
+            if (!vendetta_pictures::available())
+                return false;
+            uint64_t tex0 = 0;
+            std::memcpy(&tex0, rdram + kTex0, 8);
+            const uint32_t tbp = uint32_t(tex0 & 0x3FFFu);
+            uint32_t toc = g_photoNow;
+            if (ra == kThumbQuadRa)
+            {
+                if (tbp < kThumbTbp || (tbp - kThumbTbp) % kThumbStep || (tbp - kThumbTbp) / kThumbStep >= 24u || g_pageChunk > 4u)
+                    return false;
+                toc = 5u + 24u * g_pageChunk + (tbp - kThumbTbp) / kThumbStep;
+            }
+            const auto it = g_photos.find(toc);
+            if (it == g_photos.end())
+                return false;
+            const uint32_t image = ra == kThumbQuadRa ? it->second.thumb : it->second.image;
+            if (!image)
+                return false;
+            if (!vendetta_pictures::bindNow(tbp, image))
+                return false;
+            if (g_log && !it->second.logged)
+            {
+                it->second.logged = true;
+                std::cerr << "[menus] gallery photo (TOC " << toc << ") drawn from " << it->second.theme << std::endl;
+            }
+            callThen(rdram, ctx, runtime, g_quad, [tbp](uint8_t *, R5900Context *) { vendetta_pictures::unbindNow(tbp); });
+            return true;
+        }
+
+        // the photo tables' "shown across" words, once, before Choose Photo reads them
+        void setPhotoTables(uint8_t *rdram)
+        {
+            if (g_photoTablesSet)
+                return;
+            g_photoTablesSet = true;
+            for (uint32_t i = 0; i < 120u; ++i)
+            {
+                uint32_t toc = 0;
+                std::memcpy(&toc, rdram + kPhotoTables + i * 8u, 4);
+                if (const auto it = g_photos.find(toc); it != g_photos.end() && it->second.shown >= 0)
+                {
+                    const uint32_t across = uint32_t(it->second.shown);
+                    std::memcpy(rdram + kPhotoTables + i * 8u + 4u, &across, 4);
+                }
+            }
+        }
+
+        void photoLoad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            setPhotoTables(rdram);
+            g_photoNow = getRegU32(ctx, 5);
+            if (const auto it = g_photos.find(g_photoNow); it != g_photos.end() && it->second.image)
+                vendetta_pictures::want(it->second.image);
+            g_photoLoad(rdram, ctx, runtime);
+        }
+
+        void pageLoad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            setPhotoTables(rdram);
+            g_pageChunk = getRegU32(ctx, 5);
+            for (uint32_t slot = 0; slot < 24u && g_pageChunk <= 4u; ++slot)
+                if (const auto it = g_photos.find(5u + 24u * g_pageChunk + slot); it != g_photos.end() && it->second.thumb)
+                    vendetta_pictures::want(it->second.thumb);
+            g_pageLoad(rdram, ctx, runtime);
+        }
+
         void quad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t q = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
             const uint8_t *qp = rdram + (q & PS2_RAM_MASK);
+            if ((ra == kPhotoQuadRa || ra == kThumbQuadRa) && !g_photos.empty() && galleryQuad(rdram, ctx, runtime, qp, ra))
+                return;
             uint32_t textured = 0;
             std::memcpy(&textured, qp + 4, 4);
             // the banner font's letters: their UVs are already our sheet's (the table rewritten), the sheet bound for them
@@ -1239,6 +1330,73 @@ namespace vendetta_menus
             }
         }
 
+        // A gallery's picture from a theme: its id, or 0 (a line in mods.log) when its file can't be read.
+        uint32_t galleryImage(const vendetta_mods::Mod &mod, const std::string &folder, const vendetta_mods::Json *name, int photo)
+        {
+            if (!name || !name->isString())
+                return 0u;
+            const std::string within = folder.empty() ? name->text : folder + "/" + name->text;
+            const std::filesystem::path path = vendetta_mods::modFile(mod, within, "gallery picture");
+            if (path.empty())
+                return 0u;
+            uint32_t w = 0, h = 0;
+            vendetta_pictures::fileSize(path, w, h);
+            if (!w || !h)
+            {
+                vendetta_mods::problem() << "[menus] " << mod.name << ": " << within << " can't be read as a picture" << std::endl;
+                return 0u;
+            }
+            if (photo >= 0)
+                return vendetta_pictures::add(path, 512u, 1024u, 4u, photo ? vendetta_pictures::Kind::PhotoAcross : vendetta_pictures::Kind::Photo);
+            while (w > 4096u || h > 4096u)
+                w = std::max(1u, w / 2u), h = std::max(1u, h / 2u);
+            return vendetta_pictures::add(path, w, h, 1u);
+        }
+
+        // menus/galleries.json: { "deja": { "1": { "picture", "shown": "upright" | "across", "thumbnail" }, ... }, ... }, the slots 1 to 24
+        void readGalleries(const vendetta_mods::Mod &mod, const std::string &relative)
+        {
+            static const char *const girls[5] = {"deja", "tai", "opal", "penny", "angel"};
+            static const uint32_t chunks[5] = {1u, 2u, 3u, 4u, 0u}; // the gallery pages' thumbnail chunks (0x2402D8)
+            const std::filesystem::path file = vendetta_mods::modFile(mod, relative, "menu theme file");
+            if (file.empty())
+                return;
+            std::string text, error;
+            vendetta_mods::Json json;
+            if (!readText(file, text) || !vendetta_mods::parseJson(text, json, error))
+            {
+                vendetta_mods::problem() << "[menus] " << mod.name << ": " << relative << " can't be read: " << error << std::endl;
+                return;
+            }
+            const std::string folder = std::filesystem::path(relative).parent_path().generic_string();
+            for (uint32_t g = 0; g < 5u; ++g)
+            {
+                const vendetta_mods::Json *girl = json.find(girls[g]);
+                if (!girl || !girl->isObject())
+                    continue;
+                for (const auto &[number, entry] : girl->members)
+                {
+                    const int slot = std::atoi(number.c_str());
+                    if (slot < 1 || slot > 24 || !entry.isObject())
+                    {
+                        vendetta_mods::problem() << "[menus] " << mod.name << ": " << relative << ": " << girls[g] << " has no photo \"" << number << "\" (1 to 24)" << std::endl;
+                        continue;
+                    }
+                    GalleryPhoto &p = g_photos[5u + 24u * chunks[g] + uint32_t(slot - 1)];
+                    p.theme = mod.name; // the later theme's wins, what it gives
+                    const vendetta_mods::Json *shown = entry.find("shown");
+                    const int across = shown && shown->isString() && shown->text == "across" ? 1 : 0; // a picture is as it is shown: upright unless it says across
+                    if (const uint32_t id = galleryImage(mod, folder, entry.find("picture"), across))
+                    {
+                        p.image = id;
+                        p.shown = across;
+                    }
+                    if (const uint32_t id = galleryImage(mod, folder, entry.find("thumbnail"), -1))
+                        p.thumb = id;
+                }
+            }
+        }
+
         void readThemes()
         {
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
@@ -1259,6 +1417,8 @@ namespace vendetta_menus
                     for (const auto &[screen, file] : screens->members)
                         if (file.isString())
                             readPieces(mod, file.text, screen);
+                if (const vendetta_mods::Json *galleries = menus->find("galleries"); galleries && galleries->isString())
+                    readGalleries(mod, galleries->text);
             }
         }
 
@@ -1303,9 +1463,9 @@ namespace vendetta_menus
         const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || !g_fontFile[0].empty() || !g_fontFile[1].empty();
         if (g_storyCardPlain)
             hook(runtime, kMessageBox, g_messageBox, messageBox);
-        if (g_changes.empty() && !words && g_fontFile[2].empty())
+        if (g_changes.empty() && !words && g_fontFile[2].empty() && g_photos.empty())
             return; // no menu theme: nothing hooked, the game's menus untouched
-        if ((!g_changes.empty() || !g_fontFile[2].empty()) &&
+        if ((!g_changes.empty() || !g_fontFile[2].empty() || !g_photos.empty()) &&
             (g_scratch = vendetta_store::allocate(vendetta_store::Area::Boot, 0x100u, "menu themes: a changed quad")) != 0u)
         {
             // last among the picture hooks, so these see the game's own arguments (the wrestlers' and arenas' hooks run inside)
@@ -1315,6 +1475,11 @@ namespace vendetta_menus
             hook(runtime, kQuad, g_quad, quad);
             if (g_wideBackdrop)
                 hook(runtime, kSongBox, g_songBox, songBox);
+            if (!g_photos.empty())
+            {
+                hook(runtime, kPhotoLoad, g_photoLoad, photoLoad);
+                hook(runtime, kPageLoad, g_pageLoad, pageLoad);
+            }
         }
         if (words)
         {
@@ -1327,7 +1492,8 @@ namespace vendetta_menus
         else if (g_wideBackdrop)
             hook(runtime, kFontDraw, g_fontDraw, fontDraw); // the song box's words, at the frame's far left
         std::cerr << "[menus] the project's menu themes change " << g_changes.size() << " pictures, " << g_words.size() + g_builtWords.size()
-                  << " words" << (g_highlightOn ? ", the highlight colour" : "") << (g_fontFile[2].empty() ? "" : ", the banner font") << std::endl;
+                  << " words" << (g_highlightOn ? ", the highlight colour" : "") << (g_fontFile[2].empty() ? "" : ", the banner font")
+                  << (g_photos.empty() ? "" : ", " + std::to_string(g_photos.size()) + " gallery photos") << std::endl;
     }
 }
 
