@@ -100,7 +100,9 @@ namespace vendetta_menus
         };
 
         PS2Runtime *g_runtime = nullptr;
-        Fn g_quad = nullptr, g_prm = nullptr, g_art = nullptr, g_texSet = nullptr, g_songBox = nullptr;
+        Fn g_quad = nullptr, g_prm = nullptr, g_art = nullptr, g_texSet = nullptr, g_songBox = nullptr, g_messageBox = nullptr;
+        bool g_storyCardPlain = false; // shared.json "story card": "none"
+        constexpr uint32_t kMessageBox = 0x186FF8u, kStoryCardRa = 0x17E200u;
         Fn g_fontDraw = nullptr, g_fontMeasure = nullptr, g_fontColour = nullptr, g_tint = nullptr;
         std::unordered_map<uint32_t, Words> g_words;       // a text's address in the executable -> the theme's change
         std::unordered_map<uint32_t, Words> g_builtWords;  // words built at run time: by the draw's return address
@@ -247,16 +249,25 @@ namespace vendetta_menus
             auto range = g_byKey.equal_range(k);
             if (range.first == range.second) // a bar: its row, any width from its left edge
                 range = g_bars.equal_range(key(g_srcKind, g_srcA, g_srcB, int(u0 + 0.5f), int(v0 + 0.5f), 0, int(v1 + 0.5f)));
-            int first = -1;
+            // the same picture listed under several names (drawn from several places) is one picture: the one a theme changed
+            int first = -1, changed = -1, here = -1;
             for (auto it = range.first; it != range.second; ++it)
             {
                 const MenuPiece &p = kMenuPieces[it->second];
                 if (first < 0)
                     first = int(it->second);
-                for (uint32_t i = 0; i < p.raCount; ++i)
+                if (changed < 0 && g_changes.count(it->second))
+                    changed = int(it->second);
+                for (uint32_t i = 0; here < 0 && i < p.raCount; ++i)
                     if (kMenuPieceRas[p.firstRa + i] == ra)
-                        return int(it->second);
+                        here = int(it->second);
             }
+            if (here >= 0 && g_changes.count(uint32_t(here)))
+                return here;
+            if (changed >= 0)
+                return changed;
+            if (here >= 0)
+                return here;
             if (first < 0 && g_log && g_gapsSaid.insert(k ^ (uint64_t(ra) << 1)).second)
                 std::cerr << "[menus] a picture no catalogue piece names: source " << g_srcKind << " " << g_srcA << "/" << g_srcB
                           << " uv " << int(u0 + 0.5f) << "," << int(v0 + 0.5f) << "-" << int(u1 + 0.5f) << "," << int(v1 + 0.5f)
@@ -606,6 +617,18 @@ namespace vendetta_menus
                       << (lacks.empty() ? std::string() : "; the game's own for the ones it lacks: " + lacks) << std::endl;
         }
 
+        // The message box: the story's message card is tinted green by its caller (0x17E1F8; shared.json "story card": "none" leaves it white).
+        void messageBox(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (getRegU32(ctx, 31) == kStoryCardRa)
+            {
+                uint8_t *box = rdram + (getRegU32(ctx, 5) & PS2_RAM_MASK);
+                for (int k = 0; k < 3; ++k)
+                    writeFloat(box + 0x10 + 4 * k, 1.0f);
+            }
+            g_messageBox(rdram, ctx, runtime);
+        }
+
         void quad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t q = getRegU32(ctx, 5), ra = getRegU32(ctx, 31);
@@ -922,6 +945,13 @@ namespace vendetta_menus
             g_lastAlpha = alpha;
         }
 
+        // the Main Menu's Help box title: the Quit item keeps a copy of the game's "Help" (0x295850) at 0x020000E0, a place
+        // that holds the Quit question's title at other times
+        uint32_t themedText(uint8_t *rdram, uint32_t text)
+        {
+            return text == 0x020000E0u && std::memcmp(rdram + (text & PS2_RAM_MASK), "Help", 5) == 0 ? 0x295850u : text;
+        }
+
         Words *wordsFor(uint32_t text, uint32_t ra, uint32_t &key)
         {
             if (const auto it = g_words.find(text); it != g_words.end())
@@ -945,7 +975,7 @@ namespace vendetta_menus
                 SET_GPR_U32(ctx, 5, getRegU32(ctx, 5) + uint32_t(kPinLeftPixels * 16.0f));
             const uint32_t text = getRegU32(ctx, 7), ra = getRegU32(ctx, 31);
             uint32_t key = 0;
-            Words *w = wordsFor(text, ra, key);
+            Words *w = wordsFor(themedText(rdram, text), ra, key);
             if (!w)
             {
                 g_fontDraw(rdram, ctx, runtime);
@@ -987,7 +1017,7 @@ namespace vendetta_menus
             if (!g_fontsBuilt && (!g_fontFile[0].empty() || !g_fontFile[1].empty()))
                 buildFonts(rdram, runtime);
             const uint32_t text = getRegU32(ctx, 5);
-            if (const auto it = g_words.find(text); it != g_words.end() && usable(rdram, it->second, text))
+            if (const auto it = g_words.find(themedText(rdram, text)); it != g_words.end() && usable(rdram, it->second, text))
                 SET_GPR_U32(ctx, 5, it->second.buffer); // measured as drawn: the game's centring follows the new words
             g_fontMeasure(rdram, ctx, runtime);
         }
@@ -1115,6 +1145,8 @@ namespace vendetta_menus
                 vendetta_mods::problem() << "[menus] " << mod.name << ": " << relative << " can't be read: " << error << std::endl;
                 return;
             }
+            if (const vendetta_mods::Json *card = json.find("story card"); screen.empty() && card && card->isString() && card->text == "none")
+                g_storyCardPlain = true;
             if (screen.empty() && readColour(json.find("highlight"), g_highlight))
                 g_highlightOn = true; // the theme's highlight: every yellow the game uses for it (the later theme's wins)
             if (const vendetta_mods::Json *fonts = json.find("fonts"); screen.empty() && fonts && fonts->isObject())
@@ -1269,6 +1301,8 @@ namespace vendetta_menus
                 std::cerr << "[menus] " << c->second.theme << "'s backdrop is 16:9: menu screens shown wide, the menus in the 4:3 middle" << std::endl;
         }
         const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || !g_fontFile[0].empty() || !g_fontFile[1].empty();
+        if (g_storyCardPlain)
+            hook(runtime, kMessageBox, g_messageBox, messageBox);
         if (g_changes.empty() && !words && g_fontFile[2].empty())
             return; // no menu theme: nothing hooked, the game's menus untouched
         if ((!g_changes.empty() || !g_fontFile[2].empty()) &&
