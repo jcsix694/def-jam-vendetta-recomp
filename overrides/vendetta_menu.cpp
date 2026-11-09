@@ -9,7 +9,7 @@
 //   0x02000080  the title picture ids: 8 x s32, the game's 7 from 0x23AF40 + Quit's
 //   0x020000C0  the help box: 3 lines of {s32 button, text pointer} (the game's from 0x27D4F8), +0x18 how many,
 //   0x020000E0  and its title (the game's "Help" from 0x295850)
-//   0x02000100  Quit's texts
+//   0x02000100  Quit's texts: a menu theme names them by these addresses (config/menu_pieces.csv), so they stay in this order
 //
 // The menu's state: +0xC the selected item, +0x60 the menu's phase (2 = taking input), +0xC4 the buttons held (0x8000
 // square), +0xC8 the buttons pressed (0x4000 cross, 0x1000 triangle), +0xCC the left / right repeats, +0x8B4 busy,
