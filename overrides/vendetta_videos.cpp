@@ -839,6 +839,9 @@ namespace vendetta_videos
 
 void installVendettaVideos(PS2Runtime &runtime) { vendetta_videos::install(runtime); }
 
+// The videos' sound, for the music themes' mixer (the game's output has one mixer).
+void vendettaVideoMix(int16_t *out, size_t count, size_t queued) { vendetta_videos::mix(out, count, queued); }
+
 // One of our videos made a picture in the last second (the freeze watch: the game's frame counter stands still meanwhile).
 bool vendettaVideoPlaying()
 {

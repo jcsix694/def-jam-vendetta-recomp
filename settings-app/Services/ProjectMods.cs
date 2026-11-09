@@ -209,7 +209,7 @@ public static class ProjectMods
             Category = CategoryOf(json, wrestlers.Count),
             Needs = Strings(json["needs"]),
             Contents = ContentsOf(wrestlers.Count, moves.Count, animations.Count, (replace?["animations"] as JsonObject)?.Count ?? 0, changes.Count,
-                                  arenas.Count + newArenas.Count, json["menus"] is JsonObject, json["videos"] is JsonObject),
+                                  arenas.Count + newArenas.Count, json["menus"] is JsonObject, json["videos"] is JsonObject, json["music"] is JsonObject),
             Wrestlers = wrestlers,
             Moves = moves,
             Animations = animations,
@@ -236,7 +236,7 @@ public static class ProjectMods
     }
 
     /// <summary>"category" as the mod gives it, else: wrestlers = Wrestlers, new moves = Moves, moveset changes only =
-    /// Movesets, animations only = Animations, a menu theme = Menus, a video theme = Videos, anything else = Other.</summary>
+    /// Movesets, animations only = Animations, a menu theme = Menus, a video theme = Videos, a music theme = Music, anything else = Other.</summary>
     private static string CategoryOf(JsonObject json, int wrestlers)
     {
         if (json["category"] is JsonValue v && v.TryGetValue<string>(out var given) && given.Trim().Length > 0)
@@ -258,10 +258,10 @@ public static class ProjectMods
             return "Animations";
         if (animations > 0)
             return "Movesets";
-        return json["menus"] is JsonObject ? "Menus" : json["videos"] is JsonObject ? "Videos" : "Other";
+        return json["menus"] is JsonObject ? "Menus" : json["videos"] is JsonObject ? "Videos" : json["music"] is JsonObject ? "Music" : "Other";
     }
 
-    private static string ContentsOf(int wrestlers, int moves, int animations, int replaced, int changes, int arenas, bool menus, bool videos)
+    private static string ContentsOf(int wrestlers, int moves, int animations, int replaced, int changes, int arenas, bool menus, bool videos, bool music)
     {
         static string Plural(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n} {many}";
         var parts = new List<string>();
@@ -269,6 +269,7 @@ public static class ProjectMods
         if (arenas > 0) parts.Add(Plural(arenas, "arena", "arenas"));
         if (menus) parts.Add("a menu theme");
         if (videos) parts.Add("a video theme");
+        if (music) parts.Add("a music theme");
         if (moves > 0) parts.Add(Plural(moves, "move", "moves"));
         if (animations > 0) parts.Add(Plural(animations, "animation", "animations"));
         if (replaced > 0) parts.Add(Plural(replaced, "game animation replaced", "game animations replaced"));
