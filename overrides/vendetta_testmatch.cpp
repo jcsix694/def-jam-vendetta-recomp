@@ -10,8 +10,9 @@
 //                   { "record": 9, "attire": 0, "control": "cpu", "level": 1 } ],
 //     "repeat": { "fighter": 1, "slot": 12 },
 //     "keep health": [ true, true ], "loop": true, "skip movies": true }
-// "match": "1-on-1" (two fighters) or "4-way" (four, all against all: the block as Battle's Free For All leaves it,
-// +0x10 = 1, +0x14 = +0x18 = 4, the pads 0 / 4 / 5 / 6).
+// "match": "1-on-1" (two fighters), "4-way" (four, all against all: the block as Battle's Free For All leaves it,
+// +0x10 = 1, +0x14 = +0x18 = 4, the pads 0 / 4 / 5 / 6) or "tag" (four, the first two a team against the last two: as
+// Tag Team leaves it, +0x10 = 2, the order +0x8C..+0x98 = 0 1 2 3; FUN_00140298 makes the match kind 2 from it).
 //
 // VENDETTA_TESTWIN=1 (a test, with or without the file, in any match, Story's included): while a match runs, every
 // human fighter (in the match, +0x5BC bit 1, and not the computer's, bit 0, when the fight starts) is played by the
@@ -101,7 +102,8 @@ namespace vendetta_testmatch
     struct Setup
     {
         std::array<Fighter, 4> fighters{};
-        int count = 2; // 2 (1-on-1) or 4 (4-way)
+        int count = 2; // 2 (1-on-1) or 4 (4-way, tag)
+        bool tag = false;
         int arena = 0;
         int repeatFighter = -1;
         int repeatSlot = -1;
@@ -188,10 +190,14 @@ namespace vendetta_testmatch
             return j && j->type == vendetta_mods::Json::Type::Bool ? j->boolean : fallback;
         };
         out.count = 2;
-        if (const auto *m = json.find("match"); m && m->isString() && m->text == "4-way")
+        out.tag = false;
+        if (const auto *m = json.find("match"); m && m->isString() && (m->text == "4-way" || m->text == "tag"))
+        {
             out.count = 4;
+            out.tag = m->text == "tag";
+        }
         else if (m && m->isString() && m->text != "1-on-1")
-            std::cerr << "[testmatch] \"match\" is \"1-on-1\" or \"4-way\": a 1-on-1" << std::endl;
+            std::cerr << "[testmatch] \"match\" is \"1-on-1\", \"4-way\" or \"tag\": a 1-on-1" << std::endl;
         out.arena = std::clamp(number(json.find("arena"), 0), 0, 0xFFFF); // checked against the stages when the match starts
         const auto *fighters = json.find("fighters");
         if (!fighters || !fighters->isArray() || fighters->items.size() != size_t(out.count))
@@ -272,7 +278,9 @@ namespace vendetta_testmatch
                 if (g_setup.fighters[p].control == Control::Cpu && (p == g_setup.repeatFighter || g_setup.repeatFighter < 0))
                     level = g_setup.fighters[p].level;
             }
-        Ps2FastWrite32(rdram, fe + 0x10, count == 4 ? 1u : 0u); // FREE FOR ALL / 1-ON-1 BATTLE
+        Ps2FastWrite32(rdram, fe + 0x10, g_setup.tag ? 2u : count == 4 ? 1u : 0u); // TAG TEAM / FREE FOR ALL / 1-ON-1 BATTLE
+        for (uint32_t p = 0; p < 4u; ++p)
+            Ps2FastWrite32(rdram, fe + 0x8Cu + 4u * p, p); // the order the match takes the four in (Tag Team's)
         Ps2FastWrite32(rdram, fe + 0x14, uint32_t(count));
         Ps2FastWrite32(rdram, fe + 0x18, uint32_t(count));
         Ps2FastWrite32(rdram, fe + 0x1C, 0u);
@@ -303,7 +311,7 @@ namespace vendetta_testmatch
         Ps2FastWrite32(rdram, fe + 0x08, 0x19u);
         Ps2FastWrite32(rdram, fe + 0x04, 0x19u);          // what Choose Stage leaves: the match setup next
         g_started = true;
-        std::cerr << "[testmatch] straight into the match (" << (count == 4 ? "4-way" : "1-on-1") << "): records";
+        std::cerr << "[testmatch] straight into the match (" << (g_setup.tag ? "tag" : count == 4 ? "4-way" : "1-on-1") << "): records";
         for (int p = 0; p < count; ++p)
             std::cerr << (p ? ", " : " ") << g_setup.fighters[p].record << " + " << g_setup.fighters[p].attire;
         std::cerr << ", stage " << g_setup.arena << ", computer bits " << cpuBits << ", level " << level << std::endl;

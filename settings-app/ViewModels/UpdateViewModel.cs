@@ -28,15 +28,16 @@ public partial class UpdateViewModel : ObservableObject
     private int _setupStep = -1;
     private double _setupProgress;
 
-    // the setup's 6 steps (tools\setup_game.py) within "Rebuilding the game": the disc is already read, the tools are
+    // the setup's 8 steps (tools\setup_game.py) within "Rebuilding the game": the disc is already read, the tools are
     // there, so the recompiler, the recompile and above all the game's build take the time
     // weights from a real update (0.1.0 to 0.1.1, 2026-10-12): the steps before ~0.5 min, turning the code into C++ and
-    // checking which files changed ~6.5 min, the build ~1 min (longer when more changed)
-    private static readonly double[] SetupWeights = { 0.01, 0.02, 0.04, 0.60, 0.31, 0.02 };
+    // checking which files changed ~6.5 min, the build ~1 min (longer when more changed); the graphics (a few seconds
+    // when the cache still fits), the new arenas (a copy) and the finish are short
+    private static readonly double[] SetupWeights = { 0.01, 0.02, 0.04, 0.58, 0.30, 0.03, 0.01, 0.01 };
     private static readonly string[] SetupParts =
     {
         "reading your disc", "the build tools", "the recompiler", "turning the game's code into C++ and checking what changed",
-        "building the game", "preparing graphics for your PC", "finishing",
+        "building the game", "preparing graphics for your PC", "adding the new arenas", "finishing",
     };
     private readonly Stopwatch _setupClock = new(); // since the rebuild's current part began
 

@@ -109,6 +109,8 @@ namespace vendetta_ring
         constexpr uint32_t kHookApronRunWay = kHookFirst + 168u; // jal from 0x114368, in place of jal FUN_0012f220
         constexpr uint32_t kStickCorner = 0x132D30u, kCornerAt = 0x12A5B8u, kRopeAhead = 0x12A698u;
         constexpr uint32_t kNearRope = 0x1144C0u;                // FUN_001144c0: already close to the rope a run would go to
+        constexpr uint32_t kDiveRunBack = 0x1167C0u;             // FUN_001167c0: a run into a dive brought back to 29 from the middle
+        constexpr uint32_t kDiveRunResume = 0x116948u;           // in it, after its jal FUN_0013e130: return 1
         constexpr uint32_t kRoundCorner = 0x113BF0u;             // FUN_00113bf0: state 3, round a corner on the apron
         // The computer's choices: its distances to the corners, the rope behind it, "beyond a corner"
         constexpr uint32_t kHookCpuCorner1 = kHookFirst + 176u;  // jal from 0x10BB88, in place of sll $v0, $v0, 2
@@ -120,6 +122,19 @@ namespace vendetta_ring
         constexpr uint32_t kHookCpuBeyond1 = kHookFirst + 200u;  // jal from 0x11299C, in place of lui $at, 0x420C
         constexpr uint32_t kHookCpuBeyond2 = kHookFirst + 204u;  // jal from 0x112B2C, the same
         constexpr uint32_t kHookOutsideCorner = kHookFirst + 208u; // jal from 0x1142B0, in place of addu $v0, $v0, $v1
+        // from here down from the top of the hook area (the cage's work takes the next ones up from 212)
+        constexpr uint32_t kHookTauntEye = kHookFirst + 600u;      // jal from 0x1055CC, in place of lwc1 $f1, 0x10($sp)
+        constexpr uint32_t kHookSameSide = kHookFirst + 596u;      // jal from the computer's nine "same side" tests (kSameSideSites)
+        constexpr uint32_t kHookAimStick = kHookFirst + 592u;      // jal from the computer's eleven sticks from 0x235C80 / 0x235C90
+        constexpr uint32_t kAimTable = 0x033F0000u;                // the sticks by band for this fighter (4 words), in the ring's store
+        constexpr uint32_t kHookLineUp = kHookFirst + 588u;        // jal from the dives' and Action 51's line-up (kLineUpSites)
+        constexpr uint32_t kHookLineUpGap = kHookFirst + 584u;     // jal from 0x1117D8 (Action 40), in place of mtc1 $zero, $f2
+        constexpr uint32_t kHookCpuApronWalk = kHookFirst + 580u;     // jal from 0x111BDC and 0x111C04 (Action 41's walk on the apron)
+        constexpr uint32_t kHookApronAngle = kHookFirst + 576u;    // jal from 0x111B5C (Action 41), in place of jal FUN_0012f220
+        constexpr uint32_t kHookTeamWalk = kHookFirst + 572u;      // jal from 0x10EE64 (Action 47), in place of movn $a0, $v1, $v0
+        constexpr uint32_t kHookRandomWalk = kHookFirst + 568u;    // jal from 0x10F228 (Action 49), in place of jal FUN_00131160
+        constexpr uint32_t kRandomBelow = 0x131160u;               // FUN_00131160(n): a whole number below n
+        constexpr uint32_t kHookHisRope = kHookFirst + 564u;       // jal from 0x108FFC (Action 45), in place of jal FUN_001100b0
         constexpr uint32_t kCpuSees = 0x10F5D0u, kRopeDistanceOf = 0x1100B0u, kAngleTo = 0x130578u;
         constexpr uint32_t kCpuCornerExtra = 0x033D0A00u;        // 4 computer records x 12 corners past the fourth
         constexpr uint32_t kCornerReach = 0x294A04u;             // FUN_0012a5b8's four distances, by its second argument
@@ -139,8 +154,8 @@ namespace vendetta_ring
         PS2Runtime::RecompiledFunction g_linkWallLists = nullptr, g_nearestSide = nullptr, g_ringDraw = nullptr, g_pullRope = nullptr,
                                        g_ropeSpring = nullptr, g_clearRopes = nullptr, g_ropeWindows = nullptr, g_startMove = nullptr, g_whipDirection = nullptr, g_turnTo = nullptr, g_moveBy = nullptr,
                                        g_apronStick = nullptr, g_angleApart = nullptr, g_stickCorner = nullptr, g_cornerAt = nullptr,
-                                       g_ropeAhead = nullptr, g_nearRope = nullptr, g_roundCorner = nullptr, g_cpuSees = nullptr,
-                                       g_ropeDistanceOf = nullptr, g_angleTo = nullptr;
+                                       g_ropeAhead = nullptr, g_nearRope = nullptr, g_diveRunBack = nullptr, g_roundCorner = nullptr, g_cpuSees = nullptr,
+                                       g_ropeDistanceOf = nullptr, g_angleTo = nullptr, g_randomBelow = nullptr;
 
         // The tables the fight reads the ring's corners from, moved to the store's fixed area where they can hold more
         // entries (config/patches.toml moves the reads; each copy keeps its original's low 16 bits).
@@ -203,7 +218,8 @@ namespace vendetta_ring
         uint32_t g_apronLists[kMaxSides] = {}; // each apron side's walls, as the game has a list for each of its four
         uint8_t g_direction[4] = {0xFFu, 0xFFu, 0xFFu, 0xFFu}; // each player's rope direction, kept while near that rope
 
-        // VENDETTA_RINGTRACE=<file>: each wall search's fighter, its place, facing, state and ring numbers, for comparing runs
+        // VENDETTA_RINGTRACE=<file>: each wall search's fighter, its place, facing, step (+0x44), ring numbers (+0x414 to
+        // +0x420) and state (+0x40), for comparing runs
         std::ofstream g_trace;
         uint64_t g_traced = 0;
         constexpr uint64_t kTraceLines = 40000u;
@@ -457,7 +473,10 @@ namespace vendetta_ring
                         -g_sideNormal[k][1], g_sideBand[k] + 1, 0x20 | stickBit(g_sideBand[k]), 0x1A);
             link(g_ropes, g_sides);
             // each apron side a strip as the square's: the ring's side (more 4), its outer edge (2), and a wall at each end (0)
-            // where the ring's side ends, so a wrestler on it stops there; four walls a side, in a list of their own
+            // where the ring's side ends, so a wrestler on it stops there; four walls a side, in a list of their own. An end
+            // wall's bit is the old number of the side round that corner (on the square also the way the end lies): a slanted
+            // side's ends lie exactly between two old numbers, and FUN_0013c4d8 (a tag team kept to its half of the apron)
+            // reads the bit for the corner between the halves
             g_apron = at;
             const float width = r.apronOuter - r.apronInner;
             for (int k = 0; k < g_sides; ++k)
@@ -466,7 +485,7 @@ namespace vendetta_ring
                 const Vec a = corner(k, r.apronInner), b = corner(k + 1, r.apronInner);
                 const Vec aOut = {a.x + nx * width, 0.0f, a.z + nz * width}, bOut = {b.x + nx * width, 0.0f, b.z + nz * width};
                 const int back = (g_sideBand[k] + 2) & 3, number = 10 + 4 * k;
-                const int towardA = bandOfAngle(std::atan2(-tx, -tz) * 180.0f / kPi), towardB = bandOfAngle(std::atan2(tx, tz) * 180.0f / kPi);
+                const int towardA = g_sideBand[(k + g_sides - 1) % g_sides], towardB = g_sideBand[(k + 1) % g_sides];
                 putWall(rdram, at, a, b, top, r.matHeight, nx, nz, number, 0x40 | stickBit(back), 4);
                 at += kRecordBytes;
                 putWall(rdram, at, aOut, bOut, top, r.matHeight, -nx, -nz, number + 1, 0x40 | stickBit(g_sideBand[k]), 2);
@@ -475,6 +494,10 @@ namespace vendetta_ring
                 at += kRecordBytes;
                 putWall(rdram, at, b, bOut, top, r.matHeight, -tx, -tz, number + 3, 0x40 | stickBit(towardB), 0);
                 at += kRecordBytes;
+                if (g_log)
+                    std::cerr << "[ring] the apron of side " << k << " (old number " << g_sideBand[k] << "): its ends' bits "
+                              << stickBit(towardA) << " (corner " << k << ") and " << stickBit(towardB) << " (corner "
+                              << (k + 1) % g_sides << ")" << std::endl;
                 link(at - 4u * kRecordBytes, 4);
             }
             g_outer = at;
@@ -656,12 +679,12 @@ namespace vendetta_ring
             if (!g_trace.is_open() || g_traced >= kTraceLines)
                 return;
             char line[160];
-            std::snprintf(line, sizeof(line), "%08x %08x %08x %08x %08x %08x %08x %u %u %u\n", fighter,
+            std::snprintf(line, sizeof(line), "%08x %08x %08x %08x %08x %08x %08x %u %u %u %u\n", fighter,
                           Ps2FastRead32(rdram, fighter + 0xCCu), Ps2FastRead32(rdram, fighter + 0xD0u),
                           Ps2FastRead32(rdram, fighter + 0xD4u), Ps2FastRead32(rdram, fighter + 0xDCu),
                           Ps2FastRead32(rdram, fighter + 0x44u), Ps2FastRead32(rdram, fighter + 0x414u),
                           Ps2FastRead32(rdram, fighter + 0x418u), Ps2FastRead32(rdram, fighter + 0x41Cu),
-                          Ps2FastRead32(rdram, fighter + 0x420u));
+                          Ps2FastRead32(rdram, fighter + 0x420u), Ps2FastRead32(rdram, fighter + 0x40u));
             g_trace << line;
             if (++g_traced % 256u == 0u || g_traced == kTraceLines)
                 g_trace.flush();
@@ -1687,6 +1710,361 @@ namespace vendetta_ring
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        // 0x1055CC: lwc1 $f1, 0x10($sp) in FUN_00105460 case 5 (the Blazin' taunt's close-up, the taunter on the floor outside):
+        // the eye at $sp + 0x10 (x) / + 0x18 (z) is tested against the ring's outer side (the square's +-41) and the outside wall
+        // (+-77); inside the ring's body or past the wall, the pitch becomes -30. On the ring the body is its own shape (each
+        // side's outer side at "ring side" out): the game's test is given values that give the ring's answer (0, 0: inside;
+        // 50, 50: neither), the eye not being read after it.
+        void tauntEye(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t sp = getRegU32(ctx, 29);
+            float x = readFloat(rdram, sp + 0x10u);
+            if (g_active)
+            {
+                const float z = readFloat(rdram, sp + 0x18u);
+                float out = -1e9f;
+                for (int k = 0; k < g_sides; ++k)
+                    out = std::max(out, g_sideNormal[k][0] * x + g_sideNormal[k][1] * z);
+                const bool lifted = out < g_ring.ringSide || std::fabs(x) > g_ring.outsideWall || std::fabs(z) > g_ring.outsideWall;
+                if (g_log)
+                    std::cerr << "[ring] the Blazin' taunt's close-up outside: eye " << x << ", " << z << " (" << out << " out): "
+                              << (lifted ? "lifted to -30" : "its own pitch") << std::endl;
+                x = lifted ? 0.0f : 50.0f;
+                Ps2FastWrite32(rdram, sp + 0x18u, std::bit_cast<uint32_t>(x));
+            }
+            ctx->f[1] = x;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // The computer's "same side" tests: two fighters' +0x41C (the side band of the hips) loaded and compared. On the
+        // ring a band boundary is a corner, so one side never has two bands, but two sides can share one (on the hexagon
+        // the slanted pairs): there the game would take neighbours for the same side. A hook in place of the first load
+        // (its delay slot the other load or a plain instruction) does the load and, when the bands are equal but the sides
+        // the hips are on are not, gives the band with its low bit changed (still 0-3; the register is written or the
+        // routine returns before it is read as a band again, checked for each: same_side_uses.py). The routine's own
+        // return address is put back from its prologue's save (each routine calls on after, so ra was its saved one).
+        struct SameSideSite
+        {
+            uint32_t back;   // the patched load's address + 8
+            int dst, a, b;   // the load's register and base (fighter a), the other fighter's register
+            uint32_t raSlot; // the routine's sd $ra offset
+            const char *what;
+        };
+        const SameSideSite kSameSideSites[] = {
+            {0x10A18Cu, 4, 16, 2, 0x20u, "both on the apron (FUN_0010a158)"},
+            {0x10A41Cu, 3, 18, 16, 0x30u, "outside against in or on the apron (FUN_0010a360)"},
+            {0x10A638u, 3, 16, 6, 0x20u, "getting back in (FUN_0010a5d8)"},
+            {0x10A85Cu, 4, 16, 2, 0x20u, "the far taunt (FUN_0010a7e8)"},
+            {0x10A910u, 3, 18, 17, 0x30u, "he is in Blazin' (FUN_0010a8b0)"},
+            {0x11054Cu, 3, 17, 4, 0x30u, "tag, the other team's second (FUN_00110498)"},
+            {0x1105B8u, 3, 16, 17, 0x30u, "tag, the other team's second (FUN_00110498)"},
+            {0x10BEE4u, 2, 3, 16, 0x70u, "the waiting tag partner (FUN_0010be58)"},
+            {0x11100Cu, 2, 18, 16, 0x40u, "handicap (FUN_00110eb8)"},
+        };
+        int g_sameSideTold = 0;
+
+        void sameSide(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t back = getRegU32(ctx, 31), sp = getRegU32(ctx, 29);
+            for (const SameSideSite &s : kSameSideSites)
+            {
+                if (s.back != back)
+                    continue;
+                const uint32_t a = getRegU32(ctx, s.a), band = Ps2FastRead32(rdram, a + 0x41Cu);
+                uint32_t value = band;
+                if (g_active)
+                {
+                    const uint32_t b = getRegU32(ctx, s.b);
+                    if (b != 0u && b < 0x02000000u && Ps2FastRead32(rdram, b + 0x41Cu) == band)
+                    {
+                        const int sideA = sideOf(readFloat(rdram, a + kHipsX), readFloat(rdram, a + kHipsZ));
+                        const int sideB = sideOf(readFloat(rdram, b + kHipsX), readFloat(rdram, b + kHipsZ));
+                        if (sideA != sideB)
+                        {
+                            value = band ^ 1u;
+                            if (g_log && g_sameSideTold < 40)
+                            {
+                                ++g_sameSideTold;
+                                std::cerr << "[ring] same side? " << s.what << ": band " << band << " for both, but sides " << sideA
+                                          << " and " << sideB << ": not the same" << std::endl;
+                            }
+                        }
+                    }
+                }
+                SET_GPR_U32(ctx, s.dst, value);
+                SET_GPR_U32(ctx, 31, Ps2FastRead32(rdram, sp + s.raSlot));
+                ctx->pc = back;
+                return;
+            }
+            ctx->pc = back; // not one of ours: nothing to do (never: the patches are only these)
+        }
+
+        // The computer's sticks from the four directions: 0x235C80[band] the stick toward a band's side (out: 1 = 180, 2 = 90,
+        // 4 = 0, 8 = -90 degrees, as 0x235C20), 0x235C90 away from it. On a slanted side the band's one bit is 30 degrees off;
+        // the nearest of the stick's eight (FUN_00132cc8's bits: 1, 3, 2, 6, 4, 12, 8, 9 for 180, 135, 90, 45, 0, -45, -90,
+        // -135, 0x235C60) is 15. Where the computer is given one (a store of the entry into its pad; the tests of a held stick
+        // against them are left as they are) a hook in place of the instruction forming the table's address (or the sll before
+        // it, where that instruction's delay slot reads it) points the base at kAimTable, filled for the fighter whose band it
+        // is: each band's real side nearest that fighter's hips, its stick toward (or away). ra put back from the prologue's save.
+        struct AimSite
+        {
+            uint32_t back;      // the patched instruction's address + 8
+            int base, fighter;  // the table base's register, the fighter whose band indexes it
+            bool away, shift;   // 0x235C90 (else 0x235C80); the patched one is sll $v1, $v1, 2 (emulated), else the addiu
+            uint32_t raSlot;
+            const char *what;
+        };
+        const AimSite kAimSites[] = {
+            {0x109324u, 4, 5, false, false, 0x00u, "step off the apron (Action 54)"},
+            {0x10E4E8u, 2, 4, false, true, 0x10u, "walk toward him outside (Action 2)"},
+            {0x10EA80u, 3, 7, false, false, 0x10u, "run round the ring (Action 6)"},
+            {0x1116D4u, 6, 17, false, false, 0x30u, "run to the ropes behind (Action 40)"},
+            {0x111A20u, 2, 18, false, false, 0x40u, "the apron move (Action 41)"},
+            {0x111B00u, 3, 18, false, false, 0x40u, "the apron move (Action 41)"},
+            {0x111C64u, 4, 17, true, false, 0x40u, "the apron move (Action 41)"},
+            {0x111ED8u, 3, 19, true, false, 0x50u, "the dives (Actions 42-44)"},
+            {0x111F4Cu, 4, 19, false, false, 0x50u, "the dives (Actions 42-44)"},
+            {0x111F74u, 2, 19, false, false, 0x50u, "the dives (Actions 42-44)"},
+            {0x112288u, 3, 18, false, false, 0x30u, "at the ropes toward him (Action 51)"},
+        };
+        int g_aimTold = 0;
+        int sideForBand(uint32_t band, float x, float z); // below, with the computer's choices
+
+        uint32_t stickToward(float degrees)
+        {
+            static constexpr uint32_t kBits[8] = {1u, 3u, 2u, 6u, 4u, 12u, 8u, 9u}; // 180, 135, 90, 45, 0, -45, -90, -135
+            const float a = wrapDegrees(180.0f - degrees);                          // 0 at 180, up by 45 a direction
+            const int dir = static_cast<int>(std::floor((a < 0.0f ? a + 360.0f : a) / 45.0f + 0.5f)) % 8;
+            return kBits[dir];
+        }
+
+        void aimStick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t back = getRegU32(ctx, 31), sp = getRegU32(ctx, 29);
+            for (const AimSite &s : kAimSites)
+            {
+                if (s.back != back)
+                    continue;
+                if (s.shift)
+                    SET_GPR_U32(ctx, 3, getRegU32(ctx, 3) << 2u); // sll $v1, $v1, 2
+                const uint32_t table = s.away ? 0x235C90u : 0x235C80u;
+                uint32_t base = table;
+                if (g_active)
+                {
+                    const uint32_t fighter = getRegU32(ctx, s.fighter);
+                    const float x = readFloat(rdram, fighter + kHipsX), z = readFloat(rdram, fighter + kHipsZ);
+                    for (uint32_t band = 0; band < 4u; ++band)
+                    {
+                        const int side = sideForBand(band, x, z);
+                        const uint32_t bits = stickToward(outAngle(side) + (s.away ? 180.0f : 0.0f));
+                        Ps2FastWrite32(rdram, kAimTable + band * 4u, bits);
+                        if (g_log && g_aimTold < 24 && Ps2FastRead32(rdram, table + band * 4u) != bits)
+                        {
+                            ++g_aimTold;
+                            std::cerr << "[ring] the computer's stick, " << s.what << ": band " << band << " is side " << side
+                                      << ": " << bits << " in place of " << Ps2FastRead32(rdram, table + band * 4u) << std::endl;
+                        }
+                    }
+                    base = kAimTable;
+                }
+                SET_GPR_U32(ctx, s.base, base);
+                SET_GPR_U32(ctx, 31, Ps2FastRead32(rdram, sp + s.raSlot));
+                ctx->pc = back;
+                return;
+            }
+            ctx->pc = back;
+        }
+
+        // ------------------------------------------------------------------ lining up along the rope
+
+        // Before a move over a rope the computer lines up with the opponent along it: the game measures x (its sides 0 / 2)
+        // or z (1 / 3) and walks by the stick's straight bits (2 / 8 or 4 / 1); on a slanted side both are 30 degrees off the
+        // rope. On the ring: the gap along the real side's rope (its tangent signed toward +x or +z, as the game's own axis
+        // is), the walk the nearest of the stick's eight to the rope's way.
+        void ropeLine(int side, float &tx, float &tz)
+        {
+            tx = g_sideTangent[side][0];
+            tz = g_sideTangent[side][1];
+            if (std::fabs(tx) >= std::fabs(tz) ? tx < 0.0f : tz < 0.0f)
+            {
+                tx = -tx;
+                tz = -tz;
+            }
+        }
+
+        float headingOf(float x, float z) { return std::atan2(x, z) * 180.0f / kPi; }
+
+        // the gap along the rope of `owner`'s band (its real side nearest the owner), from `him` to the point (x, z)
+        float gapAlong(uint8_t *rdram, uint32_t owner, uint32_t band, float x, float z, uint32_t him, float &tx, float &tz)
+        {
+            const int side = sideForBand(band & 3u, readFloat(rdram, owner + kHipsX), readFloat(rdram, owner + kHipsZ));
+            ropeLine(side, tx, tz);
+            return (x - readFloat(rdram, him + kHipsX)) * tx + (z - readFloat(rdram, him + kHipsZ)) * tz;
+        }
+
+        int g_lineUpTold = 0;
+
+        void tellLineUp(const char *what, float gap, uint32_t stick)
+        {
+            if (g_log && g_lineUpTold < 40)
+            {
+                ++g_lineUpTold;
+                std::cerr << "[ring] the computer lines up along the rope, " << what << ": " << gap << " along it, "
+                          << (stick ? "the stick " + std::to_string(stick) : std::string("lined up")) << std::endl;
+            }
+        }
+
+        // FUN_00111cb0 (the dives, step 0, he outside) and FUN_00112030 (Action 51, step 1): the two ways (x, z) begin with
+        // lwc1 $f1, place($me); a hook in place of each: on the ring the whole step (lined up within `gap`: the step number
+        // + 1; else the stick along the rope toward him) and on to the routine's end; off it the load, and on.
+        struct LineUpSite
+        {
+            uint32_t back, place;     // the head's address + 8; its own load's field (0x15C x, 0x164 z)
+            int me, him, pad, count;  // registers: me, him, the computer's record, the step number read at the start
+            bool byHim;               // the rope his band's (else mine)
+            float gap;
+            uint32_t done, raSlot;
+            const char *what;
+        };
+        const LineUpSite kLineUpSites[] = {
+            {0x111D88u, 0x15Cu, 18, 19, 17, 6, true, 5.0f, 0x11200Cu, 0x50u, "the dives"},
+            {0x111DE8u, 0x164u, 18, 19, 17, 6, true, 5.0f, 0x11200Cu, 0x50u, "the dives"},
+            {0x112188u, 0x15Cu, 17, 18, 16, 5, false, 4.0f, 0x1122ACu, 0x30u, "Action 51"},
+            {0x1121E8u, 0x164u, 17, 18, 16, 5, false, 4.0f, 0x1122ACu, 0x30u, "Action 51"},
+        };
+
+        void lineUp(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t back = getRegU32(ctx, 31), sp = getRegU32(ctx, 29);
+            for (const LineUpSite &s : kLineUpSites)
+            {
+                if (s.back != back)
+                    continue;
+                const uint32_t me = getRegU32(ctx, s.me), him = getRegU32(ctx, s.him);
+                if (!g_active)
+                {
+                    ctx->f[1] = readFloat(rdram, me + s.place);
+                    SET_GPR_U32(ctx, 31, Ps2FastRead32(rdram, sp + s.raSlot));
+                    ctx->pc = back;
+                    return;
+                }
+                const uint32_t owner = s.byHim ? him : me, pad = getRegU32(ctx, s.pad);
+                float tx = 0.0f, tz = 1.0f;
+                const float gap = gapAlong(rdram, owner, Ps2FastRead32(rdram, owner + 0x41Cu), readFloat(rdram, me + kHipsX),
+                                           readFloat(rdram, me + kHipsZ), him, tx, tz);
+                uint32_t stick = 0u;
+                if (std::fabs(gap) < s.gap)
+                    Ps2FastWrite32(rdram, pad + 0x10u, getRegU32(ctx, s.count) + 1u);
+                else
+                {
+                    stick = stickToward(gap <= 0.0f ? headingOf(tx, tz) : headingOf(-tx, -tz));
+                    Ps2FastWrite32(rdram, pad + 0x1Cu, stick);
+                }
+                tellLineUp(s.what, gap, stick);
+                ctx->pc = s.done;
+                return;
+            }
+            ctx->pc = back;
+        }
+
+        // 0x1117D8 (FUN_00111660, Action 40, step 1: run to the ropes behind me, lined up with him within 5): mtc1 $zero, $f2,
+        // with the gap's sub.s run first as this jal's delay slot. On the ring the gap ($f0) along the rope of the record's
+        // band (+0xFC, the rope I run to) instead
+        void lineUpGap(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            ctx->f[2] = 0.0f;
+            if (g_active)
+            {
+                const uint32_t me = getRegU32(ctx, 17), him = getRegU32(ctx, 18);
+                float tx = 0.0f, tz = 1.0f;
+                ctx->f[0] = gapAlong(rdram, me, Ps2FastRead32(rdram, getRegU32(ctx, 16) + 0xFCu), readFloat(rdram, me + kHipsX),
+                                     readFloat(rdram, me + kHipsZ), him, tx, tz);
+                tellLineUp("Action 40", ctx->f[0], 0u);
+            }
+            SET_GPR_U32(ctx, 31, Ps2FastRead32(rdram, getRegU32(ctx, 29) + 0x30u));
+            ctx->pc = 0x1117E0u;
+        }
+
+        // FUN_00111910 (Action 41, step 3: I on the apron, he in the ring, not yet in line): the walk along the apron toward
+        // him, my +0xD4 against his z (stick 4 or 1) or my +0xCC against his x (2 or 8). The two ways begin at 0x111BDC
+        // (lwc1 $f1, 0xD4($s1)) and 0x111C04 (lwc1 $f0, 0x15C($s2), its delay slot the compare): a hook in place of each does
+        // the step (off the ring as the game: his < mine the stick 1 or 8, else 4 or 2) and on to the routine's end
+        void cpuApronWalk(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t back = getRegU32(ctx, 31), pad = getRegU32(ctx, 16), me = getRegU32(ctx, 17), him = getRegU32(ctx, 18);
+            const float x = readFloat(rdram, me + 0xCCu), z = readFloat(rdram, me + 0xD4u);
+            uint32_t stick;
+            if (!g_active)
+                stick = back == 0x111BE4u ? (readFloat(rdram, him + kHipsZ) < z ? 1u : 4u) : (readFloat(rdram, him + kHipsX) < x ? 8u : 2u);
+            else
+            {
+                float tx = 0.0f, tz = 1.0f;
+                const float gap = gapAlong(rdram, me, Ps2FastRead32(rdram, me + 0x41Cu), x, z, him, tx, tz);
+                stick = stickToward(gap <= 0.0f ? headingOf(tx, tz) : headingOf(-tx, -tz));
+                tellLineUp("Action 41 on the apron", gap, stick);
+            }
+            Ps2FastWrite32(rdram, pad + 0x1Cu, stick);
+            ctx->pc = 0x111C8Cu;
+        }
+
+        // 0x111B5C (Action 41, step 3): jal FUN_0012f220, with lwc1 $f12, 0($v0) (the inward angle by my old side number) as
+        // its delay slot: on the ring, the inward angle of my real side (the angle to him against it, within 20: in line)
+        void apronAngle(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active)
+            {
+                const uint32_t me = getRegU32(ctx, 17);
+                ctx->f[12] = inwardAngle(sideForBand(Ps2FastRead32(rdram, me + 0x41Cu) & 3u, readFloat(rdram, me + kHipsX),
+                                                     readFloat(rdram, me + kHipsZ)));
+            }
+            g_angleApart(rdram, ctx, runtime);
+        }
+
+        // The walks along the apron (Action 47 toward my team's corner, Action 49 at random): the game holds a straight stick
+        // bit, 4 / 1 (+z / -z) on its sides 1 / 3, 2 / 8 (+x / -x) on 0 / 2, held for 30 to 70 pictures. On the ring the same
+        // way along the real side's rope (+ for 4 and 2, - for 1 and 8), the nearest of the stick's eight.
+        uint32_t cpuFighterOf(uint32_t record); // below, with cpuSees
+
+        uint32_t stickAlongRope(uint8_t *rdram, uint32_t fighter, uint32_t stick, const char *what)
+        {
+            if (!g_active || fighter == 0u || (stick != 1u && stick != 2u && stick != 4u && stick != 8u))
+                return stick;
+            const int side = sideForBand(Ps2FastRead32(rdram, fighter + 0x41Cu) & 3u, readFloat(rdram, fighter + kHipsX),
+                                         readFloat(rdram, fighter + kHipsZ));
+            float tx = 0.0f, tz = 1.0f;
+            ropeLine(side, tx, tz);
+            const uint32_t along = (stick == 4u || stick == 2u) ? stickToward(headingOf(tx, tz)) : stickToward(headingOf(-tx, -tz));
+            if (g_log && g_lineUpTold < 40)
+            {
+                ++g_lineUpTold;
+                std::cerr << "[ring] the computer walks along the apron, " << what << ": side " << side << ", the stick " << along
+                          << " in place of " << stick << std::endl;
+            }
+            return along;
+        }
+
+        // 0x10EE64 (FUN_0010edd8, Action 47): movn $a0, $v1, $v0 (the other way for one team), with sw $a0, 0x24($s0) run
+        // first as this jal's delay slot: done here, and the stick stored again along the real rope ($a1 the fighter)
+        void teamWalk(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            if (getRegU32(ctx, 2) != 0u)
+                SET_GPR_U32(ctx, 4, getRegU32(ctx, 3));
+            const uint32_t stick = stickAlongRope(rdram, getRegU32(ctx, 5), getRegU32(ctx, 4), "toward my team's corner");
+            SET_GPR_U32(ctx, 4, stick);
+            Ps2FastWrite32(rdram, getRegU32(ctx, 16) + 0x24u, stick);
+            SET_GPR_U32(ctx, 31, Ps2FastRead32(rdram, getRegU32(ctx, 29) + 0x10u));
+            ctx->pc = 0x10EE6Cu;
+        }
+
+        // 0x10F228 (FUN_0010f180, Action 49): jal FUN_00131160 (how long to hold it), the stick just stored at +0x24 of the
+        // record ($s0); the fighter isn't kept past the coin's call, so the one the record plays (cpuSees)
+        void randomWalk(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t record = getRegU32(ctx, 16);
+            Ps2FastWrite32(rdram, record + 0x24u, stickAlongRope(rdram, cpuFighterOf(record), Ps2FastRead32(rdram, record + 0x24u), "at random"));
+            g_randomBelow(rdram, ctx, runtime);
+        }
+
         // 0x11424C and 0x1143A8: sw $a0, 0x414($s1) (the side next along, -1 or +1 from the apron's own), with lwc1 $f0, 0($v1)
         // (that side's angle) run first as this jal's delay slot. On the ring the run goes along the apron's side, the way
         // the game chose (+0x5B2 bit 4: the -1 way)
@@ -1744,6 +2122,51 @@ namespace vendetta_ring
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        // FUN_001167c0(fighter, mode): a run toward a dive (its only caller FUN_00116758 passes 1). The run's direction is
+        // +0x414 (0-3, the stick's four), its rope that side's; the game measures the hips along x or z: mode 0 says whether
+        // they are 23 to 29 from the middle toward it, mode 1, once they are 29 or more, moves the fighter back to 29
+        // (FUN_0013e130 by a vector in its own frame) and says 1. On the ring it is measured toward the ring's own rope (the
+        // run-start test's measure): on a slanted side a run reaches the rope before x or z come to 29, so the dive never
+        // started there. The move back is the game's own: the routine's frame made as its prologue makes it, FUN_0013e130
+        // called with the return to 0x116948, where the routine itself says 1 and returns.
+        void diveRunBack(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active || ctx->pc != kDiveRunBack)
+            {
+                g_diveRunBack(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t fighter = getRegU32(ctx, 4), mode = getRegU32(ctx, 5);
+            const int32_t band = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x414u));
+            if (band < 0 || band > 3)
+            {
+                SET_GPR_U32(ctx, 2, 0u);
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            const float inward = angleFor(rdram, kGameInAngles + static_cast<uint32_t>(band) * 4u, fighter);
+            const float rad = (inward + 180.0f) * kPi / 180.0f, nx = std::sin(rad), nz = std::cos(rad);
+            const float out = readFloat(rdram, fighter + kHipsX) * nx + readFloat(rdram, fighter + kHipsZ) * nz;
+            if (mode == 0u || out < 29.0f)
+            {
+                SET_GPR_U32(ctx, 2, mode == 0u && out >= 23.0f && out < 29.0f ? 1u : 0u);
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            const uint32_t sp = getRegU32(ctx, 29) - 0x20u;
+            SET_GPR_U32(ctx, 29, sp);
+            Ps2FastWrite32(rdram, sp + 0x10u, getRegU32(ctx, 31)); // sd $ra, 0x10($sp)
+            Ps2FastWrite32(rdram, sp + 0x14u, 0u);
+            Ps2FastWrite32(rdram, sp + 0x0u, std::bit_cast<uint32_t>(nx * (29.0f - out)));
+            Ps2FastWrite32(rdram, sp + 0x4u, 0u);
+            Ps2FastWrite32(rdram, sp + 0x8u, std::bit_cast<uint32_t>(nz * (29.0f - out)));
+            if (g_log)
+                std::cerr << "[ring] a run into a dive brought back to 29 from " << out << " toward the ring's rope" << std::endl;
+            SET_GPR_U32(ctx, 5, sp);
+            SET_GPR_U32(ctx, 31, kDiveRunResume);
+            ctx->pc = kMoveBy;
+        }
+
         // ------------------------------------------------------------------ the computer's choices
 
         // The side with the game's 0 to 3 number `band` nearest a point (on a hexagon a number covers one or two sides)
@@ -1766,7 +2189,16 @@ namespace vendetta_ring
         // readers index them by an opponent's corner (+0x414): 0x10BB94 and 0x10BBDC (FUN_0010ba78), 0x10CFC4
         // (FUN_0010cf68), 0x10E8F8 (FUN_0010e868). On the ring the distances to the corners past the fourth are kept in
         // the store, and those readers pointed there for them.
-        uint32_t g_cpuRecords[4] = {};
+        uint32_t g_cpuRecords[4] = {}, g_cpuFighters[4] = {};
+
+        // the fighter a computer record plays (noted each picture by cpuSees), 0 if not seen
+        uint32_t cpuFighterOf(uint32_t record)
+        {
+            for (uint32_t i = 0; i < 4u; ++i)
+                if (g_cpuRecords[i] == record)
+                    return g_cpuFighters[i];
+            return 0u;
+        }
 
         uint32_t cpuExtra(uint32_t record)
         {
@@ -1784,6 +2216,9 @@ namespace vendetta_ring
             if (g_active && g_sides > 4)
             {
                 const uint32_t record = getRegU32(ctx, 4), fighter = getRegU32(ctx, 5), extra = cpuExtra(record);
+                for (uint32_t i = 0; i < 4u; ++i)
+                    if (g_cpuRecords[i] == record)
+                        g_cpuFighters[i] = fighter;
                 const float x = readFloat(rdram, fighter + kHipsX), z = readFloat(rdram, fighter + kHipsZ);
                 for (int k = 4; k < g_sides; ++k)
                 {
@@ -1860,6 +2295,30 @@ namespace vendetta_ring
                 distance = std::fabs(g_ring.ropeDistance - (g_sideNormal[side][0] * x + g_sideNormal[side][1] * z));
             }
             ctx->f[0] = distance;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x108FFC (FUN_00108f90, Action 45, leave the ring after him, step 0): jal FUN_001100b0(his old side number, my hips),
+        // my distance from the rope he went over (within 10: at it). On the ring the rope of his real side (the side with
+        // that number nearest him, $s2), not the one nearest me: two sides can share his number
+        void hisRope(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t band = getRegU32(ctx, 4), him = getRegU32(ctx, 18);
+            if (!g_active || band > 3u)
+            {
+                ropeDistanceOf(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t point = getRegU32(ctx, 5);
+            const int side = sideForBand(band, readFloat(rdram, him + kHipsX), readFloat(rdram, him + kHipsZ));
+            const float x = readFloat(rdram, point), z = readFloat(rdram, point + 8u);
+            ctx->f[0] = std::fabs(g_ring.ropeDistance - (g_sideNormal[side][0] * x + g_sideNormal[side][1] * z));
+            if (g_log && g_lineUpTold < 40 && side != sideForBand(band, x, z))
+            {
+                ++g_lineUpTold;
+                std::cerr << "[ring] the computer goes after him over his rope, side " << side << " (not "
+                          << sideForBand(band, x, z) << ", nearer me): " << ctx->f[0] << " from it" << std::endl;
+            }
             ctx->pc = getRegU32(ctx, 31);
         }
 
@@ -2092,26 +2551,37 @@ namespace vendetta_ring
         enum DrawStep { kBefore, kPieces, kLoadProgram, kNextRope, kMatrix, kDraw, kWait, kFaded, kAfter };
         struct RopeDraw
         {
-            DrawStep step = kBefore;
+            DrawStep step = kBefore, afterRopes = kFaded;
             int index = 0, rope = 0, fadeStep = 0;
-            size_t piece = 0;
+            size_t piece = 0, queueAt = 0;
+            bool fadedStarted = false;
             uint32_t part = 0, returnTo = 0, matrix = 0;
+            std::vector<int> queue; // the ropes to draw now: the solid sides' at once, a faded side's three in its turn
         } g_draw;
 
         // The ring's own corner pieces (setCornerSpots), drawn as the game's ring draw draws 81-92 on High Poly: the main
         // processor's post draw FUN_001b3820(piece, M, the arena colour 0x1430D60), the solid ones at once; one within 50
         // of the camera across the floor fades (FIX = d^2 / 2500 x 76.8 + 51.2, truncated, into ALPHA_1 with 0x64, then
-        // sceGsSyncPath(0, 0) before its draw), the faded ones after the ropes, far to near. A corner's pad and turnbuckle
-        // take its post's fade, as the game's 85-92 take 81-84's.
+        // sceGsSyncPath(0, 0) before its draw), the faded ones after the ropes, in FUN_001a37d8's order (by depth in the
+        // view: kViewMatrix). A corner's pad and turnbuckle
+        // take its post's fade, as the game's 85-92 take 81-84's. The rope sides fade the same way: the game's pieces 12-15
+        // (spots at 0x2589E0, each side's middle on the ropes' line, 35 out) are faded ropes, drawn in their turn among the
+        // faded as FUN_001a2de8 does at 0x1A33BC: ALPHA_2 set to (FIX, 0x64), no sync, then the side's three ropes.
         constexpr uint32_t kDrawPost = 0x1B3820u, kSyncPath = 0x1F7930u, kArenaColour = 0x1430D60u, kCamera = 0x258090u;
         std::vector<CornerSpot> g_cornerSpots;
         struct PieceDraw
         {
             uint32_t object = 0, fix = 0x80u;
-            float distance = 0.0f;
+            float distance = 0.0f; // d^2 across the floor, for the fade
+            int side = -1;         // 0 on: a rope side (its three ropes), not a corner piece
+            float depth = 0.0f;    // the spot's depth in the view, for the faded ones' order
         };
+        // FUN_001a37d8's key: the spot {x, 0, z} through the view's z column, the matrix at 0x258000 (+0x08, +0x18,
+        // +0x28, +0x38); the faded ones drawn from the smallest key up, equal keys in the order listed
+        constexpr uint32_t kViewMatrix = 0x258000u;
         std::vector<PieceDraw> g_pieces; // this picture's: the solid ones, then the faded far to near
         size_t g_solidPieces = 0;
+        std::vector<int> g_solidRopes;   // the ropes of the sides not fading, drawn at once
 
         // A part's object in the arena's scene (the first directory entry with its number; 0 = not there)
         uint32_t findPart(uint8_t *rdram, int32_t id)
@@ -2131,6 +2601,9 @@ namespace vendetta_ring
         {
             g_pieces.clear();
             const float cameraX = readFloat(rdram, kCamera), cameraZ = readFloat(rdram, kCamera + 8u);
+            const float m2 = readFloat(rdram, kViewMatrix + 0x08u), m10 = readFloat(rdram, kViewMatrix + 0x28u),
+                        m14 = readFloat(rdram, kViewMatrix + 0x38u);
+            auto depthOf = [&](float x, float z) { return x * m2 + z * m10 + m14; };
             uint32_t postFix[kCornerRoom] = {};
             for (const int pass : {0, 1}) // the posts first: their corner's pad and turnbuckle follow them
                 for (const CornerSpot &s : g_cornerSpots)
@@ -2148,10 +2621,22 @@ namespace vendetta_ring
                         postFix[at] = fix;
                     else if (at >= 0 && at < kCornerRoom && postFix[at])
                         fix = postFix[at];
-                    g_pieces.push_back({object, fix, d2});
+                    g_pieces.push_back({object, fix, d2, -1, depthOf(s.x, s.z)});
                 }
-            auto faded = std::stable_partition(g_pieces.begin(), g_pieces.end(), [](const PieceDraw &p) { return p.fix == 0x80u; });
-            std::stable_sort(faded, g_pieces.end(), [](const PieceDraw &a, const PieceDraw &b) { return a.distance > b.distance; });
+            g_solidRopes.clear();
+            for (int k = 0; k < g_sides; ++k)
+            {
+                const float dx = g_sideNormal[k][0] * g_ring.ropeDistance - cameraX, dz = g_sideNormal[k][1] * g_ring.ropeDistance - cameraZ;
+                const float d2 = dx * dx + dz * dz;
+                if (d2 < 2500.0f)
+                    g_pieces.push_back({0u, static_cast<uint32_t>(static_cast<int32_t>(d2 / 2500.0f * 76.8f + 51.2f)), d2, k,
+                                        depthOf(g_sideNormal[k][0] * g_ring.ropeDistance, g_sideNormal[k][1] * g_ring.ropeDistance)});
+                else
+                    for (int level = 0; level < 3; ++level)
+                        g_solidRopes.push_back(k * 3 + level);
+            }
+            auto faded = std::stable_partition(g_pieces.begin(), g_pieces.end(), [](const PieceDraw &p) { return p.side < 0 && p.fix == 0x80u; });
+            std::stable_sort(faded, g_pieces.end(), [](const PieceDraw &a, const PieceDraw &b) { return a.depth < b.depth; });
             g_solidPieces = static_cast<size_t>(faded - g_pieces.begin());
         }
 
@@ -2211,17 +2696,24 @@ namespace vendetta_ring
                     break;
                 case kLoadProgram:
                     g_draw.step = kNextRope;
-                    g_draw.rope = 0;
+                    g_draw.queue = g_solidRopes;
+                    g_draw.queueAt = 0;
+                    g_draw.afterRopes = kFaded;
                     callGuest(ctx, kLoadRopeProgram);
                     return;
                 case kNextRope:
-                    if (g_draw.part == 0u || g_draw.rope >= g_sides * 3)
+                    if (g_draw.part == 0u || g_draw.queueAt >= g_draw.queue.size())
                     {
-                        g_draw.step = kFaded;
-                        g_draw.piece = g_solidPieces;
-                        g_draw.fadeStep = 0;
+                        g_draw.step = g_draw.afterRopes;
+                        if (!g_draw.fadedStarted)
+                        {
+                            g_draw.fadedStarted = true;
+                            g_draw.piece = g_solidPieces;
+                            g_draw.fadeStep = 0;
+                        }
                         break;
                     }
+                    g_draw.rope = g_draw.queue[g_draw.queueAt];
                     bendRope(rdram, g_draw.rope);
                     g_draw.step = kMatrix;
                     callGuest(ctx, kPoseRope, g_draw.part, kRopeTemplate, kRopeBones);
@@ -2241,7 +2733,7 @@ namespace vendetta_ring
                         ctx->pc = kRopeDrawReturn; // the chain still reading this rope: asked again after the scheduler has run
                         return;
                     }
-                    ++g_draw.rope;
+                    ++g_draw.queueAt;
                     g_draw.step = kNextRope;
                     break;
                 case kFaded:
@@ -2249,6 +2741,22 @@ namespace vendetta_ring
                     {
                         g_draw.step = kAfter;
                         g_draw.index = 0;
+                        break;
+                    }
+                    if (g_pieces[g_draw.piece].side >= 0)
+                    {
+                        const PieceDraw &p = g_pieces[g_draw.piece];
+                        if (g_draw.fadeStep++ == 0)
+                        {
+                            callGuest(ctx, kSetRenderState, 0x43u, p.fix, 0x64u); // ALPHA_2
+                            return;
+                        }
+                        g_draw.fadeStep = 0;
+                        g_draw.queue = {p.side * 3, p.side * 3 + 1, p.side * 3 + 2};
+                        g_draw.queueAt = 0;
+                        g_draw.afterRopes = kFaded;
+                        g_draw.step = kNextRope;
+                        ++g_draw.piece;
                         break;
                     }
                     {
@@ -2479,6 +2987,7 @@ namespace vendetta_ring
         g_cornerAt = runtime.lookupFunction(kCornerAt);
         g_ropeAhead = runtime.lookupFunction(kRopeAhead);
         g_nearRope = runtime.lookupFunction(kNearRope);
+        g_diveRunBack = runtime.lookupFunction(kDiveRunBack);
         runtime.registerFunction(kHookRunCorner, runCorner);
         runtime.replaceFunction(kCornerAt, cornerAt);   // every caller: FUN_00114140, FUN_00115130, FUN_00128238, FUN_00137b38, FUN_0013bf18
         runtime.replaceFunction(kRopeAhead, ropeAhead);
@@ -2486,6 +2995,7 @@ namespace vendetta_ring
         runtime.registerFunction(kHookApronRun, apronRun);
         runtime.registerFunction(kHookApronRunWay, apronRunWay);
         runtime.replaceFunction(kNearRope, nearRope);
+        runtime.replaceFunction(kDiveRunBack, diveRunBack);
         runtime.registerFunction(kHookApronEnd, apronEnd);
         runtime.registerFunction(kHookApronAlong, apronAlong);
         runtime.registerFunction(kHookApronCorner, apronCorner);
@@ -2507,7 +3017,18 @@ namespace vendetta_ring
         runtime.registerFunction(kHookCpuBeyond1, cpuBeyondCorner<2, 0x15Cu>);
         runtime.registerFunction(kHookCpuBeyond2, cpuBeyondCorner<6, 0xCCu>);
         runtime.registerFunction(kHookOutsideCorner, outsideCornerAngle);
+        runtime.registerFunction(kHookTauntEye, tauntEye);
+        runtime.registerFunction(kHookSameSide, sameSide);
+        runtime.registerFunction(kHookAimStick, aimStick);
+        runtime.registerFunction(kHookLineUp, lineUp);
+        runtime.registerFunction(kHookLineUpGap, lineUpGap);
+        runtime.registerFunction(kHookCpuApronWalk, cpuApronWalk);
+        runtime.registerFunction(kHookApronAngle, apronAngle);
+        runtime.registerFunction(kHookTeamWalk, teamWalk);
+        runtime.registerFunction(kHookRandomWalk, randomWalk);
+        runtime.registerFunction(kHookHisRope, hisRope);
         g_angleApart = runtime.lookupFunction(kAngleApart);
+        g_randomBelow = runtime.lookupFunction(kRandomBelow);
         g_turnTo = runtime.lookupFunction(kTurnTo);
         g_moveBy = runtime.lookupFunction(kMoveBy);
         g_apronStick = runtime.lookupFunction(kApronStick);

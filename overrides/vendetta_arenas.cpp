@@ -308,6 +308,10 @@ namespace vendetta_arenas
         {
             std::string what;                // "<mod>: <folder>", for messages
             std::filesystem::path folder;
+            // where model.arena and textures\ are read: its own folder, or a standard arena's named in arena.json's "from
+            // the game" (that arena's model, unchanged)
+            std::filesystem::path modelFolder;
+            bool standard = false;           // one the recomp brings (it means to have the made-from arena's sounds and fly-in)
             uint32_t stage = 0;              // its Choose Stage stage: the game arena it replaces (0-11), or a new place (12 on)
             uint32_t venue = 0;              // the venue its file was made from: the one the game loads behind it
             std::vector<uint8_t> file;       // model.arena, read at the arena's load (only the current arena's kept)
@@ -3446,7 +3450,7 @@ namespace vendetta_arenas
         {
             const char *const instead = ": the game's own arena is used";
             std::vector<uint8_t> file;
-            const std::filesystem::path model = m.folder / "model.arena";
+            const std::filesystem::path model = m.modelFolder / "model.arena";
             if (!vendetta_mods::readWhole(model, file))
             {
                 vendetta_mods::problem() << "[arenas] " << m.what << ": model.arena can't be read" << instead << std::endl;
@@ -4117,13 +4121,21 @@ namespace vendetta_arenas
                     m.soundsVenue = venue;
             }
             else
-                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json has no \"sounds\": the sounds of " << base
-                                         << std::endl;
+                // a standard arena means to: a line on stderr, not a problem for the player
+                if (m.standard)
+                    std::cerr << "[arenas] " << m.what << ": the sounds of " << base << std::endl;
+                else
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json has no \"sounds\": the sounds of " << base
+                                             << std::endl;
             const vendetta_mods::Json *flyIn = json.find("fly-in");
             if (!flyIn)
             {
-                vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json has no \"fly-in\": the fly-in of " << base
-                                         << std::endl;
+                // a standard arena means to: a line on stderr, not a problem for the player
+                if (m.standard)
+                    std::cerr << "[arenas] " << m.what << ": the fly-in of " << base << std::endl;
+                else
+                    vendetta_mods::problem() << "[arenas] " << m.what << ": arena.json has no \"fly-in\": the fly-in of " << base
+                                             << std::endl;
                 return;
             }
             const vendetta_mods::Json *frames = flyIn->find("frames"), *keys = flyIn->find("keys");
@@ -4189,9 +4201,15 @@ namespace vendetta_arenas
             return full;
         }
 
-        // arena.json's "from the game": {"model", "picture", "thumbnail", "name"}, each a game arena by its Choose Stage name;
-        // its stage (0-11) each, ~0u when not named (a name that isn't a game arena: a mods.log line, the mod's own used)
-        std::array<uint32_t, 4> fromTheGame(const std::filesystem::path &folder, const std::string &what)
+        std::vector<std::filesystem::path> standardFolders();
+        std::string plainName(std::string name);
+
+        // arena.json's "from the game": {"model", "picture", "thumbnail", "name"}, each a game arena by its Choose Stage name,
+        // or one of the standard arenas the recomp brings (by its name, as Choose Stage shows it); a game arena's stage
+        // (0-11) each, ~0u when not named or a standard arena's (its folder then in <paramref name="standard"/>); a name
+        // that is neither: a mods.log line, the mod's own used
+        std::array<uint32_t, 4> fromTheGame(const std::filesystem::path &folder, const std::string &what,
+                                            std::array<std::filesystem::path, 4> *standard = nullptr)
         {
             std::array<uint32_t, 4> picks = {~0u, ~0u, ~0u, ~0u};
             std::vector<uint8_t> bytes;
@@ -4209,7 +4227,11 @@ namespace vendetta_arenas
                 if (const vendetta_mods::Json *v = from->find(parts[i]))
                 {
                     picks[i] = v->isString() ? venueNamed(v->text) : ~0u;
-                    if (picks[i] == ~0u)
+                    if (picks[i] == ~0u && v->isString() && standard)
+                        for (const std::filesystem::path &f : standardFolders())
+                            if (plainName(f.filename().string()) == plainName(v->text))
+                                (*standard)[i] = f;
+                    if (picks[i] == ~0u && (!standard || (*standard)[i].empty()))
                         vendetta_mods::problem() << "[arenas] " << what << ": arena.json's \"from the game\" " << parts[i]
                                                  << " is not one of the game's arenas: the mod's own is used" << std::endl;
                 }
@@ -4314,9 +4336,16 @@ namespace vendetta_arenas
                     }
                     const std::filesystem::path &folder = e.folder;
                     std::error_code ec;
-                    const std::array<uint32_t, 4> game = folder.empty() ? std::array<uint32_t, 4>{~0u, ~0u, ~0u, ~0u}
-                                                                        : fromTheGame(folder, what);
-                    const bool hasFile = !folder.empty() && std::filesystem::is_regular_file(folder / "model.arena", ec);
+                    std::array<std::filesystem::path, 4> standardFrom;
+                    const std::array<uint32_t, 4> game = folder.empty() || e.standard ? std::array<uint32_t, 4>{~0u, ~0u, ~0u, ~0u}
+                                                                                      : fromTheGame(folder, what, &standardFrom);
+                    // a standard arena's model named: its files, unchanged (the mod's own model.arena left aside)
+                    const std::filesystem::path modelFolder = !standardFrom[0].empty() ? standardFrom[0] : folder;
+                    const bool hasFile = !folder.empty() && std::filesystem::is_regular_file(modelFolder / "model.arena", ec);
+                    if (!standardFrom[0].empty() && std::filesystem::is_regular_file(folder / "model.arena", ec))
+                        vendetta_mods::problem() << "[arenas] " << what << ": arena.json names the recomp's "
+                                                 << standardFrom[0].filename().string() << "'s model: its own model.arena is left aside"
+                                                 << std::endl;
                     if (folder.empty() || (!hasFile && game[0] == ~0u))
                     {
                         vendetta_mods::problem() << "[arenas] " << what << ": no model.arena in its folder: "
@@ -4326,6 +4355,8 @@ namespace vendetta_arenas
                     ModArena m;
                     m.what = what;
                     m.folder = folder;
+                    m.modelFolder = modelFolder;
+                    m.standard = e.standard;
                     m.stage = venue;
                     m.isNew = isNew;
                     m.gamePicture = game[1];
@@ -4343,7 +4374,7 @@ namespace vendetta_arenas
                     // the venue its file was made from (the header's + 0x0C): the game loads that one behind it
                     else
                     {
-                        std::ifstream in(folder / "model.arena", std::ios::binary);
+                        std::ifstream in(modelFolder / "model.arena", std::ios::binary);
                         char head[0x40] = {};
                         in.read(head, sizeof(head));
                         uint32_t made = ~0u;
@@ -4360,7 +4391,7 @@ namespace vendetta_arenas
                     }
                     // textures\: pictures.json {"pictures": [{"file", "dbp"}, ...]}, else PNGs named "@<address>" (none for a
                     // game arena's model: the game's own textures)
-                    const std::filesystem::path textures = m.gameModel ? std::filesystem::path() : folder / "textures";
+                    const std::filesystem::path textures = m.gameModel ? std::filesystem::path() : modelFolder / "textures";
                     std::vector<uint8_t> list;
                     if (!textures.empty() && std::filesystem::is_regular_file(textures / "pictures.json", ec) &&
                         vendetta_mods::readWhole(textures / "pictures.json", list))
@@ -4412,12 +4443,16 @@ namespace vendetta_arenas
                         takeStagePictures(m);
                     // Choose Stage's pictures (the GS textures' shapes: 256 x 128, 64 x 64; the name a 256 x 32 row); a game
                     // arena's named in arena.json wins over the file
-                    if (m.gamePicture == ~0u && std::filesystem::is_regular_file(folder / "picture.png", ec))
-                        m.picture = vendetta_pictures::add(folder / "picture.png", 256u, 128u, 4u);
-                    if (m.gameThumbnail == ~0u && std::filesystem::is_regular_file(folder / "thumbnail.png", ec))
-                        m.thumbnail = vendetta_pictures::add(folder / "thumbnail.png", 64u, 64u, 4u);
-                    if (m.gameName == ~0u && std::filesystem::is_regular_file(folder / "name.png", ec))
-                        m.name = folder / "name.png";
+                    // a standard arena's picture named: that arena's file
+                    const std::filesystem::path pictureFolder = !standardFrom[1].empty() ? standardFrom[1] : folder,
+                                                thumbnailFolder = !standardFrom[2].empty() ? standardFrom[2] : folder,
+                                                nameFolder = !standardFrom[3].empty() ? standardFrom[3] : folder;
+                    if (m.gamePicture == ~0u && std::filesystem::is_regular_file(pictureFolder / "picture.png", ec))
+                        m.picture = vendetta_pictures::add(pictureFolder / "picture.png", 256u, 128u, 4u);
+                    if (m.gameThumbnail == ~0u && std::filesystem::is_regular_file(thumbnailFolder / "thumbnail.png", ec))
+                        m.thumbnail = vendetta_pictures::add(thumbnailFolder / "thumbnail.png", 64u, 64u, 4u);
+                    if (m.gameName == ~0u && std::filesystem::is_regular_file(nameFolder / "name.png", ec))
+                        m.name = nameFolder / "name.png";
                     if (isNew)
                     {
                         const uint32_t named[3] = {m.gamePicture, m.gameThumbnail, m.gameName};

@@ -253,6 +253,38 @@ instructions = [
   { address = "0x0011299c", value = "0x0c077d44" }, # lui $at, 0x420C -> jal 0x1DF510: beyond a corner (the dives)
   { address = "0x00112b2c", value = "0x0c077d45" }, # the same -> jal 0x1DF514 (Action 51)
   { address = "0x001142b0", value = "0x0c077d46" }, # addu $v0, $v0, $v1 -> jal 0x1DF518: a diagonal run's angle outside the ring
+  { address = "0x001055cc", value = "0x0c077da8" }, # lwc1 $f1, 0x10($sp) -> jal 0x1DF6A0: the Blazin' taunt's close-up eye against the ring
+  { address = "0x0010a184", value = "0x0c077da7" }, # lw $a0, 0x41C($s0) -> jal 0x1DF69C: the computer's same side? (both on the apron)
+  { address = "0x0010a414", value = "0x0c077da7" }, # lw $v1, 0x41C($s2) -> jal 0x1DF69C: the computer's same side? (outside against in or on the apron)
+  { address = "0x0010a630", value = "0x0c077da7" }, # lw $v1, 0x41C($s0) -> jal 0x1DF69C: the computer's same side? (getting back in)
+  { address = "0x0010a854", value = "0x0c077da7" }, # lw $a0, 0x41C($s0) -> jal 0x1DF69C: the computer's same side? (the far taunt)
+  { address = "0x0010a908", value = "0x0c077da7" }, # lw $v1, 0x41C($s2) -> jal 0x1DF69C: the computer's same side? (he is in Blazin')
+  { address = "0x00110544", value = "0x0c077da7" }, # lw $v1, 0x41C($s1) -> jal 0x1DF69C: the computer's same side? (tag, the other team's second)
+  { address = "0x001105b0", value = "0x0c077da7" }, # lw $v1, 0x41C($s0) -> jal 0x1DF69C: the computer's same side? (the same, its second test)
+  { address = "0x0010bedc", value = "0x0c077da7" }, # lw $v0, 0x41C($v1) -> jal 0x1DF69C: the computer's same side? (the waiting tag partner)
+  { address = "0x00111004", value = "0x0c077da7" }, # lw $v0, 0x41C($s2) -> jal 0x1DF69C: the computer's same side? (handicap)
+  { address = "0x0010931c", value = "0x0c077da6" }, # addiu $a0, $a0, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (step off the apron)
+  { address = "0x0010e4e0", value = "0x0c077da6" }, # sll $v1, $v1, 2 -> jal 0x1DF698: the computer's stick toward the real side (walk toward him outside)
+  { address = "0x0010ea78", value = "0x0c077da6" }, # addiu $v1, $v1, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (run round the ring)
+  { address = "0x001116cc", value = "0x0c077da6" }, # addiu $a2, $a2, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (run to the ropes behind)
+  { address = "0x00111a18", value = "0x0c077da6" }, # addiu $v0, $v0, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (the apron move)
+  { address = "0x00111af8", value = "0x0c077da6" }, # addiu $v1, $v1, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (the apron move)
+  { address = "0x00111c5c", value = "0x0c077da6" }, # addiu $a0, $a0, 0x5C90 -> jal 0x1DF698: the computer's stick toward the real side (the apron move)
+  { address = "0x00111ed0", value = "0x0c077da6" }, # addiu $v1, $v1, 0x5C90 -> jal 0x1DF698: the computer's stick toward the real side (the dives)
+  { address = "0x00111f44", value = "0x0c077da6" }, # addiu $a0, $a0, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (the dives)
+  { address = "0x00111f6c", value = "0x0c077da6" }, # addiu $v0, $v0, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (the dives)
+  { address = "0x00112280", value = "0x0c077da6" }, # addiu $v1, $v1, 0x5C80 -> jal 0x1DF698: the computer's stick toward the real side (at the ropes toward him)
+  { address = "0x00111d80", value = "0x0c077da5" }, # lwc1 $f1, 0x15C($s2) -> jal 0x1DF694: the dives' line-up along the real rope (x)
+  { address = "0x00111de0", value = "0x0c077da5" }, # lwc1 $f1, 0x164($s2) -> jal 0x1DF694: the dives' line-up along the real rope (z)
+  { address = "0x00112180", value = "0x0c077da5" }, # lwc1 $f1, 0x15C($s1) -> jal 0x1DF694: Action 51's line-up along the real rope (x)
+  { address = "0x001121e0", value = "0x0c077da5" }, # lwc1 $f1, 0x164($s1) -> jal 0x1DF694: Action 51's line-up along the real rope (z)
+  { address = "0x001117d8", value = "0x0c077da4" }, # mtc1 $zero, $f2 -> jal 0x1DF690: Action 40's gap along the real rope
+  { address = "0x00111bdc", value = "0x0c077da3" }, # lwc1 $f1, 0xD4($s1) -> jal 0x1DF68C: Action 41's walk along the real apron (z)
+  { address = "0x00111c04", value = "0x0c077da3" }, # lwc1 $f0, 0x15C($s2) -> jal 0x1DF68C: Action 41's walk along the real apron (x)
+  { address = "0x00111b5c", value = "0x0c077da2" }, # jal 0x12F220 -> jal 0x1DF688: Action 41: the real side's inward angle
+  { address = "0x0010ee64", value = "0x0c077da1" }, # movn $a0, $v1, $v0 -> jal 0x1DF684: Action 47's walk along the real apron
+  { address = "0x0010f228", value = "0x0c077da0" }, # jal 0x131160 -> jal 0x1DF680: Action 49's walk along the real apron
+  { address = "0x00108ffc", value = "0x0c077d9f" }, # jal 0x1100B0 -> jal 0x1DF67C: Action 45, my distance from his real rope
   { address = "0x0013ef40", value = "0x08077d20" }, # jr $ra -> j 0x1DF480: a wrestler's start place, adjusted
   { address = "0x0013ef70", value = "0x08077d20" }, # the same, the routine's other way out
   { address = "0x001197d4", value = "0x0c077d1a" }, # lui $at, 0x4204 -> jal 0x1DF468: inside the ring
