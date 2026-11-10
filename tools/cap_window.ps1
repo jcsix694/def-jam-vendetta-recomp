@@ -13,7 +13,9 @@ public static class W2 {
 }
 "@
 [void][W2]::SetProcessDPIAware()
-$p = Get-Process ps2EntryRunner | Select-Object -First 1
+# The game started from this folder's build: another copy of the code (a worktree) may be running its own.
+$repo = Split-Path -Parent $PSScriptRoot
+$p = Get-Process ps2EntryRunner | Where-Object { $_.Path -like "$repo\*" } | Select-Object -First 1
 $h = $p.MainWindowHandle
 $r = New-Object W2+RECT; [void][W2]::GetWindowRect($h, [ref]$r)
 "rect $($r.L),$($r.T),$($r.R),$($r.B)"
