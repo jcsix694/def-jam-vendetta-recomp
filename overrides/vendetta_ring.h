@@ -5,7 +5,9 @@
 
 #include "vendetta_mods.h"
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace vendetta_ring
 {
@@ -28,4 +30,24 @@ namespace vendetta_ring
 
     // The arena being loaded: its ring, or null for the game's own. Takes effect at the match's start.
     void setArena(const Ring *ring);
+
+    // A ring of another shape has its own corner pieces, in the High Poly post format (as 81-92): part 1000 + corner a
+    // post, 1020 + corner a pad, 1040 + corner a turnbuckle (corners from 0, up to 16)
+    constexpr int32_t kCornerPost = 1000, kCornerPad = 1020, kCornerTurnbuckle = 1040, kCornerRoom = 16;
+    inline bool cornerPiece(int32_t id)
+    {
+        for (const int32_t base : {kCornerPost, kCornerPad, kCornerTurnbuckle})
+            if (id >= base && id < base + kCornerRoom)
+                return true;
+        return false;
+    }
+
+    // The arena being loaded: its corner pieces' spots on the floor (each piece's box middle, x and z), for their fade
+    // near the camera; empty = none
+    struct CornerSpot
+    {
+        int32_t part = 0;
+        float x = 0.0f, z = 0.0f;
+    };
+    void setCornerSpots(const std::vector<CornerSpot> &spots);
 }

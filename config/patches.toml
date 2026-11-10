@@ -229,6 +229,30 @@ instructions = [
   { address = "0x0012415c", value = "0x0c077d33" }, # lwc1 $f12, 0($v0) -> jal 0x1DF4CC: the same, the angle
   { address = "0x00124170", value = "0x0c077d34" }, # lw $v1, 0x414($s1) -> jal 0x1DF4D0: the same, the move
   { address = "0x0013f000", value = "0x0c077d35" }, # jal 0x130438 -> jal 0x1DF4D4: which way a wrestler faces at the start
+  { address = "0x0012b160", value = "0x0c077d36" }, # and $v1, $t5, $v1 -> jal 0x1DF4D8: the push's axes (a slanted wall: both)
+  # A run's start (FUN_00114140): the corner a diagonal names, the angles on the ring's own shape (FUN_0012a5b8 and
+  # FUN_0012a698 are replaced whole for every caller)
+  { address = "0x00114178", value = "0x0c077d37" }, # jal 0x132D30 -> jal 0x1DF4DC: the corner a diagonal names
+  { address = "0x00114280", value = "0x0c077d3a" }, # addu $a0, $a0, $v1 -> jal 0x1DF4E8: the run's angle toward a rope
+  { address = "0x0011424c", value = "0x0c077d3b" }, # sw $a0, 0x414($s1) -> jal 0x1DF4EC: a run along the apron
+  { address = "0x001143a8", value = "0x0c077d3b" }, # the same, with no stick
+  { address = "0x00114368", value = "0x0c077d3c" }, # jal 0x12F220 -> jal 0x1DF4F0: which way along the apron, with no stick
+  # Going round a corner on the apron (FUN_0013c388), and the apron moves (FUN_00114e68): the side's end walls touched
+  { address = "0x0013c3b4", value = "0x0c077d38" }, # jal 0x13E0E8 -> jal 0x1DF4E0: which end of the side is touched
+  { address = "0x00115094", value = "0x0c077d38" }, # the same, in FUN_00114e68
+  { address = "0x0013c3e4", value = "0x0c077d39" }, # or $v1, $v1, $a1 -> jal 0x1DF4E4: the stick held along the side
+  { address = "0x0013c438", value = "0x0c077d3d" }, # lui $v0, 0x23 -> jal 0x1DF4F4: the corner to go round
+  # The computer's choices: its distance to the corner its opponent names (four kept, more in the store), the rope
+  # behind it (FUN_00112648), and "beyond a corner" (FUN_00112978, FUN_00112ad8)
+  { address = "0x0010bb88", value = "0x0c077d3e" }, # sll $v0, $v0, 2 -> jal 0x1DF4F8: the distance read (FUN_0010ba78)
+  { address = "0x0010bbd0", value = "0x0c077d3f" }, # the same -> jal 0x1DF4FC
+  { address = "0x0010cfbc", value = "0x0c077d40" }, # sll $v0, $v1, 2 -> jal 0x1DF500 (FUN_0010cf68)
+  { address = "0x0010e8f0", value = "0x0c077d41" }, # sll $v0, $v0, 2 -> jal 0x1DF504 (FUN_0010e868)
+  { address = "0x0011276c", value = "0x0c077d42" }, # jal 0x130578 -> jal 0x1DF508: the rope point behind it
+  { address = "0x00112788", value = "0x0c077d43" }, # jal 0x12F220 -> jal 0x1DF50C: that side's inward angle
+  { address = "0x0011299c", value = "0x0c077d44" }, # lui $at, 0x420C -> jal 0x1DF510: beyond a corner (the dives)
+  { address = "0x00112b2c", value = "0x0c077d45" }, # the same -> jal 0x1DF514 (Action 51)
+  { address = "0x001142b0", value = "0x0c077d46" }, # addu $v0, $v0, $v1 -> jal 0x1DF518: a diagonal run's angle outside the ring
   { address = "0x0013ef40", value = "0x08077d20" }, # jr $ra -> j 0x1DF480: a wrestler's start place, adjusted
   { address = "0x0013ef70", value = "0x08077d20" }, # the same, the routine's other way out
   { address = "0x001197d4", value = "0x0c077d1a" }, # lui $at, 0x4204 -> jal 0x1DF468: inside the ring

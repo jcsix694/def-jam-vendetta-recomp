@@ -66,6 +66,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cfenv>
 #include <cmath>
@@ -3089,7 +3090,7 @@ namespace vendetta_arenas
         {
             if (id < 0 || object < 0x14u || uint64_t(object) + 0x80u > bytes)
                 return; // the picture cards (-1), the lights (-2), or nothing
-            if (highPoly && id >= 81 && id <= 92)
+            if ((highPoly && id >= 81 && id <= 92) || vendetta_ring::cornerPiece(id))
             {
                 const uint64_t end = uint64_t(object) + 16u + 64ull * word(copy + object) + 6ull * word(copy + object + 4u);
                 if (end <= bytes)
@@ -3131,7 +3132,7 @@ namespace vendetta_arenas
             uint64_t size = 0;
             if (std::memcmp(p, "BBD ", 4) == 0 || std::memcmp(p, "LIT ", 4) == 0)
                 size = 8ull + word(p + 4u);
-            else if (highPoly && id >= 81 && id <= 92)
+            else if ((highPoly && id >= 81 && id <= 92) || vendetta_ring::cornerPiece(id))
                 size = 16ull + 64ull * word(p) + 6ull * word(p + 4u);
             else
             {
@@ -3251,7 +3252,10 @@ namespace vendetta_arenas
         // "start": clock, "frames": [{"picture": TBP, "palette": CBP, "steps": n}]}] (or one as "flip")}]}. A
         // camera-facing piece's copies each run their own clock of its first flip. Glow over see-through over
         // solid; a mesh part with no mark is drawn solid; the game's own parts (2, 81-92, 98, 99, below 0) take none.
-        bool reservedPart(int32_t id) { return id < 0 || id == 2 || (id >= 81 && id <= 92) || id == 98 || id == 99; }
+        bool reservedPart(int32_t id)
+        {
+            return id < 0 || id == 2 || (id >= 81 && id <= 92) || id == 98 || id == 99 || vendetta_ring::cornerPiece(id);
+        }
 
         void resetMarks(ModArena &m)
         {
@@ -3701,6 +3705,24 @@ namespace vendetta_arenas
                       << std::endl;
         }
 
+        // A ring of another shape's own corner pieces (parts 1000 on, vendetta_ring::cornerPiece): their spots on the floor
+        // from the mod's file, for their fade; none for an arena without them
+        void cornerSpots(const ModArena &m)
+        {
+            std::vector<vendetta_ring::CornerSpot> spots;
+            const uint8_t *scene = m.file.data() + m.scene;
+            for (const auto &[id, object] : sceneParts(scene, m.sceneBytes))
+            {
+                vendetta_ring::CornerSpot spot;
+                if (vendetta_ring::cornerPiece(id) && pieceMiddle(scene, m.sceneBytes, id, spot.x, spot.z))
+                {
+                    spot.part = id;
+                    spots.push_back(spot);
+                }
+            }
+            vendetta_ring::setCornerSpots(spots);
+        }
+
         // A mixed sound set, put in for the match: the record of the set the arena's own sounds come from, with its crowd
         // bank, Flex's welcome line and the commentary word changed; or set 0's record as a copy of it when that set is 11
         // or 12 and there is a crowd (their numbers turn the crowd's chants off; neither has a loop, so nothing tied to a
@@ -3965,6 +3987,7 @@ namespace vendetta_arenas
                 redirectFlyIn(rdram, *g_current);
                 if (venue < 12u)
                     followPosts(rdram, *g_current);
+                cornerSpots(*g_current);
                 if (g_redirectedPath != ~0u)
                     std::cerr << "[arenas] " << g_current->what << ": its own fly-in (camera path " << g_redirectedPath << ")"
                               << std::endl;
@@ -3973,6 +3996,7 @@ namespace vendetta_arenas
             {
                 std::memcpy(vendetta_store::host(kCrowd), rdram + kGameCrowd, kGameCrowdBytes);
                 std::memcpy(vendetta_store::host(vendetta_store::kCrowdClips), rdram + kGameClips, kGameClipsBytes);
+                vendetta_ring::setCornerSpots({});
             }
             const ModArena *ringFrom = g_current ? g_current : g_gameArena;
             vendetta_ring::setArena(ringFrom && ringFrom->hasRing ? &ringFrom->ring : nullptr);
@@ -4192,11 +4216,57 @@ namespace vendetta_arenas
             return picks;
         }
 
-        // The mods' arenas ("replace": {"arenas": {"<game arena>": "<folder>"}}), read at start (their files at each load)
+        // The standard arenas: the ones the recomp brings for every player, made from the player's own disc by the setup
+        // (tools\make_standard_arenas.py, every install and update) into the game's folder: game\standard\arenas\<name>\, each
+        // in a mod arena's form. Each is a place on Choose Stage after the game's 12 and before the mods' new arenas, in
+        // every project, mods or none; a mod's "replace" naming one takes its place. VENDETTA_STANDARD=0: none (tests).
+        std::vector<std::filesystem::path> standardFolders()
+        {
+            std::vector<std::filesystem::path> out;
+            if (const char *v = std::getenv("VENDETTA_STANDARD"); v && *v == '0')
+                return out;
+            std::error_code ec;
+            const std::filesystem::path root = PS2Runtime::getIoPaths().elfDirectory / "standard" / "arenas";
+            if (std::filesystem::is_directory(root, ec))
+                for (const auto &f : std::filesystem::directory_iterator(root, ec))
+                    if (f.is_directory(ec) && std::filesystem::is_regular_file(f.path() / "model.arena", ec))
+                        out.push_back(f.path());
+            std::sort(out.begin(), out.end());
+            return out;
+        }
+
+        // An arena's name as names are compared: in capitals, a leading "THE " left off
+        std::string plainName(std::string name)
+        {
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::toupper(c)); });
+            while (!name.empty() && name.front() == ' ')
+                name.erase(name.begin());
+            while (!name.empty() && name.back() == ' ')
+                name.pop_back();
+            return name.rfind("THE ", 0) == 0 ? name.substr(4) : name;
+        }
+
+        struct ArenaEntry
+        {
+            std::string owner;            // the mod's name, or "the recomp" for a standard arena
+            std::string name;             // the arena it replaces; empty = a new place
+            std::string label;            // its folder as named, for messages
+            std::filesystem::path folder; // empty: the mod names no folder
+            bool standard = false;
+        };
+
+        void takeStagePictures(ModArena &m);
+
+        // The arenas: the standard ones, then the mods' ("replace": {"arenas": {"<arena>": "<folder>"}}, "new": {"arenas":
+        // [...]}), read at start (their files at each load)
         void findModArenas()
         {
             uint32_t nextStage = 12; // the new arenas' stages, in load order after the game's 12
-            std::map<uint32_t, std::string> replacedBy; // a game arena's stage -> the mod replacing it (the first one)
+            std::map<uint32_t, std::string> replacedBy; // a stage -> the mod replacing its arena (the first one)
+            std::map<std::string, size_t> standard;     // a standard arena's plain name -> its place in g_modArenas
+            std::vector<ArenaEntry> list;
+            for (const std::filesystem::path &folder : standardFolders())
+                list.push_back({"the recomp", "", folder.filename().string(), folder, true});
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
                 const vendetta_mods::Json *replace = mod.manifest.find("replace");
@@ -4211,26 +4281,38 @@ namespace vendetta_arenas
                     for (const vendetta_mods::Json &folder : newArenas->items)
                         entries.push_back({"", folder});
                 for (const auto &[name, value] : entries)
+                    list.push_back({mod.name, name, value.isString() ? value.text : std::string(),
+                                    value.isString() ? vendetta_mods::fileNamed(mod.folder, value.text) : std::filesystem::path(),
+                                    false});
+            }
+            for (const ArenaEntry &e : list)
+            {
                 {
-                    const bool isNew = name.empty();
-                    const std::string what = mod.name + ": " + (value.isString() ? value.text : name);
-                    const uint32_t venue = isNew ? nextStage : venueNamed(name);
+                    const std::string &name = e.name;
+                    // a mod replacing a standard arena takes its place (a new place, the standard one's stage)
+                    int takeOver = -1;
+                    if (!name.empty())
+                        if (const auto s = standard.find(plainName(name)); s != standard.end())
+                            takeOver = static_cast<int>(s->second);
+                    const bool isNew = name.empty() || takeOver >= 0;
+                    const std::string what = e.owner + ": " + (e.label.empty() ? name : e.label);
+                    const uint32_t venue = takeOver >= 0 ? g_modArenas[size_t(takeOver)].stage : name.empty() ? nextStage : venueNamed(name);
                     if (venue == ~0u)
                     {
                         vendetta_mods::problem() << "[arenas] " << what << ": \"" << name << "\" is not one of the game's arenas"
                                                  << std::endl;
-                        vendetta_mods::blocking(mod.name + " replaces the arena \"" + name + "\", which isn't in the game.");
+                        vendetta_mods::blocking(e.owner + " replaces the arena \"" + name + "\", which isn't in the game.");
                         continue;
                     }
-                    if (const auto was = replacedBy.find(venue); !isNew && was != replacedBy.end())
+                    if (const auto was = replacedBy.find(venue); !name.empty() && was != replacedBy.end())
                     {
+                        const std::string replaced = takeOver >= 0 ? name : venueName(venue);
                         vendetta_mods::problem() << "[arenas] " << what << " is skipped: " << was->second << " already replaces "
-                                                 << venueName(venue) << " (earlier in the load order)" << std::endl;
-                        vendetta_mods::blocking(was->second + " and " + mod.name + " both replace " + venueName(venue) + ".");
+                                                 << replaced << " (earlier in the load order)" << std::endl;
+                        vendetta_mods::blocking(was->second + " and " + e.owner + " both replace " + replaced + ".");
                         continue;
                     }
-                    const std::filesystem::path folder = value.isString() ? vendetta_mods::fileNamed(mod.folder, value.text)
-                                                                          : std::filesystem::path();
+                    const std::filesystem::path &folder = e.folder;
                     std::error_code ec;
                     const std::array<uint32_t, 4> game = folder.empty() ? std::array<uint32_t, 4>{~0u, ~0u, ~0u, ~0u}
                                                                         : fromTheGame(folder, what);
@@ -4326,6 +4408,8 @@ namespace vendetta_arenas
                                                          << "left out" << std::endl;
                         }
                     readArenaJson(m);
+                    if (e.standard)
+                        takeStagePictures(m);
                     // Choose Stage's pictures (the GS textures' shapes: 256 x 128, 64 x 64; the name a 256 x 32 row); a game
                     // arena's named in arena.json wins over the file
                     if (m.gamePicture == ~0u && std::filesystem::is_regular_file(folder / "picture.png", ec))
@@ -4344,21 +4428,255 @@ namespace vendetta_arenas
                                                          << (std::string(file) == "thumbnail.png" ? "the \"?\" tile"
                                                              : std::string(file) == "name.png" ? "no name" : "no picture")
                                                          << std::endl;
-                        ++nextStage;
+                        if (takeOver < 0)
+                            ++nextStage;
                     }
-                    std::cerr << "[arenas] " << what << ": " << (isNew ? "a new place, stage " + std::to_string(m.stage)
-                                                                         : "replaces " + name)
+                    std::cerr << "[arenas] " << what << ": " << (takeOver >= 0 ? "replaces " + name + ", stage " + std::to_string(m.stage)
+                                                 : isNew ? "a new place, stage " + std::to_string(m.stage)
+                                                         : "replaces " + name)
                               << (m.gameModel ? " (the game's own arena, venue " : " (made from venue ") << m.venue << "; "
                               << m.pictures.size()
                               << " textures of its own; " << (m.flyIn.empty() ? "the arena's fly-in" : "its own fly-in")
                               << (m.mixed ? std::string(", its sounds mixed from the game's pieces")
                                           : ", the sounds of venue " + std::to_string(m.soundsVenue == ~0u ? m.venue : m.soundsVenue))
                               << ")" << std::endl;
-                    if (!isNew)
-                        replacedBy[venue] = mod.name;
-                    g_modArenas.push_back(std::move(m));
+                    if (!name.empty())
+                        replacedBy[venue] = e.owner;
+                    if (e.standard)
+                        standard[plainName(e.label)] = g_modArenas.size();
+                    if (takeOver >= 0)
+                        g_modArenas[size_t(takeOver)] = std::move(m);
+                    else
+                        g_modArenas.push_back(std::move(m));
                 }
             }
+        }
+
+        // ------------------------------------------------------------------ a standard arena's Choose Stage pictures
+        //
+        // VENDETTA_STAGE_PICTURES=<the arena's folder>|<eye x,y,z,target x,y,z,roll,fov>|<the big picture's cut u0,v0,u1,v1>|
+        // <the thumbnail's cut u0,v0,u1,v1> (the setup, once the graphics are prepared: a test match on the arena with
+        // VENDETTA_PRESENT=opengl, so the window's pictures come back to the host). The arena's fly-in is held at that
+        // camera; once the window has shown the camera there kPictureFrames pictures in a row, the picture is cut (the
+        // shares of its width and height) into picture.png (1024 x 512, four times Choose Stage's 256 x 128) and
+        // thumbnail.png (256 x 256), written into the folder, and the game ends. Each player's picture is taken on their
+        // own PC: a picture of the game is never part of the recomp.
+        std::filesystem::path g_picturesFolder;
+        float g_pictureCamera[8] = {};
+        float g_pictureCuts[2][4] = {};
+        std::atomic<int> g_pictureSteady{0};
+        std::atomic<bool> g_picturesTaken{false};
+        constexpr int kPictureFrames = 40;
+        constexpr uint32_t kCameraEye = 0x258090u; // the camera's place in the world (the posts' fade measures from it)
+
+        uint32_t crc32Of(const uint8_t *data, size_t size, uint32_t crc)
+        {
+            static uint32_t table[256];
+            static bool made = false;
+            if (!made)
+            {
+                for (uint32_t n = 0; n < 256u; ++n)
+                {
+                    uint32_t c = n;
+                    for (int k = 0; k < 8; ++k)
+                        c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+                    table[n] = c;
+                }
+                made = true;
+            }
+            for (size_t i = 0; i < size; ++i)
+                crc = table[(crc ^ data[i]) & 0xFFu] ^ (crc >> 8);
+            return crc;
+        }
+
+        // A PNG (8-bit RGBA, its picture stored in zlib's plain blocks: no compression needed for a picture written once)
+        bool writePng(const std::filesystem::path &file, uint32_t width, uint32_t height, const std::vector<uint8_t> &rgba)
+        {
+            std::vector<uint8_t> raw;
+            raw.reserve(size_t(width * 4u + 1u) * height);
+            for (uint32_t y = 0; y < height; ++y)
+            {
+                raw.push_back(0);
+                raw.insert(raw.end(), rgba.begin() + ptrdiff_t(size_t(y) * width * 4u), rgba.begin() + ptrdiff_t(size_t(y + 1u) * width * 4u));
+            }
+            std::vector<uint8_t> z = {0x78, 0x01};
+            uint32_t a = 1, b = 0;
+            for (const uint8_t c : raw)
+            {
+                a = (a + c) % 65521u;
+                b = (b + a) % 65521u;
+            }
+            for (size_t at = 0; at < raw.size();)
+            {
+                const size_t n = std::min<size_t>(65535u, raw.size() - at);
+                z.push_back(at + n == raw.size() ? 1u : 0u);
+                z.push_back(uint8_t(n & 0xFFu));
+                z.push_back(uint8_t(n >> 8));
+                z.push_back(uint8_t(~n & 0xFFu));
+                z.push_back(uint8_t((~n >> 8) & 0xFFu));
+                z.insert(z.end(), raw.begin() + ptrdiff_t(at), raw.begin() + ptrdiff_t(at + n));
+                at += n;
+            }
+            const uint32_t adler = (b << 16) | a;
+            for (int k = 3; k >= 0; --k)
+                z.push_back(uint8_t(adler >> (8 * k)));
+            std::vector<uint8_t> out = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+            auto chunk = [&](const char *kind, const std::vector<uint8_t> &data) {
+                const uint32_t n = static_cast<uint32_t>(data.size());
+                for (int k = 3; k >= 0; --k)
+                    out.push_back(uint8_t(n >> (8 * k)));
+                const size_t start = out.size();
+                out.insert(out.end(), kind, kind + 4);
+                out.insert(out.end(), data.begin(), data.end());
+                const uint32_t crc = crc32Of(out.data() + start, out.size() - start, 0xFFFFFFFFu) ^ 0xFFFFFFFFu;
+                for (int k = 3; k >= 0; --k)
+                    out.push_back(uint8_t(crc >> (8 * k)));
+            };
+            std::vector<uint8_t> header;
+            for (const uint32_t v : {width, height})
+                for (int k = 3; k >= 0; --k)
+                    header.push_back(uint8_t(v >> (8 * k)));
+            header.insert(header.end(), {8, 6, 0, 0, 0});
+            chunk("IHDR", header);
+            chunk("IDAT", z);
+            chunk("IEND", {});
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            f.write(reinterpret_cast<const char *>(out.data()), std::streamsize(out.size()));
+            return bool(f);
+        }
+
+        // A part of a picture (shares of its width and height) made `width` x `height`, each pixel the average of what it covers
+        std::vector<uint8_t> cutPicture(const uint8_t *rgba, uint32_t w, uint32_t h, const float cut[4], uint32_t width, uint32_t height)
+        {
+            std::vector<uint8_t> out(size_t(width) * height * 4u);
+            const float x0 = cut[0] * float(w), y0 = cut[1] * float(h), sx = (cut[2] - cut[0]) * float(w) / float(width),
+                        sy = (cut[3] - cut[1]) * float(h) / float(height);
+            for (uint32_t j = 0; j < height; ++j)
+                for (uint32_t i = 0; i < width; ++i)
+                {
+                    const int ax = std::clamp(int(x0 + sx * float(i)), 0, int(w) - 1);
+                    const int bx = std::clamp(int(std::ceil(x0 + sx * float(i + 1u))), ax + 1, int(w));
+                    const int ay = std::clamp(int(y0 + sy * float(j)), 0, int(h) - 1);
+                    const int by = std::clamp(int(std::ceil(y0 + sy * float(j + 1u))), ay + 1, int(h));
+                    uint32_t sum[3] = {};
+                    for (int y = ay; y < by; ++y)
+                        for (int x = ax; x < bx; ++x)
+                            for (int c = 0; c < 3; ++c)
+                                sum[c] += rgba[(size_t(y) * w + size_t(x)) * 4u + size_t(c)];
+                    const uint32_t n = uint32_t((bx - ax) * (by - ay));
+                    uint8_t *o = &out[(size_t(j) * width + i) * 4u];
+                    for (int c = 0; c < 3; ++c)
+                        o[c] = uint8_t((sum[c] + n / 2u) / n);
+                    o[3] = 255;
+                }
+            return out;
+        }
+
+        void stagePictureTap(const uint8_t *rgba, uint32_t width, uint32_t height)
+        {
+            if (g_picturesTaken.load() || !g_runtime || width < 64u || height < 64u)
+                return;
+            float eye[3];
+            std::memcpy(eye, g_runtime->memory().getRDRAM() + kCameraEye, sizeof(eye));
+            const float dx = eye[0] - g_pictureCamera[0], dy = eye[1] - g_pictureCamera[1], dz = eye[2] - g_pictureCamera[2];
+            if (dx * dx + dy * dy + dz * dz > 1.0f)
+            {
+                g_pictureSteady = 0;
+                return;
+            }
+            if (++g_pictureSteady < kPictureFrames || g_picturesTaken.exchange(true))
+                return;
+            if (const char *full = std::getenv("VENDETTA_STAGE_PICTURES_FULL"); full && *full) // the whole picture too (a test)
+            {
+                const float all[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+                writePng(full, width, height, cutPicture(rgba, width, height, all, width, height));
+            }
+            const bool big = writePng(g_picturesFolder / "picture.png", 1024u, 512u,
+                                      cutPicture(rgba, width, height, g_pictureCuts[0], 1024u, 512u));
+            std::vector<uint8_t> tile = cutPicture(rgba, width, height, g_pictureCuts[1], 256u, 256u);
+            // Choose Stage's tiles are slanted: every one of the game's thumbnails is see-through in a corner cut at the
+            // top left (6 of 64 across, running out 21 down) and the same at the bottom right
+            for (uint32_t y = 0; y < 256u; ++y)
+                for (uint32_t x = 0; x < 256u; ++x)
+                {
+                    auto cut = [](float down) { return down < 84.0f ? 24.0f * (1.0f - down / 84.0f) : 0.0f; };
+                    const float fx = float(x) + 0.5f, fy = float(y) + 0.5f;
+                    const float in = std::min(fx - cut(fy), (256.0f - fx) - cut(256.0f - fy));
+                    tile[(size_t(y) * 256u + x) * 4u + 3u] = uint8_t(std::clamp(in, 0.0f, 1.0f) * 255.0f);
+                }
+            const bool thumb = writePng(g_picturesFolder / "thumbnail.png", 256u, 256u, tile);
+            std::cerr << "[arenas] stage pictures " << (big && thumb ? "saved" : "not saved") << " into "
+                      << g_picturesFolder.string() << " from a " << width << "x" << height << " picture" << std::endl;
+            std::fflush(stderr);
+            std::_Exit(big && thumb ? 0 : 2);
+        }
+
+        // VENDETTA_STAGE_PICTURES read: false when it isn't set (or can't be used, said on stderr)
+        bool startStagePictures()
+        {
+            const char *value = std::getenv("VENDETTA_STAGE_PICTURES");
+            if (!value || !*value)
+                return false;
+            std::vector<std::string> parts;
+            std::string part;
+            for (const char *c = value;; ++c)
+                if (*c == '|' || *c == '\0')
+                {
+                    parts.push_back(part);
+                    part.clear();
+                    if (*c == '\0')
+                        break;
+                }
+                else
+                    part += *c;
+            auto numbers = [](const std::string &text, float *out, int count) {
+                const char *s = text.c_str();
+                for (int i = 0; i < count; ++i)
+                {
+                    char *end = nullptr;
+                    out[i] = std::strtof(s, &end);
+                    if (end == s)
+                        return false;
+                    s = *end == ',' ? end + 1 : end;
+                }
+                return true;
+            };
+            if (parts.size() != 4u || !numbers(parts[1], g_pictureCamera, 8) || !numbers(parts[2], g_pictureCuts[0], 4) ||
+                !numbers(parts[3], g_pictureCuts[1], 4))
+            {
+                std::cerr << "[arenas] VENDETTA_STAGE_PICTURES can't be used (<folder>|<8 camera numbers>|<4 cut>|<4 cut>)" << std::endl;
+                return false;
+            }
+            g_picturesFolder = parts[0];
+            PS2Runtime::setFrameTap(stagePictureTap);
+            std::thread([] {
+                std::this_thread::sleep_for(std::chrono::minutes(4));
+                std::cerr << "[arenas] stage pictures: the camera was never seen there, nothing saved" << std::endl;
+                std::fflush(stderr);
+                std::_Exit(3);
+            }).detach();
+            std::cerr << "[arenas] stage pictures for " << g_picturesFolder.string() << ": the fly-in held at the camera"
+                      << std::endl;
+            return true;
+        }
+
+        // The standard arena whose pictures are being taken: its fly-in a still shot at the camera
+        void takeStagePictures(ModArena &m)
+        {
+            std::error_code ec;
+            if (g_picturesFolder.empty() || !std::filesystem::equivalent(m.folder, g_picturesFolder, ec))
+                return;
+            const int32_t last = 900, count = 2;
+            std::vector<uint8_t> path(8u + 0x24u * 2u);
+            std::memcpy(path.data(), &last, 4);
+            std::memcpy(path.data() + 4, &count, 4);
+            for (int k = 0; k < 2; ++k)
+            {
+                const int32_t frame = k ? last : 0;
+                std::memcpy(path.data() + 8u + 0x24u * k, &frame, 4);
+                std::memcpy(path.data() + 12u + 0x24u * k, g_pictureCamera, 32);
+            }
+            m.flyIn = std::move(path);
         }
     }
 
@@ -4413,6 +4731,7 @@ namespace vendetta_arenas
         if ((g_originalSounds = runtime.lookupFunction(kSounds)) != nullptr)
             runtime.replaceFunction(kSounds, sounds);
         g_fullStandIn = std::getenv("VENDETTA_ARENA_FULLSTANDIN") && *std::getenv("VENDETTA_ARENA_FULLSTANDIN") != '0';
+        startStagePictures();
         findModArenas();
         const char *value = std::getenv("VENDETTA_ARENADRAW");
         const bool off = !value || !*value || std::string(value) == "0";

@@ -18,6 +18,8 @@
 #include "vendetta_ring.h"
 #include "vendetta_store.h"
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -27,7 +29,9 @@
 #include <initializer_list>
 #include <iostream>
 #include <iterator>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace vendetta_ring
 {
@@ -92,10 +96,39 @@ namespace vendetta_ring
         constexpr uint32_t kHookStepAngle = kHookFirst + 132u;   // jal from 0x12415C
         constexpr uint32_t kHookStepMove = kHookFirst + 136u;    // jal from 0x124170
         constexpr uint32_t kHookStartFacing = kHookFirst + 140u; // jal from 0x13F000, in place of jal FUN_00130438
+        constexpr uint32_t kHookPushAxes = kHookFirst + 144u;    // jal from 0x12B160 in FUN_0012acc8, the push's axes
+        // A run's start (FUN_00114140): the corner the stick names, the corner already at, the rope point ahead, the run's
+        // angle, and the run along the apron
+        constexpr uint32_t kHookRunCorner = kHookFirst + 148u;   // jal from 0x114178, in place of jal FUN_00132d30
+        // Going round a corner on the apron (FUN_0013c388; the apron moves in FUN_00114e68)
+        constexpr uint32_t kHookApronEnd = kHookFirst + 152u;    // jal from 0x13C3B4 and 0x115094, in place of jal FUN_0013e0e8
+        constexpr uint32_t kHookApronAlong = kHookFirst + 156u;  // jal from 0x13C3E4
+        constexpr uint32_t kHookApronCorner = kHookFirst + 172u; // jal from 0x13C438
+        constexpr uint32_t kHookRunAngle = kHookFirst + 160u;    // jal from 0x114280
+        constexpr uint32_t kHookApronRun = kHookFirst + 164u;    // jal from 0x11424C and 0x1143A8
+        constexpr uint32_t kHookApronRunWay = kHookFirst + 168u; // jal from 0x114368, in place of jal FUN_0012f220
+        constexpr uint32_t kStickCorner = 0x132D30u, kCornerAt = 0x12A5B8u, kRopeAhead = 0x12A698u;
+        constexpr uint32_t kNearRope = 0x1144C0u;                // FUN_001144c0: already close to the rope a run would go to
+        constexpr uint32_t kRoundCorner = 0x113BF0u;             // FUN_00113bf0: state 3, round a corner on the apron
+        // The computer's choices: its distances to the corners, the rope behind it, "beyond a corner"
+        constexpr uint32_t kHookCpuCorner1 = kHookFirst + 176u;  // jal from 0x10BB88, in place of sll $v0, $v0, 2
+        constexpr uint32_t kHookCpuCorner2 = kHookFirst + 180u;  // jal from 0x10BBD0, the same
+        constexpr uint32_t kHookCpuCorner3 = kHookFirst + 184u;  // jal from 0x10CFBC, in place of sll $v0, $v1, 2
+        constexpr uint32_t kHookCpuCorner4 = kHookFirst + 188u;  // jal from 0x10E8F0, in place of sll $v0, $v0, 2
+        constexpr uint32_t kHookCpuRopeFoot = kHookFirst + 192u; // jal from 0x11276C, in place of jal FUN_00130578
+        constexpr uint32_t kHookCpuRopeAngle = kHookFirst + 196u; // jal from 0x112788, in place of jal FUN_0012f220
+        constexpr uint32_t kHookCpuBeyond1 = kHookFirst + 200u;  // jal from 0x11299C, in place of lui $at, 0x420C
+        constexpr uint32_t kHookCpuBeyond2 = kHookFirst + 204u;  // jal from 0x112B2C, the same
+        constexpr uint32_t kHookOutsideCorner = kHookFirst + 208u; // jal from 0x1142B0, in place of addu $v0, $v0, $v1
+        constexpr uint32_t kCpuSees = 0x10F5D0u, kRopeDistanceOf = 0x1100B0u, kAngleTo = 0x130578u;
+        constexpr uint32_t kCpuCornerExtra = 0x033D0A00u;        // 4 computer records x 12 corners past the fourth
+        constexpr uint32_t kCornerReach = 0x294A04u;             // FUN_0012a5b8's four distances, by its second argument
+        constexpr uint32_t kGameInAngles = 0x235C30u;            // the game's inward angle by its 0 to 3 side number
         constexpr uint32_t kAngleApart = 0x12F220u;              // FUN_0012f220: the difference of two angles
         constexpr uint32_t kFacingBySide = 0x033D0900u;          // each side's inward angle, read through the game's own sum
         constexpr uint32_t kNoSide = 99u;                        // a side number none of the game's cases match
         constexpr uint32_t kMatchKind = 0x2361CEu;               // the bits of what kind of match this is
+        constexpr uint32_t kMatchFlags = 0x2361CCu;              // more of the match setup (0x20: tag partners beside)
         constexpr uint32_t kPosts = 0x033D0800u;              // the floor posts {x, y, z}
 
         // Fighter fields
@@ -105,7 +138,9 @@ namespace vendetta_ring
         uint64_t g_wallSearches = 0;
         PS2Runtime::RecompiledFunction g_linkWallLists = nullptr, g_nearestSide = nullptr, g_ringDraw = nullptr, g_pullRope = nullptr,
                                        g_ropeSpring = nullptr, g_clearRopes = nullptr, g_ropeWindows = nullptr, g_startMove = nullptr, g_whipDirection = nullptr, g_turnTo = nullptr, g_moveBy = nullptr,
-                                       g_apronStick = nullptr, g_angleApart = nullptr;
+                                       g_apronStick = nullptr, g_angleApart = nullptr, g_stickCorner = nullptr, g_cornerAt = nullptr,
+                                       g_ropeAhead = nullptr, g_nearRope = nullptr, g_roundCorner = nullptr, g_cpuSees = nullptr,
+                                       g_ropeDistanceOf = nullptr, g_angleTo = nullptr;
 
         // The tables the fight reads the ring's corners from, moved to the store's fixed area where they can hold more
         // entries (config/patches.toml moves the reads; each copy keeps its original's low 16 bits).
@@ -137,6 +172,7 @@ namespace vendetta_ring
 
         // The game's own lists and the outside barrier's records (kept: every arena has the same barrier)
         constexpr uint32_t kGameRingLists = 0x295540u, kGameApronLists = 0x2955A0u, kGameFloorLists = 0x235BA8u;
+        constexpr uint32_t kGameApronBySide = 0x235DA0u; // the apron's wall list by its side, 0 to 3
         constexpr uint32_t kGameEnd35A = 0x295570u, kGameEnd35B = 0x295578u, kGameEnd33A = 0x2955D0u, kGameEnd33B = 0x2955D8u;
         constexpr uint32_t kBarrierFirst = 0x29B5D0u, kBarrierLast = 0x29B4E0u; // edges 30 and 33, linked 30 31 32 33
         constexpr uint32_t kGameRecordsFirst = 0x29B260u, kGameRecordsCount = 41u;
@@ -163,7 +199,8 @@ namespace vendetta_ring
         float g_sideTangent[kMaxSides][2] = {};    // and its direction along the ropes
         int g_sideBand[kMaxSides] = {};            // the old code's side number for it (0 back, 1 right, 2 front, 3 left)
         uint32_t g_ropes = 0, g_apron = 0, g_outer = 0, g_ends = 0, g_wallsEnd = 0;
-        uint32_t g_ringList = 0, g_apronList = 0, g_floorList = 0, g_endLists = 0;
+        uint32_t g_ringList = 0, g_floorList = 0, g_endLists = 0;
+        uint32_t g_apronLists[kMaxSides] = {}; // each apron side's walls, as the game has a list for each of its four
         uint8_t g_direction[4] = {0xFFu, 0xFFu, 0xFFu, 0xFFu}; // each player's rope direction, kept while near that rope
 
         // VENDETTA_RINGTRACE=<file>: each wall search's fighter, its place, facing, state and ring numbers, for comparing runs
@@ -229,6 +266,47 @@ namespace vendetta_ring
                 }
             }
             return best;
+        }
+
+        // The corner most in the direction {wayX, wayZ} seen from {x, z}: the one whose own direction from there is
+        // closest to it
+        int cornerToward(float x, float z, float wayX, float wayZ)
+        {
+            const float toCorner = g_ring.ropeDistance / std::cos(kPi / g_sides);
+            int best = 0;
+            float bestDot = -2.0f;
+            for (int k = 0; k < g_sides; ++k)
+            {
+                const float rad = g_cornerAngle[k] * kPi / 180.0f;
+                const float dx = std::sin(rad) * toCorner - x, dz = std::cos(rad) * toCorner - z;
+                const float dot = (dx * wayX + dz * wayZ) / (std::sqrt(dx * dx + dz * dz) + 0.0001f);
+                if (dot > bestDot)
+                {
+                    bestDot = dot;
+                    best = k;
+                }
+            }
+            return best;
+        }
+
+        // How far a line from {px, pz} going {wx, wz} runs before it meets the ropes (0 if it never does)
+        float ropeHit(float px, float pz, float wx, float wz)
+        {
+            float nearest = 0.0f;
+            bool hit = false;
+            for (int k = 0; k < g_sides; ++k)
+            {
+                const float nx = g_sideNormal[k][0], nz = g_sideNormal[k][1], toward = nx * wx + nz * wz;
+                if (toward <= 1e-4f)
+                    continue;
+                const float t = (g_ring.ropeDistance - (nx * px + nz * pz)) / toward;
+                if (t >= 0.0f && (!hit || t < nearest))
+                {
+                    nearest = t;
+                    hit = true;
+                }
+            }
+            return nearest;
         }
 
         // A wall's +0x30 normal and +0x3C size, as FUN_00130ba8 works them out
@@ -378,18 +456,27 @@ namespace vendetta_ring
                 putWall(rdram, at, corner(k, r.ropeDistance), corner(k + 1, r.ropeDistance), top, r.matHeight, -g_sideNormal[k][0],
                         -g_sideNormal[k][1], g_sideBand[k] + 1, 0x20 | stickBit(g_sideBand[k]), 0x1A);
             link(g_ropes, g_sides);
+            // each apron side a strip as the square's: the ring's side (more 4), its outer edge (2), and a wall at each end (0)
+            // where the ring's side ends, so a wrestler on it stops there; four walls a side, in a list of their own
             g_apron = at;
+            const float width = r.apronOuter - r.apronInner;
             for (int k = 0; k < g_sides; ++k)
             {
-                const int back = (g_sideBand[k] + 2) & 3;
-                putWall(rdram, at, corner(k, r.apronInner), corner(k + 1, r.apronInner), top, r.matHeight, g_sideNormal[k][0],
-                        g_sideNormal[k][1], 10 + 2 * k, 0x40 | stickBit(back), 4);
+                const float nx = g_sideNormal[k][0], nz = g_sideNormal[k][1], tx = g_sideTangent[k][0], tz = g_sideTangent[k][1];
+                const Vec a = corner(k, r.apronInner), b = corner(k + 1, r.apronInner);
+                const Vec aOut = {a.x + nx * width, 0.0f, a.z + nz * width}, bOut = {b.x + nx * width, 0.0f, b.z + nz * width};
+                const int back = (g_sideBand[k] + 2) & 3, number = 10 + 4 * k;
+                const int towardA = bandOfAngle(std::atan2(-tx, -tz) * 180.0f / kPi), towardB = bandOfAngle(std::atan2(tx, tz) * 180.0f / kPi);
+                putWall(rdram, at, a, b, top, r.matHeight, nx, nz, number, 0x40 | stickBit(back), 4);
                 at += kRecordBytes;
-                putWall(rdram, at, corner(k, r.apronOuter), corner(k + 1, r.apronOuter), top, r.matHeight, -g_sideNormal[k][0],
-                        -g_sideNormal[k][1], 11 + 2 * k, 0x40 | stickBit(g_sideBand[k]), 2);
+                putWall(rdram, at, aOut, bOut, top, r.matHeight, -nx, -nz, number + 1, 0x40 | stickBit(g_sideBand[k]), 2);
                 at += kRecordBytes;
+                putWall(rdram, at, a, aOut, top, r.matHeight, tx, tz, number + 2, 0x40 | stickBit(towardA), 0);
+                at += kRecordBytes;
+                putWall(rdram, at, b, bOut, top, r.matHeight, -tx, -tz, number + 3, 0x40 | stickBit(towardB), 0);
+                at += kRecordBytes;
+                link(at - 4u * kRecordBytes, 4);
             }
-            link(g_apron, g_sides * 2);
             g_outer = at;
             for (int k = 0; k < g_sides; ++k, at += kRecordBytes)
                 putWall(rdram, at, corner(k, r.ringSide), corner(k + 1, r.ringSide), r.matHeight, 0.0f, g_sideNormal[k][0], g_sideNormal[k][1],
@@ -419,7 +506,8 @@ namespace vendetta_ring
 
             uint32_t list = kWallLists;
             g_ringList = putList(list, {{g_ropes, g_ropes + (g_sides - 1) * kRecordBytes}});
-            g_apronList = putList(list, {{g_apron, g_apron + (g_sides * 2 - 1) * kRecordBytes}});
+            for (int k = 0; k < g_sides; ++k)
+                g_apronLists[k] = putList(list, {{g_apron + 4u * k * kRecordBytes, g_apron + (4u * k + 3u) * kRecordBytes}});
             g_floorList = putList(list, {{g_outer, g_outer + (g_sides - 1) * kRecordBytes}, {kBarrierFirst, kBarrierLast}});
             g_endLists = list;
             for (int variant = 0; variant < 2; ++variant)
@@ -523,10 +611,48 @@ namespace vendetta_ring
             for (uint32_t i = 0; i < kGameDataCount; ++i)
                 checkRecord(kGameDataRecords + i * kRecordBytes);
             std::cerr << "[ring] check: tables " << tableBad << " different, walls " << wallBad << " different of " << walls << std::endl;
+
+            // the game's own apron walls, by the apron's side (the lists at 0x235DA0): number, flags, the word after, corners
+            for (uint32_t side = 0; side < 4u; ++side)
+            {
+                const uint32_t list = Ps2FastRead32(rdram, kGameApronBySide + side * 4u);
+                for (uint32_t p = list; list != 0u && Ps2FastRead32(rdram, p) != 0u; p += 4u)
+                {
+                    const uint32_t pair = Ps2FastRead32(rdram, p), last = Ps2FastRead32(rdram, pair + 4u);
+                    int count = 0;
+                    for (uint32_t r = Ps2FastRead32(rdram, pair); r != 0u && count < 24; ++count,
+                                  r = r == last ? 0u : Ps2FastRead32(rdram, r + 0x48u))
+                    {
+                        const uint32_t numberFlags = Ps2FastRead32(rdram, r + 0x40u);
+                        std::cerr << "[ring] the game's apron, side " << side << ": wall " << (numberFlags & 0xFFFFu) << " flags 0x" << std::hex
+                                  << (numberFlags >> 16) << " more 0x" << Ps2FastRead32(rdram, r + 0x44u) << std::dec;
+                        for (uint32_t c = 0; c < 4u; ++c)
+                            std::cerr << " (" << readFloat(rdram, r + c * 12u) << " " << readFloat(rdram, r + c * 12u + 4u) << " "
+                                      << readFloat(rdram, r + c * 12u + 8u) << ")";
+                        std::cerr << std::endl;
+                    }
+                }
+            }
         }
 
         void trace(uint8_t *rdram, uint32_t fighter)
         {
+            if (g_log && g_poison != 0u) // with the originals poisoned: the first time a fighter's place stops being a number
+            {
+                static bool told[4] = {};
+                const uint32_t player = Ps2FastRead32(rdram, fighter + kPlayer) & 3u;
+                if (!told[player] && std::isnan(readFloat(rdram, fighter + 0xCCu)))
+                {
+                    told[player] = true;
+                    std::cerr << "[ring] player " << player << "'s place is not a number: state " << Ps2FastRead32(rdram, fighter + 0x40u)
+                              << " step " << Ps2FastRead32(rdram, fighter + 0x44u) << ", the states before";
+                    for (uint32_t i = 0; i < 6u; ++i) // the history FUN_00102c20 keeps (30 entries from + 0x54, the newest first)
+                        std::cerr << " " << static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x54u + 4u * i));
+                    std::cerr << ", +0x414 " << static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x414u)) << ", +0x41C "
+                              << Ps2FastRead32(rdram, fighter + 0x41Cu) << ", +0x5AC 0x" << std::hex
+                              << (Ps2FastRead32(rdram, fighter + 0x5ACu) & 0xFFFFu) << std::dec << std::endl;
+                }
+            }
             if (!g_trace.is_open() || g_traced >= kTraceLines)
                 return;
             char line[160];
@@ -577,7 +703,7 @@ namespace vendetta_ring
             if (list - kGameRingLists < 0x20u)
                 return g_ringList;
             if (list - kGameApronLists < 0x20u)
-                return g_apronList;
+                return g_apronLists[sideOf(readFloat(rdram, fighter + 0xCCu), readFloat(rdram, fighter + 0xD4u))];
             if (list - kGameFloorLists < 0x40u)
                 return g_floorList;
             const int directions = g_sides / 2;
@@ -653,19 +779,18 @@ namespace vendetta_ring
                 static const float kStick[8][2] = {{0.0f, -1.0f}, {0.7071f, -0.7071f}, {1.0f, 0.0f},  {0.7071f, 0.7071f},
                                                    {0.0f, 1.0f},  {-0.7071f, 0.7071f}, {-1.0f, 0.0f}, {-0.7071f, -0.7071f}};
                 const float *way = kStick[direction & 7u];
-                int best = 0;
-                float bestDot = -2.0f;
+                direction = static_cast<uint32_t>(cornerToward(x, z, way[0], way[1])) * 2u + 1u;
+            }
+            // a whip toward a side whose way meets the ropes at one of the ring's corners (within the reach a run's corner
+            // is judged by, 0x294A0C) goes into that corner: on a hexagon the game's left and right go straight at its points
+            if ((direction & 1u) == 0u)
+            {
+                const float rad = gameDirection(direction) * kPi / 180.0f, wx = std::sin(rad), wz = std::cos(rad);
+                const float t = ropeHit(x, z, wx, wz), hx = x + wx * t, hz = z + wz * t;
+                const float reach = readFloat(rdram, kCornerReach + 8u);
                 for (int k = 0; k < g_sides; ++k)
-                {
-                    const float dx = cornerX(k) - x, dz = cornerZ(k) - z;
-                    const float dot = (dx * way[0] + dz * way[1]) / (std::sqrt(dx * dx + dz * dz) + 0.0001f);
-                    if (dot > bestDot)
-                    {
-                        bestDot = dot;
-                        best = k;
-                    }
-                }
-                direction = static_cast<uint32_t>(best) * 2u + 1u;
+                    if (std::hypot(cornerX(k) - hx, cornerZ(k) - hz) <= reach)
+                        direction = static_cast<uint32_t>(k) * 2u + 1u;
             }
             SET_GPR_U32(ctx, 2, direction);
             ctx->pc = getRegU32(ctx, 31);
@@ -815,33 +940,202 @@ namespace vendetta_ring
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        // The end of FUN_0013eaa8 (a wrestler's start place, $a2 the fighter): the kinds of match that stand wrestlers further
-        // out, moved inside the ring's sides
+        // ------------------------------------------------------------------ the start places and the intros
+
+        // A place by one of the square's corners, moved to the ring: to the ring's corner nearest that corner's angle (the
+        // near-left, near-right, far-left and far-right of a hexagon), the same distance in from that corner's two ropes
+        // (each of the square's ropes standing for the ring's side beside the corner whose normal is nearest its own), and
+        // the turn for what is done round it: that of the rope it is nearer to, in between by the square of the distances
+        // (on a hexagon 0 by a front or back rope, 30 by a slanted one, 15 in the corner's middle)
+        struct PlaceMove
+        {
+            float squareX, squareZ, ringX, ringZ, c, s, turn;
+            bool ok;
+        };
+
+        float normalAngle(float x, float z) { return std::atan2(x, z) * 180.0f / kPi; }
+
+        PlaceMove placeMoveFor(float x, float z)
+        {
+            PlaceMove m{x, z, x, z, 1.0f, 0.0f, 0.0f, false};
+            const float sx = x < 0.0f ? -1.0f : 1.0f, sz = z < 0.0f ? -1.0f : 1.0f, squareAngle = normalAngle(sx, sz);
+            auto apart = [](float a, float b) { return std::fabs(wrapDegrees(a - b)); };
+            int corner = 0;
+            for (int k = 1; k < g_sides; ++k)
+                if (apart(g_cornerAngle[k], squareAngle) < apart(g_cornerAngle[corner], squareAngle))
+                    corner = k;
+            // the square's two ropes there: across x (normal {sx, 0}) and across z ({0, sz}); how far in from each
+            const float inX = 35.0f - x * sx, inZ = 35.0f - z * sz, R = g_ring.ropeDistance;
+            const int before = (corner + g_sides - 1) % g_sides, after = corner; // the ring's sides ending and starting there
+            const float xAngle = normalAngle(sx, 0.0f), zAngle = normalAngle(0.0f, sz);
+            const float beforeAngle = normalAngle(g_sideNormal[before][0], g_sideNormal[before][1]);
+            const float afterAngle = normalAngle(g_sideNormal[after][0], g_sideNormal[after][1]);
+            const bool xIsBefore = apart(beforeAngle, xAngle) <= apart(afterAngle, xAngle);
+            const int sideX = xIsBefore ? before : after, sideZ = xIsBefore ? after : before;
+            // n1 . q = R - inX, n2 . q = R - inZ
+            const float a = g_sideNormal[sideX][0], b = g_sideNormal[sideX][1], c = g_sideNormal[sideZ][0], d = g_sideNormal[sideZ][1];
+            const float e = R - inX, f = R - inZ, det = a * d - b * c;
+            if (std::fabs(det) <= 1e-4f)
+                return m;
+            m.ringX = (e * d - b * f) / det;
+            m.ringZ = (a * f - e * c) / det;
+            const float turnX = wrapDegrees(normalAngle(a, b) - xAngle), turnZ = wrapDegrees(normalAngle(c, d) - zAngle);
+            const float nearX = inZ * inZ, nearZ = inX * inX; // the nearer the rope, the more its turn counts
+            m.turn = nearX + nearZ > 0.0f ? (turnX * nearX + turnZ * nearZ) / (nearX + nearZ) : 0.5f * (turnX + turnZ);
+            m.c = std::cos(m.turn * kPi / 180.0f);
+            m.s = std::sin(m.turn * kPi / 180.0f);
+            m.ok = true;
+            return m;
+        }
+
+        // A point near the place: the place itself goes to its ring place, the rest turned with it
+        void applyMove(const PlaceMove &m, float &x, float &z)
+        {
+            const float dx = x - m.squareX, dz = z - m.squareZ;
+            x = m.ringX + dx * m.c + dz * m.s;
+            z = m.ringZ + dz * m.c - dx * m.s;
+        }
+
+        // The end of FUN_0013eaa8 (a wrestler's start place, $a2 the fighter): its tables (0x29E348 on, filled at its first
+        // use; y 10.5 in all) by the match kind 0x2361CE and the player, every place by one of the square's corners: a 1-on-1
+        // in the near-left and far-right corners 25 in on each axis, tag's legal men the same with the partners on the apron
+        // behind them (38.5) or (0x2361CC 0x20) beside them along their corner's ropes, handicap's pair or three round the
+        // far-right corner, 3-way and 4-way one in each corner
         void startExit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             if (g_active)
             {
                 const uint32_t fighter = getRegU32(ctx, 6);
-                const uint32_t kind = rdram[kMatchKind];
-                float x = readFloat(rdram, fighter + 0xCCu), z = readFloat(rdram, fighter + 0xD4u);
-                if (kind & 1u) // a 1-on-1: the four places a wrestler can start from, inside the sides
+                const PlaceMove m = placeMoveFor(readFloat(rdram, fighter + 0xCCu), readFloat(rdram, fighter + 0xD4u));
+                if (m.ok)
                 {
-                    static const float kPlaces[4][2] = {{-26.0f, 0.0f}, {26.0f, 0.0f}, {25.0f, 25.0f}, {-25.0f, -25.0f}};
-                    const uint32_t player = Ps2FastRead32(rdram, fighter + kPlayer) & 3u;
-                    x = kPlaces[player][0];
-                    z = kPlaces[player][1];
+                    Ps2FastWrite32(rdram, fighter + 0xCCu, std::bit_cast<uint32_t>(m.ringX));
+                    Ps2FastWrite32(rdram, fighter + 0xD4u, std::bit_cast<uint32_t>(m.ringZ));
                 }
-                else if (kind & 0x32u)
-                    x -= std::copysign(14.7928f, x);
-                else if (kind & 0x0Cu)
-                {
-                    x = std::copysign(15.0f, x);
-                    z = std::copysign(25.9808f, z);
-                }
-                Ps2FastWrite32(rdram, fighter + 0xCCu, std::bit_cast<uint32_t>(x));
-                Ps2FastWrite32(rdram, fighter + 0xD4u, std::bit_cast<uint32_t>(z));
             }
             ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // The square's start place of a player in this kind of match, as FUN_0013eaa8 picks it (a later kind wins, as there)
+        void squarePlaceOf(uint8_t *rdram, uint32_t player, float &x, float &z)
+        {
+            static const float kOne[4][2] = {{-25.0f, 25.0f}, {25.0f, -25.0f}, {25.0f, 25.0f}, {-25.0f, -25.0f}};
+            static const float kAll[4][2] = {{-25.0f, 25.0f}, {25.0f, 25.0f}, {-25.0f, -25.0f}, {25.0f, -25.0f}};
+            static const float kTagBeside[4][2] = {{-17.0f, 27.0f}, {-27.0f, 17.0f}, {27.0f, -17.0f}, {17.0f, -27.0f}};
+            static const float kTagApron[4][2] = {{-25.0f, 25.0f}, {-25.0f, 38.5f}, {25.0f, -25.0f}, {25.0f, -38.5f}};
+            static const float kTwoOnOne[4][2] = {{-25.0f, 25.0f}, {27.0f, -17.0f}, {17.0f, -27.0f}, {17.0f, -27.0f}};
+            static const float kThreeOnOne[4][2] = {{-25.0f, 25.0f}, {15.0f, -30.0f}, {21.0f, -21.0f}, {30.0f, -15.0f}};
+            const uint8_t kind = rdram[kMatchKind];
+            const float *pick = kOne[player & 3u];
+            if (kind & 0x0Cu)
+                pick = kAll[player & 3u];
+            if (kind & 2u)
+                pick = (rdram[kMatchFlags] & 0x20u) ? kTagBeside[player & 3u] : kTagApron[player & 3u];
+            if (kind & 0x10u)
+                pick = kTwoOnOne[player & 3u];
+            if (kind & 0x20u)
+                pick = kThreeOnOne[player & 3u];
+            x = pick[0];
+            z = pick[1];
+        }
+
+        // An intro's scene (FUN_001245c8 builds them all at 0x29AF48 on: FUN_00124ae0 one wrestler, FUN_00124cc0 a tag pair,
+        // FUN_00124fd8 a handicap pair, FUN_00125158 a trio; entries of 0x20 bytes {player, place x y z, angles x y z, clip},
+        // the camera path at + 0x80, its flags at + 0x84) puts each wrestler at the middle facing by its spot, and the clip
+        // carries him to his corner of the square, filmed by a camera path fixed in the world (PAK 0). On the ring each
+        // wrestler's place and facing in the scene move by his start place's move (above), the scene's camera path by its
+        // first wrestler's; the path is put back at the next scene and at each match's start.
+        constexpr uint32_t kIntroScenes = 0x29AF48u, kIntroScenesBytes = 700u, kSceneStart = 0x1252A0u;
+        constexpr uint32_t kCameraTable = 0x140FD0Cu; // path n's self-relative offset at + 4n; {last frame, key count, keys}
+
+        uint32_t g_movedPath = 0u;            // the camera path whose keys are moved (its data's address; 0: none)
+        std::vector<uint32_t> g_movedPathKeys; // their eye x, z and target x, z as they were
+        std::unordered_map<uint32_t, std::array<uint32_t, 3>> g_movedEntries; // a scene entry: what was written (x, z, facing)
+        PS2Runtime::RecompiledFunction g_sceneStart = nullptr;
+
+        void putPathBack(uint8_t *rdram)
+        {
+            for (size_t k = 0; g_movedPath != 0u && 4u * k + 3u < g_movedPathKeys.size(); ++k)
+            {
+                const uint32_t key = g_movedPath + 8u + 0x24u * static_cast<uint32_t>(k);
+                Ps2FastWrite32(rdram, key + 0x04u, g_movedPathKeys[4 * k]);
+                Ps2FastWrite32(rdram, key + 0x0Cu, g_movedPathKeys[4 * k + 1]);
+                Ps2FastWrite32(rdram, key + 0x10u, g_movedPathKeys[4 * k + 2]);
+                Ps2FastWrite32(rdram, key + 0x18u, g_movedPathKeys[4 * k + 3]);
+            }
+            g_movedPath = 0u;
+            g_movedPathKeys.clear();
+        }
+
+        void movePath(uint8_t *rdram, uint32_t path, const PlaceMove &m)
+        {
+            if (path >= 1024u)
+                return;
+            const uint32_t slot = kCameraTable + path * 4u, data = slot + Ps2FastRead32(rdram, slot);
+            const uint32_t count = Ps2FastRead32(rdram, data + 4u);
+            if (count == 0u || count > 64u)
+                return;
+            g_movedPath = data;
+            for (uint32_t k = 0; k < count; ++k)
+            {
+                const uint32_t key = data + 8u + 0x24u * k;
+                for (const uint32_t at : {0x04u, 0x0Cu, 0x10u, 0x18u})
+                    g_movedPathKeys.push_back(Ps2FastRead32(rdram, key + at));
+                for (const uint32_t at : {0x04u, 0x10u}) // the eye, the target
+                {
+                    float x = readFloat(rdram, key + at), z = readFloat(rdram, key + at + 8u);
+                    applyMove(m, x, z);
+                    Ps2FastWrite32(rdram, key + at, std::bit_cast<uint32_t>(x));
+                    Ps2FastWrite32(rdram, key + at + 8u, std::bit_cast<uint32_t>(z));
+                }
+            }
+        }
+
+        // FUN_001252a0(scene): a scene's start (its camera path into 0x22B50C, then each wrestler in it placed by
+        // FUN_00125568, the others moved away)
+        void sceneStart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            putPathBack(rdram);
+            const uint32_t scene = getRegU32(ctx, 4);
+            // the arena's fly-in is built in the same place before the intros, but places no one (flags + 0x84 bit 1)
+            const bool placesWrestlers = (Ps2FastRead32(rdram, scene + 0x84u) & 1u) == 0u;
+            if (g_active && scene - kIntroScenes < kIntroScenesBytes && placesWrestlers)
+            {
+                bool camera = true;
+                for (uint32_t i = 0; i < 4u; ++i)
+                {
+                    const uint32_t entry = scene + i * 0x20u, player = Ps2FastRead32(rdram, entry);
+                    if (player > 3u)
+                        continue;
+                    float px, pz;
+                    squarePlaceOf(rdram, player, px, pz);
+                    const PlaceMove m = placeMoveFor(px, pz);
+                    if (!m.ok)
+                        continue;
+                    if (camera)
+                    {
+                        movePath(rdram, Ps2FastRead32(rdram, scene + 0x80u), m);
+                        camera = false;
+                    }
+                    const std::array<uint32_t, 3> now = {Ps2FastRead32(rdram, entry + 0x04u), Ps2FastRead32(rdram, entry + 0x0Cu),
+                                                         Ps2FastRead32(rdram, entry + 0x14u)};
+                    if (const auto it = g_movedEntries.find(entry); it != g_movedEntries.end() && it->second == now)
+                        continue; // this scene's entry already moved
+                    float x = std::bit_cast<float>(now[0]), z = std::bit_cast<float>(now[1]);
+                    applyMove(m, x, z);
+                    const float facing = wrapDegrees(std::bit_cast<float>(now[2]) + m.turn);
+                    Ps2FastWrite32(rdram, entry + 0x04u, std::bit_cast<uint32_t>(x));
+                    Ps2FastWrite32(rdram, entry + 0x0Cu, std::bit_cast<uint32_t>(z));
+                    Ps2FastWrite32(rdram, entry + 0x14u, std::bit_cast<uint32_t>(facing));
+                    g_movedEntries[entry] = {std::bit_cast<uint32_t>(x), std::bit_cast<uint32_t>(z), std::bit_cast<uint32_t>(facing)};
+                    if (g_log)
+                        std::cerr << "[ring] intro scene " << std::hex << scene << std::dec << ", player " << player << " (start "
+                                  << px << ", " << pz << " -> " << m.ringX << ", " << m.ringZ << ", turned " << m.turn
+                                  << "): placed at " << x << ", " << z << " facing " << facing << ", camera path "
+                                  << Ps2FastRead32(rdram, scene + 0x80u) << std::endl;
+                }
+            }
+            g_sceneStart(rdram, ctx, runtime);
         }
 
         // ------------------------------------------------------------------ angles by side
@@ -1157,7 +1451,7 @@ namespace vendetta_ring
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        // 0x13DA54: jal FUN_0013e130(fighter, step): a step along the apron follows the ring's side, stopping at its ends
+        // 0x13DA54: jal FUN_0013e130(fighter, step): a step along the apron follows the ring's side, its end walls stopping it
         void apronWalk(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             if (g_active)
@@ -1170,16 +1464,429 @@ namespace vendetta_ring
                 const float tx = g_sideTangent[side][0], tz = g_sideTangent[side][1];
                 const float nx = g_sideNormal[side][0], nz = g_sideNormal[side][1];
                 const float dotT = x * tx + z * tz, dotN = x * nx + z * nz;
-                float along = dotT > 0.25f ? 1.0f : (dotT < -0.25f ? -1.0f : 0.0f);
+                // nothing stops the step at the side's end: its end wall does, as on the square, and the wrestler held
+                // against it is what lets the move round the corner start (FUN_0013c388 reads the walls touched)
+                const float along = dotT > 0.25f ? 1.0f : (dotT < -0.25f ? -1.0f : 0.0f);
                 const float away = dotN > 0.25f ? 1.0f : (dotN < -0.25f ? -1.0f : 0.0f);
-                const float limit = g_ring.apronLine * std::tan(kPi / g_sides) - 9.0f;
-                if (along != 0.0f && (px * tx + pz * tz) * along >= limit)
-                    along = 0.0f;
                 const float speed = ctx->f[1];
                 Ps2FastWrite32(rdram, step, std::bit_cast<uint32_t>((tx * along + nx * away) * speed));
                 Ps2FastWrite32(rdram, step + 8u, std::bit_cast<uint32_t>((tz * along + nz * away) * speed));
             }
             g_moveBy(rdram, ctx, runtime);
+        }
+
+        // ------------------------------------------------------------------ going round a corner on the apron
+
+        // 0x13C3B4 and 0x115094: jal FUN_0013e0e8(fighter, the bits of the walls touched, +0x79C): which way along the apron's
+        // side those walls lie, 1 or 2, else 0: on the square only its end walls lie along a side. On the ring a slanted
+        // side's own walls have bits along it too, so it is read from the walls touched: an end wall of the side, 1 at its
+        // start (corner k, the -1 way), 2 at its end.
+        void apronEnd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active)
+            {
+                g_apronStick(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t fighter = getRegU32(ctx, 4);
+            uint64_t way = 0u;
+            if ((getRegU32(ctx, 5) & 0xFFFFu) != 0u)
+                for (const uint32_t edge : {Ps2FastRead32(rdram, fighter + 0x7A0u), Ps2FastRead32(rdram, fighter + 0x7A4u)})
+                    if (edge >= g_apron && edge < g_apron + 4u * static_cast<uint32_t>(g_sides) * kRecordBytes)
+                    {
+                        const uint32_t wall = ((edge - g_apron) / kRecordBytes) % 4u;
+                        if (wall == 2u)
+                            way = 1u;
+                        else if (wall == 3u)
+                            way = 2u;
+                    }
+            SET_GPR_U64(ctx, 2, way);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x13C3E4: or $v1, $v1, $a1, the stick bits along the apron's side either way (0x295658 / 0x295660 by its old side
+        // number), with and $v0, $v0, $v1 run first as this jal's delay slot: $v0 = the stick held along the side, else 0.
+        // On the ring: along the ring's own side.
+        void apronAlong(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t fighter = getRegU32(ctx, 16), stick = Ps2FastRead32(rdram, fighter + 0x668u);
+            if (!g_active)
+            {
+                const uint32_t mask = getRegU32(ctx, 3) | getRegU32(ctx, 5);
+                SET_GPR_U32(ctx, 3, mask);
+                SET_GPR_U32(ctx, 2, stick & mask);
+            }
+            else
+            {
+                const int side = sideOf(readFloat(rdram, fighter + 0xCCu), readFloat(rdram, fighter + 0xD4u));
+                float x, z;
+                stickDirection(stick & 0xFu, x, z);
+                const float size = std::sqrt(x * x + z * z);
+                const bool along = size > 0.0f && std::fabs(x * g_sideTangent[side][0] + z * g_sideTangent[side][1]) / size > 0.3f;
+                SET_GPR_U32(ctx, 3, along ? 1u : 0u);
+                SET_GPR_U32(ctx, 2, along ? 1u : 0u);
+            }
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x13C438: lui $v0, 0x23 (done here), after $a1 got the corner to go round (the old side number, -1 the 1 way, & 3):
+        // on the ring, the corner at the end touched ($s2 the way)
+        void apronCorner(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active)
+            {
+                const uint32_t fighter = getRegU32(ctx, 16);
+                const int side = sideOf(readFloat(rdram, fighter + 0xCCu), readFloat(rdram, fighter + 0xD4u));
+                SET_GPR_U32(ctx, 5, static_cast<uint32_t>(getRegU32(ctx, 18) == 1u ? side : (side + 1) % g_sides));
+            }
+            SET_GPR_U32(ctx, 2, 0x00230000u);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // FUN_00113bf0(fighter): state 3, round a corner on the apron: picture 0 starts clip 0x2741 / 0x2742, which carries
+        // the wrestler round the post through the square's 90 degrees; after it, the next clip starts where it left him,
+        // facing as it turned (+0x148). On the ring the corner turns 360 / sides, so while the clip plays the wrestler's
+        // whole frame (the anchor, the place and facing it ends with) is turned about the corner of the two apron lines
+        // by the clip's turn so far (+0x130) x (360 / sides / 90 - 1): a third back on six sides, nothing on four. The
+        // clip's own motion is kept and it ends on the next side.
+        float g_roundTurned[4] = {};
+
+        void turnAbout(uint8_t *rdram, uint32_t xAt, uint32_t zAt, float px, float pz, float c, float s)
+        {
+            const float x = readFloat(rdram, xAt) - px, z = readFloat(rdram, zAt) - pz;
+            Ps2FastWrite32(rdram, xAt, std::bit_cast<uint32_t>(px + x * c + z * s));
+            Ps2FastWrite32(rdram, zAt, std::bit_cast<uint32_t>(pz + z * c - x * s));
+        }
+
+        void roundCorner(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active)
+            {
+                const uint32_t fighter = getRegU32(ctx, 4), player = Ps2FastRead32(rdram, fighter + kPlayer) & 3u;
+                const uint32_t step = Ps2FastRead32(rdram, fighter + 0x44u);
+                const int corner = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x414u));
+                if (step == 0u)
+                    g_roundTurned[player] = 0.0f;
+                else if (step == 1u && corner >= 0 && corner < g_sides)
+                {
+                    const float want = readFloat(rdram, fighter + 0x130u) * (360.0f / static_cast<float>(g_sides) / 90.0f - 1.0f);
+                    const float by = want - g_roundTurned[player];
+                    if (std::fabs(by) > 1e-4f)
+                    {
+                        g_roundTurned[player] = want;
+                        const float toCorner = g_ring.apronLine / std::cos(kPi / g_sides), rad = g_cornerAngle[corner] * kPi / 180.0f;
+                        const float px = std::sin(rad) * toCorner, pz = std::cos(rad) * toCorner;
+                        const float c = std::cos(by * kPi / 180.0f), s = std::sin(by * kPi / 180.0f);
+                        turnAbout(rdram, fighter + 0xCCu, fighter + 0xD4u, px, pz, c, s);   // the anchor
+                        turnAbout(rdram, fighter + 0x138u, fighter + 0x140u, px, pz, c, s); // where the clip has him
+                        for (const uint32_t angle : {0xDCu, 0x148u})                       // the facing, and after the clip
+                            Ps2FastWrite32(rdram, fighter + angle,
+                                           std::bit_cast<uint32_t>(wrapDegrees(readFloat(rdram, fighter + angle) + by)));
+                    }
+                }
+            }
+            g_roundCorner(rdram, ctx, runtime);
+        }
+
+        // ------------------------------------------------------------------ a run's start (FUN_00114140)
+
+        // 0x114178: jal FUN_00132d30(stick): the corner a diagonal on the stick names (the game's four, by the diagonal alone),
+        // or -1. On the ring: the corner most that way from the wrestler, any of its corners, as a whip judges it.
+        void runCorner(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            // outside the ring (+0x5AC bit 4 clear) a run goes the stick's own way, as on the square: the game's corner
+            if (!g_active || !(Ps2FastRead32(rdram, getRegU32(ctx, 17) + 0x5ACu) & 4u))
+            {
+                g_stickCorner(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t bits = getRegU32(ctx, 4) & 0xFu;
+            if (bits != 3u && bits != 6u && bits != 0xCu && bits != 9u)
+                SET_GPR_S32(ctx, 2, -1);
+            else
+            {
+                const uint32_t fighter = getRegU32(ctx, 17);
+                float x, z;
+                stickDirection(bits, x, z);
+                SET_GPR_S32(ctx, 2, cornerToward(readFloat(rdram, fighter + kHipsX), readFloat(rdram, fighter + kHipsZ),
+                                                 x * 0.70710678f, z * 0.70710678f));
+            }
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // FUN_0012a5b8(point, reach): the first corner within one of four distances of a point (x and z), or -1; the
+        // game's loop stops after four corners, here all the ring's
+        void cornerAt(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active)
+            {
+                g_cornerAt(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t point = getRegU32(ctx, 4);
+            const int32_t reach = static_cast<int32_t>(getRegU32(ctx, 5));
+            const float limit = reach >= 0 && reach <= 3 ? readFloat(rdram, kCornerReach + static_cast<uint32_t>(reach) * 4u) : 0.0f;
+            const float px = readFloat(rdram, point), pz = readFloat(rdram, point + 8u);
+            int found = -1;
+            for (int k = 0; k < g_sides && found < 0; ++k)
+            {
+                const uint32_t corner = kTables[kCornerPoints].store + static_cast<uint32_t>(k) * 12u;
+                const float dx = readFloat(rdram, corner) - px, dz = readFloat(rdram, corner + 8u) - pz;
+                if (std::sqrt(dx * dx + dz * dz) <= limit)
+                    found = k;
+            }
+            SET_GPR_S32(ctx, 2, found);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // FUN_0012a698(angle $f12, point, out): where a line from the point at that angle meets the ropes, at the height 10.5
+        // (the game's works on the square's ropes at 35); $v0 is left as the side that point is nearest (the game's last
+        // call, FUN_00130438), which FUN_001155e8 keeps
+        void ropeAhead(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active)
+            {
+                g_ropeAhead(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t point = getRegU32(ctx, 4), out = getRegU32(ctx, 5);
+            const float rad = ctx->f[12] * kPi / 180.0f, wx = std::sin(rad), wz = std::cos(rad);
+            const float px = readFloat(rdram, point), pz = readFloat(rdram, point + 8u);
+            const float t = ropeHit(px, pz, wx, wz), hx = px + wx * t, hz = pz + wz * t;
+            if (out != 0u)
+            {
+                Ps2FastWrite32(rdram, out, std::bit_cast<uint32_t>(hx));
+                Ps2FastWrite32(rdram, out + 4u, std::bit_cast<uint32_t>(10.5f));
+                Ps2FastWrite32(rdram, out + 8u, std::bit_cast<uint32_t>(hz));
+            }
+            SET_GPR_U32(ctx, 2, static_cast<uint32_t>(bandOfAngle(std::atan2(hx, hz) * 180.0f / kPi)));
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x114280: addu $a0, $a0, $v1, with lwc1 $f0, 0($a0) (the run's angle, toward the rope the stick names) run first
+        // as this jal's delay slot, so done after the sum here
+        void runAngle(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t at = getRegU32(ctx, 4) + getRegU32(ctx, 3), fighter = getRegU32(ctx, 17);
+            SET_GPR_U32(ctx, 4, at);
+            // outside the ring the run goes the stick's way: the game's own angle for that side (its table 0x235C20)
+            ctx->f[0] = (Ps2FastRead32(rdram, fighter + 0x5ACu) & 4u) ? angleFor(rdram, at, fighter) : readFloat(rdram, at);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x1142B0: addu $v0, $v0, $v1 (the corner angles' table + 4 x the corner), with lwc1 $f0, 0($v0) run first as this
+        // jal's delay slot, so done after the sum here: a diagonal run outside the ring, toward the corner the stick names
+        // (runCorner gave the game's corner there). On the ring the table holds the ring's corners: outside, the square's
+        // diagonals are the stick's way (the game's own table 0x235C40: 135, 45, -45, -135).
+        void outsideCornerAngle(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            static constexpr float kSquareCorners[4] = {135.0f, 45.0f, -45.0f, -135.0f};
+            const uint32_t offset = getRegU32(ctx, 2), at = offset + getRegU32(ctx, 3);
+            SET_GPR_U32(ctx, 2, at);
+            ctx->f[0] = g_active && offset < 16u ? kSquareCorners[offset / 4u] : readFloat(rdram, at);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x11424C and 0x1143A8: sw $a0, 0x414($s1) (the side next along, -1 or +1 from the apron's own), with lwc1 $f0, 0($v1)
+        // (that side's angle) run first as this jal's delay slot. On the ring the run goes along the apron's side, the way
+        // the game chose (+0x5B2 bit 4: the -1 way)
+        void apronRun(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t fighter = getRegU32(ctx, 17);
+            Ps2FastWrite32(rdram, fighter + 0x414u, getRegU32(ctx, 4));
+            if (g_active)
+            {
+                const int side = sideOf(readFloat(rdram, fighter + 0xCCu), readFloat(rdram, fighter + 0xD4u));
+                const float sign = (Ps2FastRead32(rdram, fighter + 0x5B0u) >> 16) & 4u ? -1.0f : 1.0f;
+                ctx->f[0] = std::atan2(g_sideTangent[side][0] * sign, g_sideTangent[side][1] * sign) * 180.0f / kPi;
+            }
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x114368: jal FUN_0012f220($f12 the apron side's inward angle, $f13 the facing): with no stick, its sign says which
+        // way along the apron to run (above 0: the -1 way). On the ring: the way the wrestler faces along its side.
+        void apronRunWay(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active)
+            {
+                g_angleApart(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t fighter = getRegU32(ctx, 17);
+            const int side = sideOf(readFloat(rdram, fighter + 0xCCu), readFloat(rdram, fighter + 0xD4u));
+            const float rad = ctx->f[13] * kPi / 180.0f;
+            const float along = std::sin(rad) * g_sideTangent[side][0] + std::cos(rad) * g_sideTangent[side][1];
+            ctx->f[0] = along < 0.0f ? 1.0f : -1.0f;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // FUN_001144c0(fighter): 1 when a run to the rope +0x414 names would start too close to it (past 25 from the middle
+        // towards it, facing it within 85 degrees); the game measures along x or z, here along the ring's real side
+        void nearRope(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active)
+            {
+                g_nearRope(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t fighter = getRegU32(ctx, 4);
+            const int32_t band = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x414u));
+            uint32_t result = 0u;
+            if ((Ps2FastRead32(rdram, fighter + 0x5ACu) & 4u) != 0u && band >= 0 && band <= 3)
+            {
+                const float inward = angleFor(rdram, kGameInAngles + static_cast<uint32_t>(band) * 4u, fighter);
+                const float rad = (inward + 180.0f) * kPi / 180.0f;
+                const float out = readFloat(rdram, fighter + kHipsX) * std::sin(rad) + readFloat(rdram, fighter + kHipsZ) * std::cos(rad);
+                if (out > 25.0f && std::fabs(wrapDegrees(inward - readFloat(rdram, fighter + 0x148u))) < 85.0f)
+                    result = 1u;
+            }
+            SET_GPR_U32(ctx, 2, result);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // ------------------------------------------------------------------ the computer's choices
+
+        // The side with the game's 0 to 3 number `band` nearest a point (on a hexagon a number covers one or two sides)
+        int sideForBand(uint32_t band, float x, float z)
+        {
+            int best = -1;
+            float bestDot = -1e30f;
+            for (int k = 0; k < g_sides; ++k)
+                if (static_cast<uint32_t>(g_sideBand[k]) == band)
+                    if (const float dot = g_sideNormal[k][0] * x + g_sideNormal[k][1] * z; dot > bestDot)
+                    {
+                        bestDot = dot;
+                        best = k;
+                    }
+            return best >= 0 ? best : sideOf(x, z);
+        }
+
+        // FUN_0010f5d0(record, fighter): what the computer sees each picture, among it its distance to each corner (the
+        // corner points' table, now the ring's), four floats at + 0xA4 (+ 0xB4 is the next field: no room for more). Four
+        // readers index them by an opponent's corner (+0x414): 0x10BB94 and 0x10BBDC (FUN_0010ba78), 0x10CFC4
+        // (FUN_0010cf68), 0x10E8F8 (FUN_0010e868). On the ring the distances to the corners past the fourth are kept in
+        // the store, and those readers pointed there for them.
+        uint32_t g_cpuRecords[4] = {};
+
+        uint32_t cpuExtra(uint32_t record)
+        {
+            for (uint32_t i = 0; i < 4u; ++i)
+                if (g_cpuRecords[i] == record || g_cpuRecords[i] == 0u)
+                {
+                    g_cpuRecords[i] = record;
+                    return kCpuCornerExtra + i * 4u * (kMaxSides - 4);
+                }
+            return kCpuCornerExtra; // more than four computer records: never seen
+        }
+
+        void cpuSees(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active && g_sides > 4)
+            {
+                const uint32_t record = getRegU32(ctx, 4), fighter = getRegU32(ctx, 5), extra = cpuExtra(record);
+                const float x = readFloat(rdram, fighter + kHipsX), z = readFloat(rdram, fighter + kHipsZ);
+                for (int k = 4; k < g_sides; ++k)
+                {
+                    const uint32_t corner = kTables[kCornerPoints].store + static_cast<uint32_t>(k) * 12u;
+                    const float dx = readFloat(rdram, corner) - x, dz = readFloat(rdram, corner + 8u) - z;
+                    Ps2FastWrite32(rdram, extra + 4u * static_cast<uint32_t>(k - 4), std::bit_cast<uint32_t>(std::sqrt(dx * dx + dz * dz)));
+                }
+            }
+            g_cpuSees(rdram, ctx, runtime);
+        }
+
+        // 0x10BB88, 0x10BBD0, 0x10E8F0: sll $v0, $v0, 2, with addu $v0, $base, $v0 run first as this jal's delay slot (so $v0
+        // = the record + the corner); 0x10CFBC: sll $v0, $v1, 2 (the corner in $v1). $v0 left for the lwc1 0xA4($v0) after it:
+        // the record's own float for corners 0 to 3, the kept one past them
+        template <int Base, bool CornerInV1>
+        void cpuCornerRead(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t record = getRegU32(ctx, Base);
+            const uint32_t corner = CornerInV1 ? getRegU32(ctx, 3) : getRegU32(ctx, 2) - record;
+            uint32_t at = record + corner * 4u;
+            if (g_active && corner >= 4u && corner < static_cast<uint32_t>(g_sides))
+                at = cpuExtra(record) + (corner - 4u) * 4u - 0xA4u;
+            SET_GPR_U32(ctx, 2, at);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // FUN_00112648(record, fighter): is the rope behind the computer close enough for the rope move: the side behind
+        // by its old number ($s0), the rope point there (its hips with x or z put on the square's +-35), the angle from that
+        // point to the opponent against the side's inward angle (within 20), the distance. On the ring:
+        // 0x11276C: jal FUN_00130578(the rope point, his hips): the point becomes the foot of its hips ($s2 the fighter) on
+        // the rope of the side with that number nearest
+        void cpuRopeFoot(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active)
+            {
+                const uint32_t point = getRegU32(ctx, 4), fighter = getRegU32(ctx, 18);
+                const float x = readFloat(rdram, fighter + kHipsX), z = readFloat(rdram, fighter + kHipsZ);
+                const int side = sideForBand(getRegU32(ctx, 16) & 3u, x, z);
+                const float nx = g_sideNormal[side][0], nz = g_sideNormal[side][1], out = x * nx + z * nz - g_ring.ropeDistance;
+                Ps2FastWrite32(rdram, point, std::bit_cast<uint32_t>(x - nx * out));
+                Ps2FastWrite32(rdram, point + 8u, std::bit_cast<uint32_t>(z - nz * out));
+            }
+            g_angleTo(rdram, ctx, runtime);
+        }
+
+        // 0x112788: jal FUN_0012f220, with lwc1 $f12, 0($v1) (the side's inward angle by its old number) as its delay slot:
+        // on the ring, that side's own
+        void cpuRopeAngle(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active)
+            {
+                const uint32_t fighter = getRegU32(ctx, 18);
+                ctx->f[12] = inwardAngle(sideForBand(getRegU32(ctx, 16) & 3u, readFloat(rdram, fighter + kHipsX),
+                                                     readFloat(rdram, fighter + kHipsZ)));
+            }
+            g_angleApart(rdram, ctx, runtime);
+        }
+
+        // FUN_001100b0(side's old number, point): how far the point is from that side's rope (|35 - x or z| on the square,
+        // 35 for another number); on the ring, from the rope of the side with that number nearest the point
+        void ropeDistanceOf(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (!g_active)
+            {
+                g_ropeDistanceOf(rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t band = getRegU32(ctx, 4), point = getRegU32(ctx, 5);
+            float distance = 35.0f;
+            if (band <= 3u)
+            {
+                const float x = readFloat(rdram, point), z = readFloat(rdram, point + 8u);
+                const int side = sideForBand(band, x, z);
+                distance = std::fabs(g_ring.ropeDistance - (g_sideNormal[side][0] * x + g_sideNormal[side][1] * z));
+            }
+            ctx->f[0] = distance;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x11299C (FUN_00112978, the dives' start: the opponent's hips) and 0x112B2C (FUN_00112ad8, Action 51's: his anchor):
+        // lui $at, 0x420C (35.0, done here), with mtc1 $at, $f1 run first as this jal's delay slot; then |x| ($f0) < $f1, else
+        // |z| < $f1, says he is not diagonally beyond a corner of the square. On the ring the answer is the ring's (his foot
+        // on his nearest side past the side's end): not beyond, $f0 = 0; beyond, the limit $f1 = -1 so both tests fail
+        template <int FighterReg, uint32_t Place>
+        void cpuBeyondCorner(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            SET_GPR_U32(ctx, 1, 0x420C0000u);
+            ctx->f[1] = 35.0f;
+            if (g_active)
+            {
+                const uint32_t fighter = getRegU32(ctx, FighterReg);
+                const float x = readFloat(rdram, fighter + Place), z = readFloat(rdram, fighter + Place + 8u);
+                const int side = sideOf(x, z);
+                const float along = x * g_sideTangent[side][0] + z * g_sideTangent[side][1];
+                if (std::fabs(along) > g_ring.ropeDistance * std::tan(kPi / g_sides))
+                {
+                    ctx->f[0] = 100.0f;
+                    ctx->f[1] = -1.0f;
+                }
+                else
+                    ctx->f[0] = 0.0f;
+            }
+            ctx->pc = getRegU32(ctx, 31);
         }
 
         // ------------------------------------------------------------------ the ropes
@@ -1382,13 +2089,71 @@ namespace vendetta_ring
         const uint32_t kBeforeRopes[10][3] = {{0x4Eu, 0u, 0x80u},    {0x4Fu, 0u, 0x80u},    {0x47u, 0u, 0x5001Bu}, {0x48u, 0u, 0x5001Bu}, {0x14u, 0u, 0x60u},
                                               {0x15u, 0u, 0x60u},    {0x42u, 0x80u, 0xA8u}, {0x43u, 0x80u, 0xA8u}, {8u, 0u, 0u},         {9u, 0u, 0u}};
         const uint32_t kAfterRopes[6][3] = {{0x4Eu, 1u, 0x80u}, {0x4Fu, 1u, 0x80u}, {0x47u, 0u, 0u}, {0x48u, 0u, 0u}, {0x42u, 0u, 0x44u}, {0x43u, 0u, 0x44u}};
-        enum DrawStep { kBefore, kLoadProgram, kNextRope, kMatrix, kDraw, kWait, kAfter };
+        enum DrawStep { kBefore, kPieces, kLoadProgram, kNextRope, kMatrix, kDraw, kWait, kFaded, kAfter };
         struct RopeDraw
         {
             DrawStep step = kBefore;
-            int index = 0, rope = 0;
-            uint32_t part = 0, returnTo = 0;
+            int index = 0, rope = 0, fadeStep = 0;
+            size_t piece = 0;
+            uint32_t part = 0, returnTo = 0, matrix = 0;
         } g_draw;
+
+        // The ring's own corner pieces (setCornerSpots), drawn as the game's ring draw draws 81-92 on High Poly: the main
+        // processor's post draw FUN_001b3820(piece, M, the arena colour 0x1430D60), the solid ones at once; one within 50
+        // of the camera across the floor fades (FIX = d^2 / 2500 x 76.8 + 51.2, truncated, into ALPHA_1 with 0x64, then
+        // sceGsSyncPath(0, 0) before its draw), the faded ones after the ropes, far to near. A corner's pad and turnbuckle
+        // take its post's fade, as the game's 85-92 take 81-84's.
+        constexpr uint32_t kDrawPost = 0x1B3820u, kSyncPath = 0x1F7930u, kArenaColour = 0x1430D60u, kCamera = 0x258090u;
+        std::vector<CornerSpot> g_cornerSpots;
+        struct PieceDraw
+        {
+            uint32_t object = 0, fix = 0x80u;
+            float distance = 0.0f;
+        };
+        std::vector<PieceDraw> g_pieces; // this picture's: the solid ones, then the faded far to near
+        size_t g_solidPieces = 0;
+
+        // A part's object in the arena's scene (the first directory entry with its number; 0 = not there)
+        uint32_t findPart(uint8_t *rdram, int32_t id)
+        {
+            const uint32_t scene = Ps2FastRead32(rdram, kSceneHeader);
+            const uint32_t count = std::min<uint32_t>(Ps2FastRead32(rdram, scene), 4096u);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const uint32_t entry = scene + 0x14u + 8u * i;
+                if (static_cast<int32_t>(Ps2FastRead32(rdram, entry)) == id)
+                    return entry + 4u + Ps2FastRead32(rdram, entry + 4u);
+            }
+            return 0u;
+        }
+
+        void listPieces(uint8_t *rdram)
+        {
+            g_pieces.clear();
+            const float cameraX = readFloat(rdram, kCamera), cameraZ = readFloat(rdram, kCamera + 8u);
+            uint32_t postFix[kCornerRoom] = {};
+            for (const int pass : {0, 1}) // the posts first: their corner's pad and turnbuckle follow them
+                for (const CornerSpot &s : g_cornerSpots)
+                {
+                    const bool post = s.part >= kCornerPost && s.part < kCornerPost + kCornerRoom;
+                    if (post != (pass == 0))
+                        continue;
+                    const uint32_t object = findPart(rdram, s.part);
+                    if (!object)
+                        continue;
+                    const float dx = s.x - cameraX, dz = s.z - cameraZ, d2 = dx * dx + dz * dz;
+                    uint32_t fix = d2 < 2500.0f ? static_cast<uint32_t>(static_cast<int32_t>(d2 / 2500.0f * 76.8f + 51.2f)) : 0x80u;
+                    const int at = (s.part - kCornerPost) % 20;
+                    if (post)
+                        postFix[at] = fix;
+                    else if (at >= 0 && at < kCornerRoom && postFix[at])
+                        fix = postFix[at];
+                    g_pieces.push_back({object, fix, d2});
+                }
+            auto faded = std::stable_partition(g_pieces.begin(), g_pieces.end(), [](const PieceDraw &p) { return p.fix == 0x80u; });
+            std::stable_sort(faded, g_pieces.end(), [](const PieceDraw &a, const PieceDraw &b) { return a.distance > b.distance; });
+            g_solidPieces = static_cast<size_t>(faded - g_pieces.begin());
+        }
 
         uint32_t findRopePart(uint8_t *rdram)
         {
@@ -1433,6 +2198,15 @@ namespace vendetta_ring
                         callGuest(ctx, kSetRenderState, c[0], c[1], c[2]);
                         return;
                     }
+                    g_draw.step = kPieces;
+                    g_draw.piece = 0;
+                    break;
+                case kPieces:
+                    if (g_draw.piece < g_solidPieces)
+                    {
+                        callGuest(ctx, kDrawPost, g_pieces[g_draw.piece++].object, g_draw.matrix, kArenaColour);
+                        return;
+                    }
                     g_draw.step = kLoadProgram;
                     break;
                 case kLoadProgram:
@@ -1443,8 +2217,9 @@ namespace vendetta_ring
                 case kNextRope:
                     if (g_draw.part == 0u || g_draw.rope >= g_sides * 3)
                     {
-                        g_draw.step = kAfter;
-                        g_draw.index = 0;
+                        g_draw.step = kFaded;
+                        g_draw.piece = g_solidPieces;
+                        g_draw.fadeStep = 0;
                         break;
                     }
                     bendRope(rdram, g_draw.rope);
@@ -1469,6 +2244,30 @@ namespace vendetta_ring
                     ++g_draw.rope;
                     g_draw.step = kNextRope;
                     break;
+                case kFaded:
+                    if (g_draw.piece >= g_pieces.size())
+                    {
+                        g_draw.step = kAfter;
+                        g_draw.index = 0;
+                        break;
+                    }
+                    {
+                        const PieceDraw &p = g_pieces[g_draw.piece];
+                        switch (g_draw.fadeStep++)
+                        {
+                        case 0:
+                            callGuest(ctx, kSetRenderState, 0x42u, p.fix, 0x64u); // ALPHA_1
+                            return;
+                        case 1:
+                            callGuest(ctx, kSyncPath, 0u, 0u);
+                            return;
+                        default:
+                            g_draw.fadeStep = 0;
+                            ++g_draw.piece;
+                            callGuest(ctx, kDrawPost, p.object, g_draw.matrix, kArenaColour);
+                            return;
+                        }
+                    }
                 case kAfter:
                     if (g_draw.index < 6)
                     {
@@ -1492,13 +2291,17 @@ namespace vendetta_ring
             }
             g_draw = RopeDraw{};
             g_draw.returnTo = getRegU32(ctx, 31);
+            g_draw.matrix = getRegU32(ctx, 4);
             g_draw.part = findRopePart(rdram);
+            listPieces(rdram);
             continueRopeDraw(rdram, ctx, runtime);
         }
 
         // 0x119E4C: jal FUN_0012b550 at each match or round's start
         void matchStart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            putPathBack(rdram); // an intro's camera path left moved (a match ended in its intro)
+            g_movedEntries.clear();
             fillTables(rdram);
             g_active = g_hasPending && g_tablesCommitted;
             setPairTable(rdram, g_active);
@@ -1536,6 +2339,25 @@ namespace vendetta_ring
                     std::cerr << std::endl;
                 }
             }
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x12B160: and $v1, $t5, $v1, the direction bits of the walls touched ($t5) kept to the axes the push may use ($v1),
+        // with andi $v0, $v1, 0xA (x is pushed) run first as this jal's delay slot and done again here; 5 then says whether z
+        // is (0x12B188). A wall carries one direction bit, so a slanted side of the ring would be pushed along one axis only
+        // and the wrestler slid along it: on the ring a slanted wall touched ($s7 the first, $fp the second, 0 if none)
+        // pushes along both, straight off it.
+        void pushAxes(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            uint64_t bits = GPR_U64(ctx, 13);
+            if (g_active)
+                for (const uint32_t wall : {getRegU32(ctx, 23), getRegU32(ctx, 30)})
+                    if (wall >= kWallRecords && wall < g_wallsEnd && std::fabs(readFloat(rdram, wall + 0x30u)) > 0.01f &&
+                        std::fabs(readFloat(rdram, wall + 0x38u)) > 0.01f)
+                        bits |= 0xFu;
+            const uint64_t allowed = bits & GPR_U64(ctx, 3);
+            SET_GPR_U64(ctx, 3, allowed);
+            SET_GPR_U64(ctx, 2, allowed & 0xAu);
             ctx->pc = getRegU32(ctx, 31);
         }
 
@@ -1609,6 +2431,13 @@ namespace vendetta_ring
             g_pendingRing = *ring;
     }
 
+    void setCornerSpots(const std::vector<CornerSpot> &spots)
+    {
+        g_cornerSpots = spots;
+        if (g_log && !spots.empty())
+            std::cerr << "[ring] the arena's own corner pieces: " << spots.size() << std::endl;
+    }
+
     void install(PS2Runtime &runtime)
     {
         const char *log = std::getenv("VENDETTA_RINGLOG");
@@ -1645,6 +2474,39 @@ namespace vendetta_ring
         runtime.registerFunction(kHookStepAngle, stepAngle);
         runtime.registerFunction(kHookStepMove, stepMove);
         runtime.registerFunction(kHookStartFacing, startFacing);
+        runtime.registerFunction(kHookPushAxes, pushAxes);
+        g_stickCorner = runtime.lookupFunction(kStickCorner);
+        g_cornerAt = runtime.lookupFunction(kCornerAt);
+        g_ropeAhead = runtime.lookupFunction(kRopeAhead);
+        g_nearRope = runtime.lookupFunction(kNearRope);
+        runtime.registerFunction(kHookRunCorner, runCorner);
+        runtime.replaceFunction(kCornerAt, cornerAt);   // every caller: FUN_00114140, FUN_00115130, FUN_00128238, FUN_00137b38, FUN_0013bf18
+        runtime.replaceFunction(kRopeAhead, ropeAhead);
+        runtime.registerFunction(kHookRunAngle, runAngle);
+        runtime.registerFunction(kHookApronRun, apronRun);
+        runtime.registerFunction(kHookApronRunWay, apronRunWay);
+        runtime.replaceFunction(kNearRope, nearRope);
+        runtime.registerFunction(kHookApronEnd, apronEnd);
+        runtime.registerFunction(kHookApronAlong, apronAlong);
+        runtime.registerFunction(kHookApronCorner, apronCorner);
+        g_roundCorner = runtime.lookupFunction(kRoundCorner);
+        runtime.replaceFunction(kRoundCorner, roundCorner);
+        g_sceneStart = runtime.lookupFunction(kSceneStart);
+        runtime.replaceFunction(kSceneStart, sceneStart);
+        g_cpuSees = runtime.lookupFunction(kCpuSees);
+        runtime.replaceFunction(kCpuSees, cpuSees);
+        g_ropeDistanceOf = runtime.lookupFunction(kRopeDistanceOf);
+        runtime.replaceFunction(kRopeDistanceOf, ropeDistanceOf);
+        g_angleTo = runtime.lookupFunction(kAngleTo);
+        runtime.registerFunction(kHookCpuCorner1, cpuCornerRead<17, false>);
+        runtime.registerFunction(kHookCpuCorner2, cpuCornerRead<17, false>);
+        runtime.registerFunction(kHookCpuCorner3, cpuCornerRead<16, true>);
+        runtime.registerFunction(kHookCpuCorner4, cpuCornerRead<16, false>);
+        runtime.registerFunction(kHookCpuRopeFoot, cpuRopeFoot);
+        runtime.registerFunction(kHookCpuRopeAngle, cpuRopeAngle);
+        runtime.registerFunction(kHookCpuBeyond1, cpuBeyondCorner<2, 0x15Cu>);
+        runtime.registerFunction(kHookCpuBeyond2, cpuBeyondCorner<6, 0xCCu>);
+        runtime.registerFunction(kHookOutsideCorner, outsideCornerAngle);
         g_angleApart = runtime.lookupFunction(kAngleApart);
         g_turnTo = runtime.lookupFunction(kTurnTo);
         g_moveBy = runtime.lookupFunction(kMoveBy);
