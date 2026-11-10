@@ -33,6 +33,7 @@ void installVendettaCamera(PS2Runtime &runtime);     // vendetta_camera.cpp: the
 void installVendettaUnlocks(PS2Runtime &runtime);    // vendetta_unlocks.cpp: unlock everything, the save unchanged (VENDETTA_UNLOCKALL)
 void installVendettaMenu(PS2Runtime &runtime);       // vendetta_menu.cpp: the main menu's Quit item (with config/patches.toml)
 void installVendettaMatchSpeed(PS2Runtime &runtime); // vendetta_matchspeed.cpp: the fight's speed (VENDETTA_MATCH_SPEED)
+void installVendettaRing(PS2Runtime &runtime);       // vendetta_ring.cpp: a mod arena's ring read from its arena.json (with config/patches.toml)
 void installVendettaTestMatch(PS2Runtime &runtime);  // vendetta_testmatch.cpp: a test match from a file (--test-match)
 void installVendettaPictures(PS2Runtime &runtime);  // vendetta_pictures.cpp: pictures from mods' files (host images)
 void installVendettaWrestlers(PS2Runtime &runtime); // vendetta_wrestlers.cpp: new wrestlers from mods (after the animations)
@@ -585,6 +586,7 @@ namespace
         installVendettaUnlocks(runtime);
         installVendettaMenu(runtime);
         installVendettaMatchSpeed(runtime);
+        installVendettaRing(runtime);
         installVendettaTestMatch(runtime);
         installVendettaPictures(runtime);
         installVendettaWrestlers(runtime);

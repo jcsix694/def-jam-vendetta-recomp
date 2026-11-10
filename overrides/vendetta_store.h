@@ -69,6 +69,9 @@ namespace vendetta_store
     // unlock flag (copied from the game's 12 before each Choose Stage frame, the mods' new ones always on), 64 KB each
     constexpr uint32_t kStageOrder = 0x03320000u, kStagePictures = 0x03330000u, kStageThumbs = 0x03340000u,
                        kStageFlags = 0x03350000u, kStageRoom = 0x00010000u;
+    // The ring (vendetta_ring.cpp): the fight's corner tables, moved so they can hold more entries (patched luis; each
+    // table on its own 64 KB page, keeping its original's low 16 bits)
+    constexpr uint32_t kRingTables = 0x03360000u, kRingRoom = 0x000A0000u; // to 0x033FFFFF
 
     // Host pointer for a guest address the store handed out.
     uint8_t *host(uint32_t guestAddress);

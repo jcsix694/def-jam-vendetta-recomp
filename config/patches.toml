@@ -199,4 +199,93 @@ instructions = [
   # reader, the routine at 0x1C1D40, is never called), which the runtime fills with each game set's crowd name's first
   # word, so the game's sets behave as before
   { address = "0x001c0b14", value = "0x8cc20014" }, # lw $v0, 0x18($a2) -> 0x14($a2) (FUN_001c0968, the "NU" test)
+  # A mod arena's ring read from its arena.json (overrides/vendetta_ring.cpp): each jal goes to a hook address that file
+  # registers. An arena with no ring description does what the replaced instruction did.
+  { address = "0x0012afbc", value = "0x0c077d12" }, # daddu $v0, $s5, $zero -> jal 0x1DF448: the wall search's list
+  { address = "0x00119e4c", value = "0x0c077d13" }, # jal 0x12B550 -> jal 0x1DF44C: each match or round's start
+  { address = "0x0012b714", value = "0x0c077d14" }, # daddu $s4, $zero, $zero -> jal 0x1DF450: the other wall search's list
+  { address = "0x001150bc", value = "0x0c077d16" }, # jal 0x101F88 -> jal 0x1DF458: the corner a move starts at
+  { address = "0x0013c05c", value = "0x0c077d16" }, # the same, from the other place
+  { address = "0x00114f94", value = "0x0c077d19" }, # addiu $s3, $s0, 0x30 -> jal 0x1DF464: the posts tried for a run into one
+  { address = "0x00132210", value = "0x0c077d1b" }, # lw $v1, 0x41C($s0) -> jal 0x1DF46C: placed on the apron
+  { address = "0x001322ac", value = "0x0c077d1c" }, # lw $v1, 0x41C($s0) -> jal 0x1DF470: facing on the apron
+  { address = "0x0013d91c", value = "0x0c077d1d" }, # swc1 $f1, 0xD0($s0) -> jal 0x1DF474: standing on the apron
+  { address = "0x00102ba8", value = "0x0c077d1e" }, # addu $v0, $v0, $s5 -> jal 0x1DF478: the angle by side
+  { address = "0x0012ad50", value = "0x0c077d1f" }, # lw $v0, 0x41C($s4) -> jal 0x1DF47C: the apron's wall search point, kept
+  { address = "0x0012ad78", value = "0x0c077d21" }, # lui $at, 0x4090 -> jal 0x1DF484: the point put on the ring's side
+  { address = "0x00115ac8", value = "0x0c077d2b" }, # lwc1 $f0, 0($a0) -> jal 0x1DF4AC: an angle by side
+  { address = "0x00115c24", value = "0x0c077d2c" }, # lwc1 $f0, 0($v0) -> jal 0x1DF4B0: the same
+  { address = "0x00115e0c", value = "0x0c077d2c" }, # the same
+  { address = "0x00115db4", value = "0x0c077d2d" }, # jal 0x101928 -> jal 0x1DF4B4: the same, then the turn
+  { address = "0x00123da8", value = "0x0c077d2e" }, # addu $v0, $v0, $v1 -> jal 0x1DF4B8: the same
+  { address = "0x001374d4", value = "0x0c077d2f" }, # jal 0x1DF4BC: the same; the next three instructions each moved up one
+  { address = "0x001374d8", value = "0x00431021" }, # addu $v0, $v0, $v1 (this jal's delay slot)
+  { address = "0x001374dc", value = "0x3084ff00" }, # andi $a0, $a0, 0xFF00
+  { address = "0x001374e0", value = "0x1080000a" }, # beqz $a0, to the same place
+  { address = "0x00138dcc", value = "0x0c077d30" }, # jal 0x1DF4C0: the same, into $f20
+  { address = "0x00138dd0", value = "0x00431021" }, # addu $v0, $v0, $v1 (this jal's delay slot)
+  { address = "0x0013da54", value = "0x0c077d31" }, # jal 0x13E130 -> jal 0x1DF4C4: a step along the apron
+  { address = "0x00124020", value = "0x0c077d32" }, # jal 0x12F220 -> jal 0x1DF4C8: stepping over the ropes, the turn
+  { address = "0x0012415c", value = "0x0c077d33" }, # lwc1 $f12, 0($v0) -> jal 0x1DF4CC: the same, the angle
+  { address = "0x00124170", value = "0x0c077d34" }, # lw $v1, 0x414($s1) -> jal 0x1DF4D0: the same, the move
+  { address = "0x0013f000", value = "0x0c077d35" }, # jal 0x130438 -> jal 0x1DF4D4: which way a wrestler faces at the start
+  { address = "0x0013ef40", value = "0x08077d20" }, # jr $ra -> j 0x1DF480: a wrestler's start place, adjusted
+  { address = "0x0013ef70", value = "0x08077d20" }, # the same, the routine's other way out
+  { address = "0x001197d4", value = "0x0c077d1a" }, # lui $at, 0x4204 -> jal 0x1DF468: inside the ring
+  { address = "0x00137184", value = "0x0c077d1a" }, # the same, from the other routine
+  { address = "0x001219f8", value = "0x3c02033e" }, # lui $v0, 0x33E: a whip's direction, from the table that can hold six corners
+  { address = "0x00121a08", value = "0x3c02033e" }, # the same (the other way to the addiu)
+  { address = "0x001222ac", value = "0x3c02033e" }, # the same (FUN_001221d0)
+  { address = "0x00122384", value = "0x3c03033e" }, # the same, $v1 (FUN_00122370)
+  # The ring's tables, moved so they can hold more entries: each lui below now names the table's page in the store's fixed
+  # area (each copy keeps its original's low 16 bits, so the addiu or load after it stays). overrides/vendetta_ring.cpp fills them.
+  { address = "0x0010c270", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0010c230)
+  { address = "0x0010c9d0", value = "0x3c03033b" }, # lui $v1, 0x33b: stick bits by corner (FUN_0010c978)
+  { address = "0x0010d008", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_0010cf68)
+  { address = "0x0010da04", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0010d980)
+  { address = "0x0010f6ac", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0010f5d0)
+  { address = "0x00111244", value = "0x3c04033b" }, # lui $a0, 0x33b: stick bits by corner (FUN_001111d0)
+  { address = "0x00112408", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_001122c8)
+  { address = "0x0011245c", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_001122c8)
+  { address = "0x001124e8", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_001122c8)
+  { address = "0x00113cb0", value = "0x3c030338" }, # lui $v1, 0x338: slump spots (FUN_00113c70)
+  { address = "0x00113cf4", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00113c70)
+  { address = "0x00113ddc", value = "0x3c020338" }, # lui $v0, 0x338: slump spots (FUN_00113c70)
+  { address = "0x00113de0", value = "0x3c07033a" }, # lui $a3, 0x33a: corner angles -45 -135 135 45 (FUN_00113c70)
+  { address = "0x001142a4", value = "0x3c030339" }, # lui $v1, 0x339: corner angles 135 45 -45 -135 (FUN_00114140)
+  { address = "0x001143d4", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_00114140)
+  { address = "0x0011479c", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_001145c0)
+  { address = "0x00121a9c", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_001218f8)
+  { address = "0x00122094", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_00121fe8)
+  { address = "0x00122210", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_001221d0)
+  { address = "0x00122264", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_001221d0)
+  { address = "0x001279b4", value = "0x3c020338" }, # lui $v0, 0x338: slump spots (FUN_00127958)
+  { address = "0x00127a48", value = "0x3c020339" }, # lui $v0, 0x339: corner angles 135 45 -45 -135 (FUN_00127958)
+  { address = "0x00127a5c", value = "0x3c02033a" }, # lui $v0, 0x33a: corner angles -45 -135 135 45 (FUN_00127958)
+  { address = "0x001284b0", value = "0x3c040336" }, # lui $a0, 0x336: corner directions (FUN_00128238)
+  { address = "0x0012a5f0", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0012a5b8)
+  { address = "0x0012a608", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0012a5b8)
+  { address = "0x0012a628", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0012a5b8)
+  { address = "0x0012a634", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_0012a5b8)
+  { address = "0x00133c78", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00133be0)
+  { address = "0x00133c80", value = "0x3c050339" }, # lui $a1, 0x339: corner angles 135 45 -45 -135 (FUN_00133be0)
+  { address = "0x00133c98", value = "0x3c040337" }, # lui $a0, 0x337: corner points (FUN_00133be0)
+  { address = "0x00133ce0", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00133be0)
+  { address = "0x00133ce8", value = "0x3c050339" }, # lui $a1, 0x339: corner angles 135 45 -45 -135 (FUN_00133be0)
+  { address = "0x00133cfc", value = "0x3c040337" }, # lui $a0, 0x337: corner points (FUN_00133be0)
+  { address = "0x00133dc8", value = "0x3c02033a" }, # lui $v0, 0x33a: corner angles -45 -135 135 45 (FUN_00133be0)
+  { address = "0x00133dcc", value = "0x3c020339" }, # lui $v0, 0x339: corner angles 135 45 -45 -135 (FUN_00133be0)
+  { address = "0x00133e9c", value = "0x3c030337" }, # lui $v1, 0x337: corner points (FUN_00133be0)
+  { address = "0x00133eb0", value = "0x3c04033a" }, # lui $a0, 0x33a: corner angles -45 -135 135 45 (FUN_00133be0)
+  { address = "0x00133ef8", value = "0x3c020339" }, # lui $v0, 0x339: corner angles 135 45 -45 -135 (FUN_00133be0)
+  { address = "0x00133fd8", value = "0x3c04033a" }, # lui $a0, 0x33a: corner angles -45 -135 135 45 (FUN_00133be0)
+  { address = "0x00133fec", value = "0x3c020337" }, # lui $v0, 0x337: corner points (FUN_00133be0)
+  { address = "0x00134648", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00133be0)
+  { address = "0x0013464c", value = "0x3c040339" }, # lui $a0, 0x339: corner angles 135 45 -45 -135 (FUN_00133be0)
+  { address = "0x001376b0", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00137620)
+  { address = "0x00137a48", value = "0x3c02033a" }, # lui $v0, 0x33a: corner angles -45 -135 135 45 (FUN_00137960)
+  { address = "0x00137be8", value = "0x3c050337" }, # lui $a1, 0x337: corner points (FUN_00137b38)
+  { address = "0x00138eb0", value = "0x3c030339" }, # lui $v1, 0x339: corner angles 135 45 -45 -135 (FUN_00138b60)
+  { address = "0x00138f1c", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00138b60)
+  { address = "0x0013bf48", value = "0x3c02033b" }, # lui $v0, 0x33b: stick bits by corner (FUN_0013bf18)
 ]

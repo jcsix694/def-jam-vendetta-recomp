@@ -61,6 +61,7 @@
 #include "vendetta_gsdraw.h"
 #include "vendetta_mods.h"
 #include "vendetta_pictures.h"
+#include "vendetta_ring.h"
 #include "vendetta_store.h"
 
 #include <algorithm>
@@ -342,6 +343,9 @@ namespace vendetta_arenas
             // venue's own scenery draws answered with nothing; none = drawn by part number as the venue draws it
             bool marked = false;
             std::vector<Mark> marks;
+            // arena.json's "ring": the fight's ring described; none = the game's own square
+            bool hasRing = false;
+            vendetta_ring::Ring ring;
         };
         std::vector<ModArena> g_modArenas;
         ModArena *g_current = nullptr; // the mod arena loaded now (its stand-in in the store), or none
@@ -2406,7 +2410,8 @@ namespace vendetta_arenas
             g_sceneryTap = false;
             const uint32_t ra = getRegU32(ctx, 31), part = getRegU32(ctx, 4);
             const uint32_t light = getRegU32(ctx, 5), colours = getRegU32(ctx, 6);
-            const bool arena = ra == kFromCrowd || ra == kFromRope || ra == kFromRopeFaded || ra == kFromRopeLowPoly;
+            const bool arena = ra == kFromCrowd || ra == kFromRope || ra == kFromRopeFaded || ra == kFromRopeLowPoly ||
+                               ra == vendetta_ring::kRopeDrawReturn;
             const bool mod = modOnly();
             if (arena && part == 0u && mod)
             {
@@ -3969,6 +3974,8 @@ namespace vendetta_arenas
                 std::memcpy(vendetta_store::host(kCrowd), rdram + kGameCrowd, kGameCrowdBytes);
                 std::memcpy(vendetta_store::host(vendetta_store::kCrowdClips), rdram + kGameClips, kGameClipsBytes);
             }
+            const ModArena *ringFrom = g_current ? g_current : g_gameArena;
+            vendetta_ring::setArena(ringFrom && ringFrom->hasRing ? &ringFrom->ring : nullptr);
             g_originalSetUp(rdram, ctx, runtime);
         }
 
@@ -4072,6 +4079,8 @@ namespace vendetta_arenas
                                          << "): the sounds and the fly-in of " << base << std::endl;
                 return;
             }
+            if (const vendetta_mods::Json *ring = json.find("ring"))
+                m.hasRing = vendetta_ring::parse(*ring, m.what, m.ring);
             if (const vendetta_mods::Json *sounds = json.find("sounds"); sounds && sounds->isObject())
                 readSoundPieces(m, *sounds, base);
             else if (sounds)
