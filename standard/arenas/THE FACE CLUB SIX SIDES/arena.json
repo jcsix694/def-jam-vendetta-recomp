@@ -1,0 +1,21 @@
+{
+  "name": "THE FACE CLUB SIX SIDES",
+  "ring": {
+    "sides": 6,
+    "rope distance": 35,
+    "mat height": 10.5,
+    "rope heights": [
+      24.1,
+      19.3,
+      14.5
+    ],
+    "slump distance": 31,
+    "apron": {
+      "inner": 34,
+      "line": 38.5,
+      "outer": 43
+    },
+    "ring side": 41,
+    "outside wall": 77
+  }
+}

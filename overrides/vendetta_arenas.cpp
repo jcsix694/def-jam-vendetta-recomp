@@ -4216,9 +4216,9 @@ namespace vendetta_arenas
             return picks;
         }
 
-        // The standard arenas: the ones the recomp brings for every player, made from the player's own disc by the setup
-        // (tools\make_standard_arenas.py, every install and update) into the game's folder: game\standard\arenas\<name>\, each
-        // in a mod arena's form. Each is a place on Choose Stage after the game's 12 and before the mods' new arenas, in
+        // The standard arenas: the ones the recomp brings for every player (its standard\arenas\<name>\, finished), copied by
+        // the setup into the game's folder on every install and update: game\standard\arenas\<name>\, each in a mod arena's
+        // form. Each is a place on Choose Stage after the game's 12 and before the mods' new arenas, in
         // every project, mods or none; a mod's "replace" naming one takes its place. VENDETTA_STANDARD=0: none (tests).
         std::vector<std::filesystem::path> standardFolders()
         {
@@ -4455,12 +4455,11 @@ namespace vendetta_arenas
         // ------------------------------------------------------------------ a standard arena's Choose Stage pictures
         //
         // VENDETTA_STAGE_PICTURES=<the arena's folder>|<eye x,y,z,target x,y,z,roll,fov>|<the big picture's cut u0,v0,u1,v1>|
-        // <the thumbnail's cut u0,v0,u1,v1> (the setup, once the graphics are prepared: a test match on the arena with
+        // <the thumbnail's cut u0,v0,u1,v1> (a tool for making an arena's pictures: a test match on the arena with
         // VENDETTA_PRESENT=opengl, so the window's pictures come back to the host). The arena's fly-in is held at that
         // camera; once the window has shown the camera there kPictureFrames pictures in a row, the picture is cut (the
         // shares of its width and height) into picture.png (1024 x 512, four times Choose Stage's 256 x 128) and
-        // thumbnail.png (256 x 256), written into the folder, and the game ends. Each player's picture is taken on their
-        // own PC: a picture of the game is never part of the recomp.
+        // thumbnail.png (256 x 256), written into the folder, and the game ends.
         std::filesystem::path g_picturesFolder;
         float g_pictureCamera[8] = {};
         float g_pictureCuts[2][4] = {};

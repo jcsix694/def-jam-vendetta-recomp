@@ -16,7 +16,6 @@
 import argparse
 import collections
 import ctypes
-import json
 import os
 import re
 import shutil
@@ -538,51 +537,23 @@ def step_graphics(data):
 
 
 def step_arenas(data):
-    """The arenas the recomp brings for every player (tools\\make_standard_arenas.py: The Face Club with a six-sided
-    ring), made from the player's own game files into game\\standard\\arenas\\, on every install and update; their
-    Choose Stage pictures the recomp's own when it brings them, else taken with the game itself: a test match on the arena, its fly-in held at the picture's camera,
-    the picture cut and saved, the game closed (about half a minute). The run is under a throwaway project, so the
-    player's memory cards are never touched. Never stops the setup: without pictures Choose Stage shows The Face Club's."""
+    """The arenas the recomp brings for every player (standard\\arenas\\<name>\\: THE FACE CLUB SIX SIDES, The Face Club
+    with a six-sided ring, finished, with its Choose Stage pictures) copied into the game's folder,
+    game\\standard\\arenas\\, where the game finds them: on every install and update, each in place of the copy before.
+    Never stops the setup."""
     step(7, STEPS[6])
-    sys.path.insert(0, os.path.join(SRC, 'tools'))
-    import make_standard_arenas as arenas
-    try:
-        folder = arenas.make(os.path.join(data, 'game'))
-    except BaseException as error:  # the tool says what was wrong with SystemExit
-        say(f'the new arena not made ({error})')
-        progress(1.0)
-        return
-    progress(0.3)
-    if arenas.pictures_shipped():
-        progress(1.0)  # the recomp brings its pictures
-        return
-    for f in ('picture.png', 'thumbnail.png'):
-        if os.path.isfile(os.path.join(folder, f)):
-            os.remove(os.path.join(folder, f))
-    project = os.path.join(data, 'projects', '.stage-pictures')
-    shutil.rmtree(project, ignore_errors=True)
-    for card in ('mc0', 'mc1'):
-        os.makedirs(os.path.join(project, 'saves', card), exist_ok=True)
-    with open(os.path.join(project, 'project.json'), 'w', encoding='utf-8') as f:
-        json.dump({'format': 1, 'name': '.stage-pictures', 'mods': []}, f)
-    match = os.path.join(project, 'match.json')
-    with open(match, 'w', encoding='utf-8') as f:
-        json.dump(arenas.picture_match(folder), f)
-    env = dict(os.environ)
-    env.update({'VENDETTA_STAGE_PICTURES': arenas.picture_setting(folder), 'VENDETTA_TESTMATCH': match,
-                'VENDETTA_PROJECT': '.stage-pictures', 'VENDETTA_PRESENT': 'opengl', 'VENDETTA_NO_HOST_INPUT': '1',
-                'VENDETTA_VOLUME': '0', 'VENDETTA_UPDATE_CHECK': '0', 'VENDETTA_PREPARE_POPUP': '0',
-                # a plain window, the picture at 4:3 on the graphics card, whatever the player's settings say
-                'VENDETTA_GS': 'gpu', 'VENDETTA_WIDESCREEN': '0', 'VENDETTA_WINDOW': 'window', 'VENDETTA_MAXIMISED': '0',
-                'VENDETTA_GRAPHICS_CACHE': os.path.join(data, 'graphics-cache.bin')})
-    settings = os.path.join(data, 'settings.toml')
-    env['VENDETTA_SETTINGS'] = settings if os.path.isfile(settings) else 'none'
-    try:
-        run([os.path.join(data, GAME_EXE)], env=env, cwd=data)
-    except SetupError as error:
-        say(f'the new arena\'s pictures not taken ({error}): Choose Stage shows The Face Club\'s')
-    shutil.rmtree(project, ignore_errors=True)
-    arenas.write_arena_json(folder)
+    shipped = os.path.join(SRC, 'standard', 'arenas')
+    target = os.path.join(data, 'game', 'standard', 'arenas')
+    names = sorted(n for n in os.listdir(shipped) if os.path.isdir(os.path.join(shipped, n))) \
+        if os.path.isdir(shipped) else []
+    for i, name in enumerate(names):
+        folder = os.path.join(target, name)
+        try:
+            shutil.rmtree(folder, ignore_errors=True)
+            shutil.copytree(os.path.join(shipped, name), folder)
+        except OSError as error:
+            say(f'the arena {name} not copied ({error})')
+        progress((i + 1) / len(names))
     progress(1.0)
 
 
