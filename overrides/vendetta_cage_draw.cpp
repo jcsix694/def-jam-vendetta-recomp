@@ -85,6 +85,10 @@ namespace vendetta_cage_draw
     float g_normal[16][2] = {}, g_middle[16][2] = {};
     float g_matrix[16] = {};
     bool g_haveMatrix = false, g_imagesMade = false, g_toldMatch = false;
+    // the last picture's camera, kept after the picture (g_matrix is let go once drawn) for the fight's own code, which
+    // runs between pictures
+    float g_camera[16] = {};
+    bool g_haveCamera = false;
     PS2Runtime *g_runtime = nullptr;
 
     GSGpuRenderer *gpu() { return g_runtime ? g_runtime->gs().gpuRendererForSettings() : nullptr; }
@@ -685,6 +689,8 @@ void vendetta_cage::ringDrawing(uint8_t *rdram, uint32_t cameraMatrix)
         return;
     std::memcpy(g_matrix, rdram + (cameraMatrix & PS2_RAM_MASK), sizeof(g_matrix));
     g_haveMatrix = true;
+    std::memcpy(g_camera, g_matrix, sizeof(g_camera));
+    g_haveCamera = true;
 }
 
 std::filesystem::path vendetta_cage::cageFolder()
@@ -696,18 +702,26 @@ std::filesystem::path vendetta_cage::cageFolder()
     return game / "standard" / "cage";
 }
 
-bool vendetta_cage::screenRight(float &x, float &z)
+bool vendetta_cage::screenSide(float x, float y, float z, float dx, float dz, float &sign)
 {
     using namespace vendetta_cage_draw;
-    if (!g_haveMatrix)
+    if (!g_haveCamera)
         return false;
-    x = g_matrix[0];
-    z = g_matrix[8];
-    const float length = std::sqrt(x * x + z * z);
-    if (length < 1e-6f)
+    // the screen's x of a point, as polygon() projects the cage (x and w; the matrix carries the screen's middle, so
+    // its first column alone isn't the screen's right)
+    auto across = [](float px, float py, float pz, float &sx, float &w) {
+        const float cx = ((px * g_camera[0] + py * g_camera[4]) + pz * g_camera[8]) + g_camera[12];
+        w = ((px * g_camera[3] + py * g_camera[7]) + pz * g_camera[11]) + g_camera[15];
+        if (!(std::fabs(w) > 1e-4f))
+            return false;
+        sx = cx / w;
+        return true;
+    };
+    float from = 0.0f, to = 0.0f, wFrom = 0.0f, wTo = 0.0f;
+    if (!across(x, y, z, from, wFrom) || !across(x + dx, y, z + dz, to, wTo) || (wFrom > 0.0f) != (wTo > 0.0f) ||
+        std::fabs(to - from) < 1e-4f)
         return false;
-    x /= length;
-    z /= length;
+    sign = to > from ? 1.0f : -1.0f;
     return true;
 }
 

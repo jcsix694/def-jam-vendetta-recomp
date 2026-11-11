@@ -7,18 +7,26 @@
 // wrestler, as the clips (the cage's own, standard\cage\animations\, vendetta_animations.cpp: cageClip) don't:
 //   onto the cage (3203), then hanging (3204), the anchor raised and moved out to the cage;
 //   up a step (3212-3216 by momentum, Blazin' 320E, each step costing momentum unless in Blazin'), down (3208 / 320F),
-//   sideways (3209 / 320A, Blazin' 3210 / 3211) with the stick held (up / down / left / right as on screen);
+//   sideways (3209 / 320A, Blazin' 3210 / 3211) with the stick held (up / down / left / right as on screen: the step's
+//   way along the side projected by the last picture's camera); the stick still held toward the rope from getting on
+//   counts for nothing until it is let go;
 //   with too little momentum for a step: slips to dangling (323D), dangles (323E), back to the hang (323F);
 //   down from the first hold: lets go (3205), lands in the ring standing, state 2.
+// How far out from the cage: each picture the body points (FUN_00131438's 20, the last pose at this anchor) are measured
+// along the side's normal, each with the room its flesh takes, and the anchor moved so the outermost sits on the cage's
+// wires, whatever the wrestler's size: on the cage the body is kept touching it; getting on and letting go only keep it
+// from going through.
 // The climber can't be hit or grabbed (+0x5AC 0x4000 / 0x1 each picture: the hit test FUN_001290c0 and the grab skip it).
 // A game routine called from here can be left half way by the scheduler (a checkpoint), so each of ours calls at most one,
 // as its very last step, with its own return address: a pause then resumes it and it returns where it should. A state
 // is set by our own writes (FUN_001015d0's, a leaf), never by calling it.
 // At the top the climber stays hanging (the top's bar, sitting on top, the way out and the dive come next).
 // The jump onto the cage (3203) ends with the hands just under the cage's top (its truss): that is the top hold; the
-// anchor is lowered through the jump so the first hold is kSteps steps below it.
-// VENDETTA_CAGECLIMBLOG=1: each phase change with the anchor and the hips. VENDETTA_CAGECLIMB_MOMENTUM=1 (tests): the
-// climber's momentum kept full.
+// anchor is lowered as the jump's body rises (the clip's own root, kOntoRoot) so the first hold is kSteps steps below it,
+// and moved to the hang's place in the same picture the hang starts (kOntoToHang). Letting go (3205) raises it as the body
+// falls (kLetGoRoot), so the feet land on the mat. The ankles are kept above the mat throughout (aboveMat).
+// VENDETTA_CAGECLIMBLOG=1: each phase change with the anchor and the hips (=2: also a line a picture, detail()).
+// VENDETTA_CAGECLIMB_MOMENTUM=1 (tests): the climber's momentum kept full.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_cage.h"
@@ -43,7 +51,7 @@ namespace vendetta_cage_climb
 
     // the fighter's fields
     constexpr uint32_t kState = 0x40u, kX = 0xCCu, kY = 0xD0u, kZ = 0xD4u, kFacing = 0xDCu, kClip = 0xFCu,
-                       kFrame = 0x110u, kRemaining = 0x114u, kHips = 0x15Cu, kMomentum = 0x3B8u, kPlace = 0x5ACu,
+                       kFrame = 0x110u, kRemaining = 0x114u, kPoints = 0x150u, kHips = 0x15Cu, kMomentum = 0x3B8u, kPlace = 0x5ACu,
                        kBlazin = 0x5C3u, kHeld = 0x668u, kPressed = 0x66Cu, kTouched = 0x7A0u;
     constexpr uint16_t kInRing = 4u, kCantBeGrabbed = 0x1u, kCantBeHit = 0x4000u;
     constexpr uint32_t kTriangle = 0x1000u;
@@ -51,18 +59,69 @@ namespace vendetta_cage_climb
 
     // the climb's sizes (game units; the cage's walls at 40, its top 54.5 from the floor, the mat at 10.5)
     constexpr float kCage = 40.0f, kMat = 10.5f;
-    constexpr int kSteps = 2;             // steps from the first hold to the top hold (the hands under the truss)
-    constexpr float kStepUp = 5.5f;       // a step's rise
+    // two holds: the rope hold (hold 0: the lowest foot, the right, on the top rope, which bends to it) and the top hold
+    // (the hands under the truss), a step apart (the user's choice: the lowest foot on the top rope; the cage being 2
+    // wrestlers tall leaves room for one short step above it)
+    constexpr int kSteps = 1;             // steps from the rope hold to the top hold
+    constexpr float kStepUp = 3.9f;       // a step's rise (the hang's right ankle, 9.3 under its anchor, pressing the top
+                                          // rope at 24.1 down by 1: the rope hold's anchor 32.4, the top's 36.3)
     constexpr float kStepSide = 5.0f;     // a sideways step
     constexpr float kCornerRoom = 8.0f;   // kept from each corner
     constexpr float kStepCost = 3.0f;     // momentum a step up costs (none in Blazin')
     constexpr int kDanglePictures = 90;   // dangling before back to the hang
+    constexpr float kWires = 39.8f;       // the cage's wires, from the middle (the user's model: its walls' plane at 40)
+    constexpr float kToCage = 0.5f;       // the most the body moves out to the cage in a picture
+    constexpr float kOffCage = 2.0f;      // the most it moves back in a picture (a part coming through)
+
+    // the body points that can meet the cage (point, the room its flesh takes round it: a bit under the hit test's radii)
+    struct BodyPoint
+    {
+        uint32_t point;
+        float room;
+    };
+    constexpr BodyPoint kBody[] = {{3, 2.2f},  {5, 1.8f},  {8, 1.0f},  {9, 0.6f},  {12, 1.0f},
+                                   {13, 0.6f}, {15, 1.8f}, {16, 1.2f}, {18, 1.8f}, {19, 1.2f}};
+    // chest, head, left elbow, left fist, right elbow, right fist, left knee, left ankle, right knee, right ankle
 
     // the clips (the numbers they had in the game they were converted from)
     constexpr uint32_t kOnto = 0x3203u, kHang = 0x3204u, kLetGo = 0x3205u, kDownStep = 0x3208u, kRightStep = 0x3209u,
                        kLeftStep = 0x320Au, kUpBlazin = 0x320Eu, kDownBlazin = 0x320Fu, kRightBlazin = 0x3210u,
                        kLeftBlazin = 0x3211u, kUpSlowest = 0x3212u, kSlip = 0x323Du, kDangle = 0x323Eu,
                        kRecover = 0x323Fu;
+
+    // The clips' own poses (the wrestler's place the origin, y up, z forward toward the cage, x the wrestler's left), posed
+    // as the game does from the standard cage's clips (the same for every wrestler: the root's keys are the clip's).
+    // Getting on (3203) goes up the ropes as a ladder, all three touched, three steps up (the user's choice): how far the
+    // anchor is under the mat, every 4th frame, set so each foot
+    // presses its rope down by about 1 (the rope gives under it): the right foot on the bottom rope (frames 32-56), the
+    // left on the middle one (48-90, pushing up off the bottom: the drop eases from 4.3 to 2.5), the right on the top one
+    // (72-132), ending kSteps x kStepUp down for the rope hold. Nothing until the left foot leaves the mat (frame 24).
+    // Letting go (3205) falls to the floor 24.3 under the hold (the ankles), further than ours: the anchor is raised in
+    // step with its root's fall.
+    constexpr float kOntoDrop[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.8f, 3.9f, 4.8f, 5.7f, 5.6f,
+                                   4.8f, 4.5f, 4.3f, 3.2f, 2.7f, 2.5f, 2.7f, 3.1f, 3.6f, 4.2f, 4.7f, 4.4f,
+                                   4.0f, 3.9f, 3.9f, 3.9f, 3.9f, 3.9f, 3.9f, 3.9f, 3.9f, 3.9f};
+    constexpr float kLetGoRoot[] = {-0.80f,  -1.30f,  -1.70f,  -2.40f,  -3.50f,  -4.70f,  -5.70f,  -5.90f,  -5.20f,
+                                    -5.10f,  -5.40f,  -5.80f,  -6.10f,  -7.00f,  -8.30f,  -9.90f,  -12.10f, -14.40f,
+                                    -17.00f, -18.80f, -19.00f, -18.80f, -18.10f, -17.50f, -16.80f, -16.40f};
+    constexpr float kLetGoLanded = -18.8f;   // its root as the feet reach the floor (frame 76)
+    constexpr float kLetGoAnkles = -24.3f;   // its ankles on the floor
+    constexpr float kAnkleUp = 1.7f;         // a standing wrestler's ankles above the floor
+    constexpr float kAnkleLeast = 1.3f;      // the lowest the ankles may come to the mat (the clips roll onto the toes)
+    // the jump's end to the hang's start: the root moves (x, y, z) = (-0.6, 25.1, 6.2) - (0.0, -0.7, -3.7)
+    constexpr float kOntoToHang[3] = {-0.6f, 25.8f, 9.9f};
+
+    // the hang at a hold: at the rope hold its copy that keeps the top rope on the right foot
+    uint32_t hangClip(int hold) { return hold == 0 ? vendetta_cage::kHangOnRopeClip : kHang; }
+
+    template <size_t N>
+    float tableAt(const float (&table)[N], float frame)
+    {
+        const float i = std::clamp(frame / 4.0f, 0.0f, static_cast<float>(N - 1));
+        const size_t a = static_cast<size_t>(i);
+        const size_t b = std::min(a + 1, N - 1);
+        return table[a] + (table[b] - table[a]) * (i - static_cast<float>(a));
+    }
 
     enum class Phase
     {
@@ -97,12 +156,15 @@ namespace vendetta_cage_climb
         float nx = 0, nz = 1, tx = 1, tz = 0; // the side's outward normal and its direction along (x, z)
         float halfSide = 40.0f;
         float out = 0, along = 0, y = kMat;    // the anchor: along the normal, along the side, height
-        float fromOut = 0, toOut = 0, fromAlong = 0, toAlong = 0, fromY = 0, toY = 0; // a step's ends
+        float fromAlong = 0, toAlong = 0, fromY = 0, toY = 0; // a step's ends (how far out: againstCage)
+        float screen = 0;                      // +1 / -1: the side's direction across the screen, as last seen
+        uint32_t toRope = 0;                   // the stick held toward the rope to get on: no step until let go
         int hold = 0;                          // 0 the first hold .. kSteps the top
         int pictures = 0;                      // in this phase
         uint32_t clip = 0;                     // the clip to start at the end of this picture's run (0 none)
-        bool glue = false;                     // keep the hips where they were at the last clip change
-        float hips[3] = {};
+        uint32_t clipFlags = 0;                // FUN_00132158's flags for it (2: blended in from the pose shown)
+        float raised = 0;                      // letting go: the anchor's rise so far (it never comes back down)
+        int settle = 0;                        // pictures the body points still show the clip before a jump of the anchor
     };
     Climber g_climbers[4];
     bool g_active = false; // this match is a cage match with the cage's clips
@@ -111,11 +173,12 @@ namespace vendetta_cage_climb
     PS2Runtime::RecompiledFunction g_originalRopes = nullptr;
     PS2Runtime *g_runtime = nullptr;
 
-    bool logOn()
+    int logLevel()
     {
-        static const bool on = []() { const char *v = std::getenv("VENDETTA_CAGECLIMBLOG"); return v && v[0] == '1'; }();
-        return on;
+        static const int level = []() { const char *v = std::getenv("VENDETTA_CAGECLIMBLOG"); return v ? std::atoi(v) : 0; }();
+        return level;
     }
+    bool logOn() { return logLevel() >= 1; }
     float readFloat(uint8_t *rdram, uint32_t a) { float f; uint32_t v = Ps2FastRead32(rdram, a); std::memcpy(&f, &v, 4); return f; }
     void writeFloat(uint8_t *rdram, uint32_t a, float f) { uint32_t v; std::memcpy(&v, &f, 4); Ps2FastWrite32(rdram, a, v); }
     int indexOf(uint32_t fighter)
@@ -154,9 +217,9 @@ namespace vendetta_cage_climb
         Ps2FastWrite16(rdram, f + 0x5B4u, flags);
     }
 
-    // the routine's end: back to the caller (the return address $ra), or by way of FUN_00132158(fighter, clip, 0), which
-    // returns there itself, a pause or not
-    void finish(uint8_t *rdram, R5900Context *ctx, uint32_t fighter, uint32_t clipNumber)
+    // the routine's end: back to the caller (the return address $ra), or by way of FUN_00132158(fighter, clip, flags), which
+    // returns there itself, a pause or not (flags 0: a cut, the climb's clips follow on from each other; 2: blended in)
+    void finish(uint8_t *rdram, R5900Context *ctx, uint32_t fighter, uint32_t clipNumber, uint32_t flags = 0u)
     {
         const uint32_t id = clipNumber ? vendetta_animations_cageClip(clipNumber) : 0u;
         if (!id)
@@ -166,7 +229,7 @@ namespace vendetta_cage_climb
         }
         SET_GPR_U64(ctx, 4, fighter);
         SET_GPR_U64(ctx, 5, id);
-        SET_GPR_U64(ctx, 6, 0u);
+        SET_GPR_U64(ctx, 6, flags);
         g_runtime->lookupFunction(kPlayClip)(rdram, ctx, g_runtime);
     }
     bool clipEnded(uint8_t *rdram, uint32_t fighter) { return readFloat(rdram, fighter + kRemaining) <= 0.0f; }
@@ -215,40 +278,77 @@ namespace vendetta_cage_climb
         std::cerr << "[cage] climb: player " << (Ps2FastRead32(rdram, fighter + 0x30u) & 3u) << " " << what << " ("
                   << phaseName(c.phase) << ", hold " << c.hold << ", out " << c.out << " along " << c.along << " y " << c.y
                   << ", hips " << readFloat(rdram, fighter + kHips) << " " << readFloat(rdram, fighter + kHips + 4u) << " "
-                  << readFloat(rdram, fighter + kHips + 8u) << ", momentum " << readFloat(rdram, fighter + kMomentum) << ")"
-                  << std::endl;
+                  << readFloat(rdram, fighter + kHips + 8u) << ", momentum " << readFloat(rdram, fighter + kMomentum)
+                  << ", screen " << c.screen << ")" << std::endl;
     }
 
-    void startPhase(uint8_t *rdram, uint32_t fighter, Climber &c, Phase phase, uint32_t clip, bool glue)
+    // the way the body faces in the world, in the facing's degrees: from the hips (body points 14 left, 17 right: the
+    // wrestler's left is the model's +X, its front +Z)
+    float bodyFacing(uint8_t *rdram, uint32_t fighter)
     {
-        if (glue)
+        const uint32_t l = fighter + kPoints + 12u * 14u, r = fighter + kPoints + 12u * 17u;
+        const float ax = readFloat(rdram, l) - readFloat(rdram, r), az = readFloat(rdram, l + 8u) - readFloat(rdram, r + 8u);
+        float f = std::atan2(ax, az) * 180.0f / 3.14159265f - 90.0f;
+        if (f <= -180.0f)
+            f += 360.0f;
+        return f;
+    }
+    int g_afterLanding[4] = {}; // VENDETTA_CAGECLIMBLOG=2: pictures still to log after a landing (state 2's ropes check)
+
+    // VENDETTA_CAGECLIMBLOG=2: a line a picture while getting on or letting go, and for the first pictures of every
+    // phase: the clip's frame, the blend's count (+0x10C), the anchor, and body points as (out, along, up) from the side:
+    // 0 the root, 1 the hips, 9 / 13 the fists, 16 / 19 the ankles (the ropes at out 35, up 24.1 / 19.3 / 14.5; the mat 10.5)
+    void detail(uint8_t *rdram, uint32_t fighter, const Climber &c)
+    {
+        if (logLevel() < 2 || !(c.phase == Phase::Onto || c.phase == Phase::LetGo || c.pictures <= 3))
+            return;
+        std::cerr << "[cage] frame: " << phaseName(c.phase) << " " << c.pictures << " clip " << Ps2FastRead32(rdram, fighter + kClip)
+                  << " f " << readFloat(rdram, fighter + kFrame) << " blend " << Ps2FastRead32(rdram, fighter + 0x10Cu)
+                  << " | anchor " << c.out << " " << c.along << " " << c.y;
+        for (const uint32_t k : {0u, 1u, 9u, 13u, 16u, 19u})
         {
-            c.glue = true;
-            for (int i = 0; i < 3; ++i)
-                c.hips[i] = readFloat(rdram, fighter + kHips + 4u * i);
+            const uint32_t a = fighter + kPoints + 12u * k;
+            const float x = readFloat(rdram, a), y = readFloat(rdram, a + 4u), z = readFloat(rdram, a + 8u);
+            std::cerr << " | p" << k << " " << x * c.nx + z * c.nz << " " << x * c.tx + z * c.tz << " " << y;
         }
+        std::cerr << " | facing " << readFloat(rdram, fighter + kFacing) << " turn " << readFloat(rdram, fighter + 0x130u)
+                  << " after " << readFloat(rdram, fighter + 0x148u) << " body " << bodyFacing(rdram, fighter);
+        // the square's ropes of this side (0x1430E70: rope = side x 3 + level 0 top .. 2 bottom; side 0 the -Z side, 1 +X,
+        // 2 +Z, 3 -X; each {along, up, out, half width}): how far each is pulled up and out
+        if (vendetta_ring::activeSides() != 6)
+        {
+            const uint32_t side = c.nz < -0.5f ? 0u : c.nx > 0.5f ? 1u : c.nz > 0.5f ? 2u : 3u;
+            std::cerr << " | ropes (up, out)";
+            for (uint32_t level = 0; level < 3; ++level)
+            {
+                const uint32_t r = 0x1430E70u + 16u * (side * 3u + level);
+                std::cerr << " " << readFloat(rdram, r + 4u) << " " << readFloat(rdram, r + 8u);
+            }
+        }
+        std::cerr << std::endl;
+    }
+
+    void startPhase(uint8_t *rdram, uint32_t fighter, Climber &c, Phase phase, uint32_t clip, uint32_t flags = 0u)
+    {
         c.phase = phase;
         c.pictures = 0;
         c.clip = clip;
+        c.clipFlags = flags;
+        c.fromY = c.y;
+        c.raised = 0.0f;
         say(rdram, fighter, c, "starts");
     }
 
-    // the hips back where they were before the clip changed: the anchor moved by the difference (the pose of the new clip
-    // is in the hips a picture after it starts)
-    void keepHips(uint8_t *rdram, uint32_t fighter, Climber &c)
+    // the feet kept out of the mat: the ankles (the last pose, posed at the anchor last written) no lower than kAnkleLeast
+    // above it; a safety under the clips' own curves (another wrestler's legs, a clip of one's own)
+    void aboveMat(uint8_t *rdram, uint32_t fighter, Climber &c)
     {
-        if (!c.glue || c.pictures < 1)
+        if (c.settle > 0)
             return;
-        c.glue = false;
-        const float dx = c.hips[0] - readFloat(rdram, fighter + kHips);
-        const float dy = c.hips[1] - readFloat(rdram, fighter + kHips + 4u);
-        const float dz = c.hips[2] - readFloat(rdram, fighter + kHips + 8u);
-        c.out += dx * c.nx + dz * c.nz;
-        c.along += dx * c.tx + dz * c.tz;
-        c.y += dy;
-        if (logOn())
-            std::cerr << "[cage] climb: the hips kept: moved out " << dx * c.nx + dz * c.nz << ", along "
-                      << dx * c.tx + dz * c.tz << ", up " << dy << std::endl;
+        const float placed = readFloat(rdram, fighter + kY);
+        const float lowest = std::min(readFloat(rdram, fighter + kPoints + 12u * 16u + 4u),
+                                      readFloat(rdram, fighter + kPoints + 12u * 19u + 4u)) - placed;
+        c.y = std::max(c.y, kMat + kAnkleLeast - lowest);
     }
 
     uint32_t upClip(uint8_t *rdram, uint32_t fighter)
@@ -258,19 +358,39 @@ namespace vendetta_cage_climb
     }
     bool blazin(uint8_t *rdram, uint32_t fighter) { return (Ps2FastRead8(rdram, fighter + kBlazin) & 2u) != 0u; }
 
-    // which way along the side the stick's left / right go: the side's direction as it runs across the screen
-    float screenSign(const Climber &c)
+    // which way along the side the stick's left / right go: the side's direction as it runs across the screen, from the
+    // climber's chest (the last answer kept for a picture with no camera)
+    float screenSign(Climber &c)
     {
-        float rx = 0, rz = 0;
-        if (!vendetta_cage::screenRight(rx, rz))
-            return 1.0f;
-        return (c.tx * rx + c.tz * rz) >= 0.0f ? 1.0f : -1.0f;
+        const float x = c.nx * c.out + c.tx * c.along, z = c.nz * c.out + c.tz * c.along;
+        float sign = 0.0f;
+        if (vendetta_cage::screenSide(x, c.y + 8.0f, z, c.tx, c.tz, sign))
+            c.screen = sign;
+        return c.screen != 0.0f ? c.screen : 1.0f;
+    }
+
+    // the body on the cage's wires (the top comment): touch = moved out to them as well as kept from going through
+    void againstCage(uint8_t *rdram, uint32_t fighter, Climber &c, bool touch)
+    {
+        if (c.settle > 0)
+            return;
+        // the points stand at the anchor last written; c.out may have moved since (keepHips)
+        const float placed = readFloat(rdram, fighter + kX) * c.nx + readFloat(rdram, fighter + kZ) * c.nz;
+        float most = -1e9f;
+        for (const BodyPoint &b : kBody)
+        {
+            const uint32_t a = fighter + kPoints + 12u * b.point;
+            most = std::max(most, readFloat(rdram, a) * c.nx + readFloat(rdram, a + 8u) * c.nz + b.room);
+        }
+        const float move = kWires - (most + c.out - placed);
+        if (move > 0.0f && !touch)
+            return;
+        c.out += std::clamp(move, -kOffCage, kToCage);
     }
 
     void step(uint8_t *rdram, uint32_t fighter, Climber &c, int up, int side)
     {
         const bool fast = blazin(rdram, fighter);
-        c.fromOut = c.toOut = c.out;
         c.fromAlong = c.toAlong = c.along;
         c.fromY = c.toY = c.y;
         uint32_t clip = kHang;
@@ -297,7 +417,7 @@ namespace vendetta_cage_climb
             const bool climbersRight = side * (c.tx * -c.nz + c.tz * c.nx) > 0.0f; // guess: checked live
             clip = climbersRight ? (fast ? kRightBlazin : kRightStep) : (fast ? kLeftBlazin : kLeftStep);
         }
-        startPhase(rdram, fighter, c, Phase::Step, clip, false);
+        startPhase(rdram, fighter, c, Phase::Step, clip);
     }
 
     // state 102: the climber, each picture
@@ -314,14 +434,20 @@ namespace vendetta_cage_climb
             return;
         }
         Climber &c = g_climbers[index];
-        keepHips(rdram, fighter, c);
+        detail(rdram, fighter, c);
+        if (c.settle > 0)
+            --c.settle;
         ++c.pictures;
         if (logOn() && c.pictures % 30 == 0)
             std::cerr << "[cage] climb: " << phaseName(c.phase) << " picture " << c.pictures << ", clip "
                       << Ps2FastRead32(rdram, fighter + kClip) << " frame " << readFloat(rdram, fighter + kFrame) << " left "
                       << readFloat(rdram, fighter + kRemaining) << ", held " << (Ps2FastRead32(rdram, fighter + kHeld) & 0xFu)
-                      << ", hips y " << readFloat(rdram, fighter + kHips + 4u) << ", anchor y " << c.y << std::endl;
-        const uint32_t held = Ps2FastRead32(rdram, fighter + kHeld) & 0xFu;
+                      << ", hips y " << readFloat(rdram, fighter + kHips + 4u) << ", anchor y " << c.y << " out " << c.out
+                      << std::endl;
+        uint32_t held = Ps2FastRead32(rdram, fighter + kHeld) & 0xFu;
+        if (!(held & c.toRope))
+            c.toRope = 0;
+        held &= ~c.toRope;
         static const bool fullMomentum = []() { const char *v = std::getenv("VENDETTA_CAGECLIMB_MOMENTUM"); return v && v[0] == '1'; }();
         if (fullMomentum)
             writeFloat(rdram, fighter + kMomentum, 100.0f);
@@ -329,9 +455,22 @@ namespace vendetta_cage_climb
         switch (c.phase)
         {
         case Phase::Onto:
-            c.y = c.fromY - kStepUp * static_cast<float>(kSteps) * progress(rdram, fighter);
+            // up the ropes (kOntoDrop; nothing before the jump's clip plays: the stance's frame is not its own)
+            if (started)
+            {
+                c.y = c.fromY - tableAt(kOntoDrop, readFloat(rdram, fighter + kFrame));
+                aboveMat(rdram, fighter, c);
+            }
             if (started && clipEnded(rdram, fighter))
-                startPhase(rdram, fighter, c, Phase::Hang, kHang, true);
+            {
+                // the hang starts where the jump ended, this picture: the anchor moved as the root moves between the two
+                // clips (the body points show the jump's pose for one more picture: settle)
+                c.along += kOntoToHang[0];
+                c.y += kOntoToHang[1];
+                c.out += kOntoToHang[2];
+                c.settle = 1;
+                startPhase(rdram, fighter, c, Phase::Hang, hangClip(c.hold));
+            }
             break;
         case Phase::Hang:
             if (!started)
@@ -341,7 +480,7 @@ namespace vendetta_cage_climb
                 if (c.hold >= kSteps)
                     break; // the top (what comes next: the top's own step)
                 if (!blazin(rdram, fighter) && readFloat(rdram, fighter + kMomentum) < kStepCost)
-                    startPhase(rdram, fighter, c, Phase::Slip, kSlip, false);
+                    startPhase(rdram, fighter, c, Phase::Slip, kSlip);
                 else
                     step(rdram, fighter, c, 1, 0);
             }
@@ -350,7 +489,7 @@ namespace vendetta_cage_climb
                 if (c.hold > 0)
                     step(rdram, fighter, c, -1, 0);
                 else
-                    startPhase(rdram, fighter, c, Phase::LetGo, kLetGo, false);
+                    startPhase(rdram, fighter, c, Phase::LetGo, kLetGo);
             }
             else if (held & (kLeft | kRight))
             {
@@ -363,31 +502,39 @@ namespace vendetta_cage_climb
         case Phase::Step:
         {
             const float t = progress(rdram, fighter);
-            c.out = c.fromOut + (c.toOut - c.fromOut) * t;
             c.along = c.fromAlong + (c.toAlong - c.fromAlong) * t;
             c.y = c.fromY + (c.toY - c.fromY) * t;
             if (started && clipEnded(rdram, fighter))
             {
-                c.out = c.toOut;
                 c.along = c.toAlong;
                 c.y = c.toY;
-                startPhase(rdram, fighter, c, Phase::Hang, kHang, false);
+                startPhase(rdram, fighter, c, Phase::Hang, hangClip(c.hold));
             }
             break;
         }
         case Phase::Slip:
             if (started && clipEnded(rdram, fighter))
-                startPhase(rdram, fighter, c, Phase::Dangle, kDangle, false);
+                startPhase(rdram, fighter, c, Phase::Dangle, kDangle);
             break;
         case Phase::Dangle:
             if (c.pictures >= kDanglePictures)
-                startPhase(rdram, fighter, c, Phase::Recover, kRecover, false);
+                startPhase(rdram, fighter, c, Phase::Recover, kRecover);
             break;
         case Phase::Recover:
             if (started && clipEnded(rdram, fighter))
-                startPhase(rdram, fighter, c, Phase::Hang, kHang, false);
+                startPhase(rdram, fighter, c, Phase::Hang, hangClip(c.hold));
             break;
         case Phase::LetGo:
+            // raised as the clip's body falls, so the feet reach the mat as the clip's reach its floor; never back down
+            if (started)
+            {
+                const float fall = (kLetGoRoot[0] - tableAt(kLetGoRoot, readFloat(rdram, fighter + kFrame))) /
+                                   (kLetGoRoot[0] - kLetGoLanded);
+                const float lift = std::max(0.0f, (kMat + kAnkleUp) - (c.fromY + kLetGoAnkles));
+                c.raised = std::max(c.raised, lift * std::clamp(fall, 0.0f, 1.0f));
+                c.y = c.fromY + c.raised;
+                aboveMat(rdram, fighter, c);
+            }
             if (started && clipEnded(rdram, fighter))
             {
                 say(rdram, fighter, c, "lands in the ring");
@@ -398,6 +545,13 @@ namespace vendetta_cage_climb
                 c.along = hx * c.tx + hz * c.tz;
                 c.y = kMat;
                 place(rdram, fighter, c);
+                // facing the way the body ended up: the clip turns the body about 135 degrees back toward the ring but
+                // keys no facing bone (+0x130 stays 0), so the game would start the stance (flags 0xE: facing = +0x148)
+                // still facing the cage; then its turn to face (FUN_00102b08) takes the stance round to the opponent
+                const float facing = bodyFacing(rdram, fighter);
+                writeFloat(rdram, fighter + kFacing, facing);
+                writeFloat(rdram, fighter + 0x148u, facing);
+                g_afterLanding[index] = 40;
                 setState(rdram, fighter, kStanding); // state 2 runs this picture and starts its own clip
                 finish(rdram, ctx, fighter, 0u);
                 return;
@@ -406,12 +560,13 @@ namespace vendetta_cage_climb
         case Phase::None:
             break;
         }
+        againstCage(rdram, fighter, c, c.phase != Phase::Onto && c.phase != Phase::LetGo);
         place(rdram, fighter, c);
         Ps2FastWrite16(rdram, fighter + kPlace,
                        static_cast<uint16_t>(Ps2FastRead16(rdram, fighter + kPlace) | kCantBeHit | kCantBeGrabbed));
         const uint32_t clip = c.clip;
         c.clip = 0;
-        finish(rdram, ctx, fighter, clip);
+        finish(rdram, ctx, fighter, clip, c.clipFlags);
     }
 
     // FUN_0013c1b8 (state 2's triangle at the ropes): in a cage match, triangle with the stick toward a rope climbs the cage
@@ -435,8 +590,9 @@ namespace vendetta_cage_climb
                 c.out = x * c.nx + z * c.nz;
                 c.along = std::clamp(x * c.tx + z * c.tz, -(c.halfSide - kCornerRoom), c.halfSide - kCornerRoom);
                 c.y = c.fromY = readFloat(rdram, fighter + kY);
+                c.toRope = Ps2FastRead32(rdram, fighter + kHeld) & 0xFu;
                 setState(rdram, fighter, kClimbState); // state 102 runs this picture: it starts the clip
-                startPhase(rdram, fighter, c, Phase::Onto, kOnto, false);
+                startPhase(rdram, fighter, c, Phase::Onto, kOnto, 2u); // blended in from the stance
                 place(rdram, fighter, c);
                 SET_GPR_U64(ctx, 2, 1u);
                 ctx->pc = getRegU32(ctx, 31);
@@ -448,6 +604,39 @@ namespace vendetta_cage_climb
 }
 
 bool vendetta_cage::cageMatch(uint8_t *rdram) { return (Ps2FastRead16(rdram, kRuleWord) & kRuleCage) != 0u; }
+
+// VENDETTA_CAGECLIMBLOG=2: after a landing, a line a picture for 40 (from the wall search, which runs for every fighter
+// every picture: a picture once, by its clip and frame): the facing, the facing after the clip, the body's own facing,
+// the heading from the hips to the other fighters' hips
+void vendetta_cage::climbWatch(uint8_t *rdram, uint32_t fighter)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    if (index < 0 || g_afterLanding[index] <= 0 || logLevel() < 2)
+        return;
+    static float lastFrame[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+    static uint32_t lastClip[4] = {};
+    const float frame = readFloat(rdram, fighter + kFrame);
+    const uint32_t clip = Ps2FastRead32(rdram, fighter + kClip);
+    if (frame == lastFrame[index] && clip == lastClip[index])
+        return;
+    lastFrame[index] = frame;
+    lastClip[index] = clip;
+    --g_afterLanding[index];
+    std::cerr << "[cage] after landing: clip " << clip << " f " << frame << " blend " << Ps2FastRead32(rdram, fighter + 0x10Cu)
+              << " state " << Ps2FastRead32(rdram, fighter + kState) << " | facing " << readFloat(rdram, fighter + kFacing)
+              << " after " << readFloat(rdram, fighter + 0x148u) << " body " << bodyFacing(rdram, fighter) << " | to";
+    for (uint32_t j = 0; j < 4; ++j)
+    {
+        const uint32_t other = kFighters + kFighterBytes * j;
+        if (static_cast<int>(j) == index || Ps2FastRead32(rdram, other + kState) == 0u)
+            continue;
+        const float dx = readFloat(rdram, other + kHips) - readFloat(rdram, fighter + kHips);
+        const float dz = readFloat(rdram, other + kHips + 8u) - readFloat(rdram, fighter + kHips + 8u);
+        std::cerr << " " << j << " " << std::atan2(dx, dz) * 180.0f / 3.14159265f;
+    }
+    std::cerr << std::endl;
+}
 
 bool vendetta_cage::climbing(uint8_t *rdram, uint32_t fighter)
 {

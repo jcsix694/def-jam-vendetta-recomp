@@ -487,6 +487,7 @@ void vendetta_cage::matchStarting()
 uint32_t vendetta_cage::walls(uint8_t *rdram, uint32_t fighter, uint32_t gameList, uint32_t list)
 {
     using namespace vendetta_cage_walls;
+    climbWatch(rdram, fighter);
     if (g_newMatch)
     {
         g_newMatch = false;

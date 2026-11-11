@@ -905,6 +905,15 @@ namespace vendetta_animations
                 NewClip item{stem, &kept};
                 item.cageNumber = static_cast<int>(number);
                 added.push_back(item);
+                if (number == 0x3204u)
+                {
+                    // the hang a second time, as the hang at the rope hold: its own playback record bends the top rope
+                    ModClip rope = kept;
+                    ModClip &keptRope = g_modClips[std::filesystem::path(file.string() + " (on the top rope)")] = std::move(rope);
+                    NewClip onRope{stem + " (on the top rope)", &keptRope};
+                    onRope.cageNumber = static_cast<int>(vendetta_cage::kHangOnRopeClip);
+                    added.push_back(onRope);
+                }
             }
         uint8_t *fzui = guest(read32(kWaza + kFzuiBank1));
         std::vector<Clip> &clips = g_clips[1];
@@ -937,10 +946,23 @@ namespace vendetta_animations
             {
                 g_cageIds[static_cast<uint32_t>(item.cageNumber)] = clip.index;
                 // played by our code: speed 100; the loops (hanging, dangling, the top's straining and crouching, the
-                // shake) looping
+                // shake) looping. The ropes the feet stand on bent to them, by the game's own windows (16-18 the top /
+                // middle / bottom rope pulled to the right ankle, 19-21 to the left): getting on (3203) goes up them as
+                // a ladder, the right foot on the bottom rope, the left on the middle, the right on the top; the hang
+                // at the rope hold keeps the top rope on the right foot; letting go (3205) starts there, the right foot
+                // riding the top rope until it comes over it, the left resting on the middle rope from inside (the
+                // frames from the clips' own poses with the climb's lowering and raising, vendetta_cage_climb.cpp)
                 const uint32_t n = static_cast<uint32_t>(item.cageNumber);
-                vendetta_moves::plainPlayback(clip.index, n == 0x3204u || n == 0x323Eu || n == 0x3246u || n == 0x324Au ||
-                                                              n == 0x3239u);
+                const bool loop = n == 0x3204u || n == vendetta_cage::kHangOnRopeClip || n == 0x323Eu || n == 0x3246u ||
+                                  n == 0x324Au || n == 0x3239u;
+                if (n == 0x3203u)
+                    vendetta_moves::plainPlayback(clip.index, loop, {{30u, 58u, 18u}, {46u, 90u, 20u}, {70u, 132u, 16u}});
+                else if (n == vendetta_cage::kHangOnRopeClip)
+                    vendetta_moves::plainPlayback(clip.index, loop, {{0u, 2000u, 16u}});
+                else if (n == 0x3205u)
+                    vendetta_moves::plainPlayback(clip.index, loop, {{0u, 38u, 16u}, {20u, 52u, 20u}});
+                else
+                    vendetta_moves::plainPlayback(clip.index, loop);
             }
             clips.push_back(clip);
             ++counts.added;

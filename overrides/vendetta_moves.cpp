@@ -1858,13 +1858,23 @@ namespace vendetta_moves
         return -1;
     }
 
-    void plainPlayback(uint32_t clipId, bool loop)
+    void plainPlayback(uint32_t clipId, bool loop, std::initializer_list<PlainWindow> windows)
     {
         std::array<uint32_t, 30> p = {kNever, kNever, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, 0, 1,
                                             kNever, 0, 0, 0, 100, 0, kNone, kNone, 127, kNone, kNone, 127, kNone, kNone,
                                             127, kNone, kNone, 127};
         if (loop)
             p[17] |= 1u;
+        size_t i = 0;
+        for (const PlainWindow &w : windows)
+        {
+            if (i >= 4)
+                break;
+            p[18 + 3 * i] = w.from;
+            p[19 + 3 * i] = w.to;
+            p[20 + 3 * i] = w.what;
+            ++i;
+        }
         const uint32_t timing = read32(kWaza + kTimingArray);
         const uint32_t stride = read32(kWaza + kTimingStride);
         if (timing && stride)

@@ -28,6 +28,11 @@ namespace vendetta_cage
                        kRuleTagBothIn = 0x0020u; // with match kind 2: both partners start in the ring, no tags
     constexpr uint16_t kRuleCage = 0x8000u, kRuleEscape = 0x4000u;
 
+    // The cage's clips go by the numbers they had in the game they were converted from (3203 getting on, ...). One more is
+    // made by the loader from 3204 (hanging): the hang at the rope hold, the lowest foot on the top rope, which its
+    // playback record bends to that foot (vendetta_animations.cpp, vendetta_cage_climb.cpp).
+    constexpr uint32_t kHangOnRopeClip = 0x13204u;
+
     // The test match (--test-match): these rules for its own match set-up instead of the menu's (once: a rematch keeps
     // the rule word).
     void setTestRules(const Rules &rules);
@@ -50,8 +55,10 @@ namespace vendetta_cage
     // there (one's own), else <the game's folder>\standard\cage\ (the standard cage, copied there by the setup from the
     // repository's standard\cage\).
     std::filesystem::path cageFolder();
-    // The direction (x, z) the screen's right is in the world, from the last picture's camera; false before one.
-    bool screenRight(float &x, float &z);
+    // Which way a step from the world place (x, y, z) along (dx, dz) goes across the screen, by the last picture's camera
+    // (both ends projected as the cage's own points are): sign +1 right, -1 left; false before a picture, or with the
+    // place behind the camera.
+    bool screenSide(float x, float y, float z, float dx, float dz, float &sign);
 
     // This match is a cage match (the rule word's 0x8000).
     bool cageMatch(uint8_t *rdram);
@@ -59,4 +66,6 @@ namespace vendetta_cage
     // cage match. climbing: the fighter is on the cage.
     void climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime);
     bool climbing(uint8_t *rdram, uint32_t fighter);
+    // VENDETTA_CAGECLIMBLOG=2: the pictures after a landing, logged (from walls, every fighter every picture)
+    void climbWatch(uint8_t *rdram, uint32_t fighter);
 }
