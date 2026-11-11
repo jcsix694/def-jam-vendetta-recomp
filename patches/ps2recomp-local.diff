@@ -533,10 +533,10 @@ index a932a5d..0296a8e 100644
  }
 diff --git a/ps2xIOP/src/emulator/core/spu2.cpp b/ps2xIOP/src/emulator/core/spu2.cpp
 new file mode 100644
-index 0000000..ae230d9
+index 0000000..1a7edff
 --- /dev/null
 +++ b/ps2xIOP/src/emulator/core/spu2.cpp
-@@ -0,0 +1,795 @@
+@@ -0,0 +1,797 @@
 +#include "spu2.h"
 +#include "spu2_gaussian.h"
 +
@@ -854,9 +854,11 @@ index 0000000..ae230d9
 +    }
 +
 +    // The voice's sample for this output tick: the pitch (0x1000 = 48 kHz) moves through the decoded samples; a
-+    // block's loop-end flag sets ENDX and jumps to the loop address (repeat) or ends the voice. The output is the
-+    // hardware's 4-point Gaussian interpolation over the last four samples (the pitch counter's fraction picks the
-+    // weights), which softens the high end as the PS2 does.
++    // block's loop-end flag sets ENDX and moves the voice's address (NAX) to the loop address, then plays on from there
++    // (repeat) or ends the voice. The jump happens either way, as on the hardware: a sound driver can tell a voice that
++    // ended from one still playing by its NAX (a driver that parks every voice's loop address on a silent block reads
++    // NAX inside that block as "finished"). The output is the hardware's 4-point Gaussian interpolation over the last
++    // four samples (the pitch counter's fraction picks the weights), which softens the high end as the PS2 does.
 +    int32_t Spu2::nextSample(Core &core, int index, Voice &voice, uint32_t pitch)
 +    {
 +        voice.counter += pitch;
@@ -868,6 +870,7 @@ index 0000000..ae230d9
 +                if (voice.blockLoaded && (voice.blockFlags & 1u) != 0u)
 +                {
 +                    core.endFlags |= 1u << index;
++                    voice.nextAddress = voice.loopAddress;
 +                    if ((voice.blockFlags & 2u) == 0u)
 +                    {
 +                        voice.phase = Phase::Off;
@@ -876,7 +879,6 @@ index 0000000..ae230d9
 +                        voice.recent.fill(0);
 +                        return 0;
 +                    }
-+                    voice.nextAddress = voice.loopAddress;
 +                }
 +                decodeBlock(voice);
 +            }
