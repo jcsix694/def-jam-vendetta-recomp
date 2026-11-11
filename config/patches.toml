@@ -35,6 +35,25 @@ instructions = [
   { address = "0x0015674c", value = "0x3c020200" }, # lui $v0, 0x0200
   { address = "0x00156758", value = "0x244200e0" }, # addiu $v0, $v0, 0xE0
   { address = "0x0015678c", value = "0xafa90064" }, # sw $t1, 0x64($sp): the count (was $s5, 3)
+  # Choose Match FUN_0014da00 gets a second step, the match type (overrides/vendetta_cage_menu.cpp runs it and fills
+  # the tables it reads from the store's fixed area at 0x02000200). In the first step every change does what it replaces.
+  { address = "0x0014dec8", value = "0x0c077dd8" }, # jal 0x1DF760: the mode icon (was jal FUN_00179938)
+  { address = "0x0014e10c", value = "0x0c077dd9" }, # jal 0x1DF764: the rows, then the words' end (was jal FUN_001bb0d0)
+  { address = "0x0014df98", value = "0x3c020200" }, # lui $v0, 0x0200      the words: 0x02000200 (was 0x002399B8)
+  { address = "0x0014df9c", value = "0x24570200" }, # addiu $s7, $v0, 0x200
+  { address = "0x0014e12c", value = "0x3c030200" }, # lui $v1, 0x0200 (a delay slot)  the help box's lines: 0x02000240
+  { address = "0x0014e138", value = "0x24680240" }, # addiu $t0, $v1, 0x240 (was 0x0027CCF0)
+  # A cage match keeps everyone inside (overrides/vendetta_cage.cpp): each jal goes to a hook that, outside a cage
+  # match, does exactly what the instruction it replaces did.
+  { address = "0x00123354", value = "0x0c077ddc" }, # jal 0x1DF770 (was lw $v0, 0x668($s0)): state 14, triangle held
+  { address = "0x00115494", value = "0x0c077ddd" }, # jal 0x1DF774 (was lhu $v0, 0x44($a0)): the run out, the rope's permission
+  { address = "0x00123afc", value = "0x0c077dde" }, # jal 0x1DF778 (was jal FUN_00132158): state 20 on the apron, its clip
+  { address = "0x00123b5c", value = "0x0c077ddf" }, # jal 0x1DF77C (was jal FUN_00132158): state 20 stunned on the ropes, its clip
+  { address = "0x00123b74", value = "0x0c077de0" }, # jal 0x1DF780 (was jal FUN_001310f0): state 20 in the ring, the floor's chance
+  { address = "0x00100e78", value = "0x0c077de1" }, # jal 0x1DF784 (was jal FUN_001310f0): state 21 hit again, the floor's chance
+  { address = "0x0011d4ec", value = "0x0c077de2" }, # jal 0x1DF788 (was jal FUN_0011f7a8): the catch at an edge, its rope
+  { address = "0x00128564", value = "0x0c077de3" }, # jal 0x1DF78C (was jal FUN_001310f0): state 19 into a rope, the chance of going over
+  { address = "0x001150fc", value = "0x0c077de4" }, # jal 0x1DF790 (was jal FUN_00101680): the dodged runner at a rope, its state
   # The sound step FUN_001b05e0 names bank 1 clips up to 4095 from a table in the store's fixed area at 0x02001000
   # (was 2,002, from 0x0025A790): overrides/vendetta_clipsounds.cpp copies the game's names there and names new clips.
   { address = "0x001b06c8", value = "0x2ac21000" }, # slti $v0, $s6, 0x1000 (was 0x7D3)

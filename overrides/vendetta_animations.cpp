@@ -38,6 +38,10 @@
 //    { "frame": 12, "sound": "Swing (whoosh)", "value": 3 } ] } (vendetta_clipsounds.cpp). A mod's animation, new or
 //    replacing a game clip, plays exactly that list: without one it is silent.
 // A mistake in a file leaves that one thing out of the match (a slot then keeps the game's move), with a message.
+// A cage match (vendetta_cage.h) also gets the cage's own clips, the climb, the top and the shake, from
+// <the game's folder>\cage\animations\*.bin, named by their first word (the number they had in the game they were
+// converted from, e.g. "3203 Climb onto the cage.bin"), as new clips after the mods' (vendetta_cage_climb.cpp asks for
+// them by that number, cageClip). Without mods the loader still runs when that folder has clips.
 //
 // VENDETTA_MODS=0        the plain game (mods\ ignored; the hooks pass straight through, nothing is changed)
 // VENDETTA_MODLOG=1      every animation, move, slot and sound list each match puts in (vendetta_mods.h)
@@ -50,6 +54,7 @@
 #include "ps2_runtime.h"
 #include "game_overrides.h"
 #include "runtime/ee_scheduler.h"
+#include "vendetta_cage.h"
 #include "vendetta_clipsounds.h"
 #include "vendetta_mods.h"
 #include "vendetta_moves.h"
@@ -524,6 +529,26 @@ namespace vendetta_animations
         return true;
     }
 
+    // The cage's own clips: <the game's folder>\cage\animations\*.bin (read once a match, kept as mod clips are)
+    std::filesystem::path cageClipFolder() { return PS2Runtime::getIoPaths().elfDirectory / "cage" / "animations"; }
+    std::vector<std::filesystem::path> cageClipFiles()
+    {
+        std::vector<std::filesystem::path> files;
+        std::error_code ec;
+        for (const auto &entry : std::filesystem::directory_iterator(cageClipFolder(), ec))
+            if (entry.is_regular_file(ec) && entry.path().extension() == ".bin")
+                files.push_back(entry.path());
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+    bool cageClipsThere()
+    {
+        static const bool there = !cageClipFiles().empty();
+        return there;
+    }
+    std::unordered_map<uint32_t, uint32_t> g_cageIds; // this match's cage clips: their number -> the clip id
+    bool g_builtCage = false;                           // the last build was a cage match's
+
     enum class State
     {
         Waiting, // the tables not made full size yet
@@ -537,7 +562,7 @@ namespace vendetta_animations
     {
         if (g_state != State::Waiting)
             return g_state == State::Ready;
-        if (vendetta_mods::loadedMods().empty())
+        if (vendetta_mods::loadedMods().empty() && !cageClipsThere())
         {
             g_state = State::Off; // the plain game: nothing touched
             return false;
@@ -752,6 +777,7 @@ namespace vendetta_animations
         std::string name;
         ModClip *clip = nullptr;
         int moveClip = -1; // one of a new move's animations (vendetta_moves), its place in that list
+        int cageNumber = -1; // one of the cage's clips, its number
     };
 
     // The mods' "new" animations the match's slots name (upper-case names in `wanted`), in load order; a name added again
@@ -857,6 +883,29 @@ namespace vendetta_animations
             ModClip &kept = g_modClips[std::filesystem::path("move clip " + std::to_string(i))] = std::move(clip);
             added.push_back({moveClips[i].name, &kept, static_cast<int>(i)});
         }
+        g_cageIds.clear();
+        if (g_builtCage)
+            for (const std::filesystem::path &file : cageClipFiles())
+            {
+                const std::string stem = file.stem().string();
+                const uint32_t number = static_cast<uint32_t>(std::strtoul(stem.c_str(), nullptr, 16));
+                ModClip clip;
+                clip.modName = "the cage";
+                clip.fileName = file.filename().string();
+                std::string why;
+                if (number == 0u || !readFile(file, clip.bytes) || !clipLooksValid(clip.bytes, why))
+                {
+                    std::cerr << "[cage] the clip " << clip.fileName << " left out: " << (why.empty() ? "can't be read" : why)
+                              << std::endl;
+                    continue;
+                }
+                track(file);
+                clip.hasSounds = true; // silent for now
+                ModClip &kept = g_modClips[file] = std::move(clip);
+                NewClip item{stem, &kept};
+                item.cageNumber = static_cast<int>(number);
+                added.push_back(item);
+            }
         uint8_t *fzui = guest(read32(kWaza + kFzuiBank1));
         std::vector<Clip> &clips = g_clips[1];
         for (const NewClip &item : added)
@@ -884,6 +933,15 @@ namespace vendetta_animations
                 vendetta_clipsounds::setSounds(soundName, item.clip->sounds, clip.from + " (" + clip.name + ")");
             if (item.moveClip >= 0)
                 vendetta_moves::clipNumbered(static_cast<size_t>(item.moveClip), clip.index);
+            if (item.cageNumber >= 0)
+            {
+                g_cageIds[static_cast<uint32_t>(item.cageNumber)] = clip.index;
+                // played by our code: speed 100; the loops (hanging, dangling, the top's straining and crouching, the
+                // shake) looping
+                const uint32_t n = static_cast<uint32_t>(item.cageNumber);
+                vendetta_moves::plainPlayback(clip.index, n == 0x3204u || n == 0x323Eu || n == 0x3246u || n == 0x324Au ||
+                                                              n == 0x3239u);
+            }
             clips.push_back(clip);
             ++counts.added;
         }
@@ -1259,10 +1317,13 @@ namespace vendetta_animations
             std::array<int32_t, 4> records{};
             for (uint32_t p = 0; p < 4u; ++p)
                 records[p] = static_cast<int32_t>(read32(kMatchRecords + 4u * p));
-            const std::filesystem::path changed = g_built && !g_newLoad && records == g_builtFor ? changedFile()
-                                                                                                 : std::filesystem::path();
-            if (!g_built || g_newLoad || records != g_builtFor || !changed.empty())
+            const bool cage = vendetta_cage::cageMatch(rdram);
+            const std::filesystem::path changed = g_built && !g_newLoad && records == g_builtFor && cage == g_builtCage
+                                                      ? changedFile()
+                                                      : std::filesystem::path();
+            if (!g_built || g_newLoad || records != g_builtFor || cage != g_builtCage || !changed.empty())
             {
+                g_builtCage = cage;
                 if (!changed.empty())
                     std::cerr << "[match] " << changed.string() << " changed: the match's mods read again" << std::endl;
                 if (g_marked)
@@ -1325,6 +1386,12 @@ namespace vendetta_animations
                 runtime.replaceFunction(kPlayClip, playClip);
         }
     }
+}
+
+uint32_t vendetta_animations_cageClip(uint32_t number)
+{
+    const auto found = vendetta_animations::g_cageIds.find(number);
+    return found == vendetta_animations::g_cageIds.end() ? 0u : found->second;
 }
 
 void installVendettaAnimations(PS2Runtime &runtime) { vendetta_animations::install(runtime); }

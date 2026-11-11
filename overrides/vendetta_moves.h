@@ -64,4 +64,8 @@ namespace vendetta_moves
     int recordOf(const std::string &name);
 
     const std::vector<std::filesystem::path> &filesRead();
+
+    // A clip our own code plays (not a move's): its playback record plain, as a new move's animation without settings
+    // (speed 100, no windows, no camera, no eyes), looping or not.
+    void plainPlayback(uint32_t clipId, bool loop);
 }

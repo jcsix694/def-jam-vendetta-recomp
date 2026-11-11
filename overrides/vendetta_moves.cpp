@@ -1857,4 +1857,17 @@ namespace vendetta_moves
         }
         return -1;
     }
+
+    void plainPlayback(uint32_t clipId, bool loop)
+    {
+        std::array<uint32_t, 30> p = {kNever, kNever, kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone, 0, 1,
+                                            kNever, 0, 0, 0, 100, 0, kNone, kNone, 127, kNone, kNone, 127, kNone, kNone,
+                                            127, kNone, kNone, 127};
+        if (loop)
+            p[17] |= 1u;
+        const uint32_t timing = read32(kWaza + kTimingArray);
+        const uint32_t stride = read32(kWaza + kTimingStride);
+        if (timing && stride)
+            packBits(p, kPlayBits, guest(timing + clipId * stride), stride);
+    }
 }

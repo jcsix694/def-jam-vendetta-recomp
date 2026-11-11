@@ -9,10 +9,13 @@
 //     "fighters": [ { "record": 0, "attire": 0, "control": "human" },
 //                   { "record": 9, "attire": 0, "control": "cpu", "level": 1 } ],
 //     "repeat": { "fighter": 1, "slot": 12 },
-//     "keep health": [ true, true ], "loop": true, "skip movies": true }
+//     "keep health": [ true, true ], "loop": true, "skip movies": true,
+//     "match type": "cage", "cage": { "escape": true, "pin & submission": false, "tko": false, "rope breaks": true } }
 // "match": "1-on-1" (two fighters), "4-way" (four, all against all: the block as Battle's Free For All leaves it,
 // +0x10 = 1, +0x14 = +0x18 = 4, the pads 0 / 4 / 5 / 6) or "tag" (four, the first two a team against the last two: as
 // Tag Team leaves it, +0x10 = 2, the order +0x8C..+0x98 = 0 1 2 3; FUN_00140298 makes the match kind 2 from it).
+// "match type": "normal" (the game's own, also without it) or "cage", whose ways to win are "cage"'s (each left out is
+// as Choose Match's second step starts: escape on, pin & submission off, TKO off, rope breaks on; vendetta_cage.h).
 //
 // VENDETTA_TESTWIN=1 (a test, with or without the file, in any match, Story's included): while a match runs, every
 // human fighter (in the match, +0x5BC bit 1, and not the computer's, bit 0, when the fight starts) is played by the
@@ -48,6 +51,7 @@
 //   "throws N" and "match M" for the tool, rewritten when either changes.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
+#include "vendetta_cage.h"
 #include "vendetta_mods.h"
 #include "vendetta_wrestlers.h"
 
@@ -109,6 +113,7 @@ namespace vendetta_testmatch
         int repeatSlot = -1;
         bool loop = true;
         bool skipMovies = true;
+        vendetta_cage::Rules rules{}; // "match type"
     };
 
     Setup g_setup;
@@ -226,6 +231,23 @@ namespace vendetta_testmatch
         }
         out.loop = flag(json.find("loop"), true);
         out.skipMovies = flag(json.find("skip movies"), true);
+        out.rules = vendetta_cage::Rules{};
+        if (const auto *type = json.find("match type"); type && type->isString() && type->text == "cage")
+            out.rules.cage = true;
+        else if (type && !(type->isString() && type->text == "normal"))
+            std::cerr << "[testmatch] \"match type\" is \"normal\" or \"cage\": a normal match" << std::endl;
+        if (const auto *cage = json.find("cage"); out.rules.cage && cage && cage->isObject())
+        {
+            out.rules.escape = flag(cage->find("escape"), out.rules.escape);
+            out.rules.pinSubmission = flag(cage->find("pin & submission"), out.rules.pinSubmission);
+            out.rules.tko = flag(cage->find("tko"), out.rules.tko);
+            out.rules.ropeBreaks = flag(cage->find("rope breaks"), out.rules.ropeBreaks);
+            if (!out.rules.escape && !out.rules.pinSubmission && !out.rules.tko)
+            {
+                std::cerr << "[testmatch] a cage match needs a way to win: escape on" << std::endl;
+                out.rules.escape = true;
+            }
+        }
         return true;
     }
 
@@ -310,6 +332,7 @@ namespace vendetta_testmatch
         Ps2FastWrite32(rdram, fe + 0x60, 0u);             // a fresh slide-in for the VS screen
         Ps2FastWrite32(rdram, fe + 0x08, 0x19u);
         Ps2FastWrite32(rdram, fe + 0x04, 0x19u);          // what Choose Stage leaves: the match setup next
+        vendetta_cage::setTestRules(g_setup.rules);       // the match type for the match setup, not the menu's
         g_started = true;
         std::cerr << "[testmatch] straight into the match (" << (g_setup.tag ? "tag" : count == 4 ? "4-way" : "1-on-1") << "): records";
         for (int p = 0; p < count; ++p)

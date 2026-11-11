@@ -14,6 +14,7 @@
 // right, both left), so a table of four entries can't be read past its end. Exact answers come from sideOf / cornerOf.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
+#include "vendetta_cage.h"
 #include "vendetta_mods.h"
 #include "vendetta_ring.h"
 #include "vendetta_store.h"
@@ -719,7 +720,7 @@ namespace vendetta_ring
             return g_direction[player] = static_cast<uint8_t>(sideOf(x, z) % directions);
         }
 
-        uint32_t mapList(uint8_t *rdram, uint32_t fighter, uint32_t list)
+        uint32_t ringList(uint8_t *rdram, uint32_t fighter, uint32_t list)
         {
             if (!g_active)
                 return list;
@@ -735,6 +736,12 @@ namespace vendetta_ring
             if (list == kGameEnd33A || list == kGameEnd33B)
                 return g_endLists + (directions + ropeDirection(rdram, fighter)) * 32u;
             return list;
+        }
+
+        // every list the two wall searches take, this ring's (or the game's own), then a cage match's (vendetta_cage.cpp)
+        uint32_t mapList(uint8_t *rdram, uint32_t fighter, uint32_t list)
+        {
+            return vendetta_cage::walls(rdram, fighter, list, ringList(rdram, fighter, list));
         }
 
         // ------------------------------------------------------------------ corner moves
@@ -2399,6 +2406,7 @@ namespace vendetta_ring
         // FUN_001a2cf8(step f12): up and out spring back towards rest
         void ropeSpring(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            vendetta_cage::drawCage(rdram, *runtime); // the ring is drawn: a cage match's cage after it (vendetta_cage_draw.cpp)
             if (!g_active)
             {
                 g_ropeSpring(rdram, ctx, runtime);
@@ -2792,6 +2800,7 @@ namespace vendetta_ring
 
         void ringDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            vendetta_cage::ringDrawing(rdram, getRegU32(ctx, 4)); // this picture's camera, for a cage match's cage
             if (!g_active)
             {
                 g_ringDraw(rdram, ctx, runtime);
@@ -2938,6 +2947,8 @@ namespace vendetta_ring
         if (ring)
             g_pendingRing = *ring;
     }
+
+    int activeSides() { return g_active ? g_sides : 0; }
 
     void setCornerSpots(const std::vector<CornerSpot> &spots)
     {

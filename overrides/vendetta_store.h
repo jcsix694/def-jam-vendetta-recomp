@@ -36,7 +36,9 @@ namespace vendetta_store
 
     // The fixed area: the store's first 88 MB (0x02000000-0x077FFFFF), for data the game's code finds at an address
     // patched into it before translation (config: [patches]), so the address can't move. Each user keeps to its own
-    // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp); 0x1000-0xD2CF the clip
+    // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp); 0x0200-0x03FF Choose
+    // Match's second step, its tables and words (vendetta_cage_menu.cpp); 0x0400-0x0FFF a cage match's walls and lists
+    // (vendetta_cage.cpp); 0x1000-0xD2CF the clip
     // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp); the roster tables below
     // (vendetta_wrestlers.cpp); from 0x1310000 the arena's fly-in and Choose Stage tables, from 0x1405500 its crowd and
     // stand-in scene (vendetta_arenas.cpp). Returns the guest address of `offset`, its memory committed, or 0.
