@@ -17,13 +17,14 @@
 // repeats it (no shimmer); the steel a second one. Without the graphics card renderer nothing is drawn.
 // The pieces are a list (a polygon, its image, solid or see-through, its side) built once per match. A model can fill it:
 // cage4.vcage (the square) / cage6.vcage (six sides) in the cage's folder (vendetta_cage::cageFolder: the standard cage
-// the setup copies from standard\cage\, or a cage\ folder of one's own beside the game), made from a Blender model
+// the setup copies from standard\cage\), made from a Blender model
 // (the polygons in the game's units, their texture places, the textures; the textures drawn at 4 times their size so
 // paraLLEl-GS samples them with mipmaps). Without the file the cage built here is drawn.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "runtime/gs/gs_gpu.h"
 #include "vendetta_cage.h"
+#include "vendetta_cage_file.h"
 #include "vendetta_gsdraw.h"
 #include "vendetta_ring.h"
 
@@ -46,7 +47,9 @@ namespace vendetta_cage_draw
     // the cage's places (the game's units: a wrestler about 22 tall, the mat and the apron at 10.5): its walls
     // (vendetta_cage.cpp) at 43; the frame's middle a little outside, so the posts clear the game's ring posts (to 42.7)
     constexpr float kFrame = 43.5f;
-    constexpr float kBase = 10.5f, kTop = 54.5f;     // from the apron up, 2 wrestlers tall (the user's choice)
+    constexpr float kBase = 10.5f;                   // the apron, where the cage stands
+    // its top: cage.json's "the cage's height above the mat" up (the standard cage's 44, 2 wrestlers: the user's choice)
+    float topOfCage() { return kBase + vendetta_cage::cageFile().numbers.height; }
     constexpr float kTrussDepth = 4.0f, kTrussHalf = 0.9f; // the top's box truss: 4 high, 1.8 across
     constexpr float kTube = 0.45f, kChord = 0.32f, kBrace = 0.18f, kCornerTube = 0.6f; // tubes' half thickness
     constexpr float kPanelWidth = 28.0f;             // about this wide between upright tubes
@@ -429,7 +432,7 @@ namespace vendetta_cage_draw
             return;
         }
         g_images = {{kSteelImage, kSteelTbp, tex0(kSteelTbp, 6, 6), false}, {kMeshImage, kMeshTbp, tex0(kMeshTbp, 6, 6), true}};
-        const float meshTop = kTop - kTrussDepth;
+        const float meshTop = topOfCage() - kTrussDepth;
         for (int k = 0; k < g_sides; ++k)
         {
             const V3 out = {g_normal[k][0], 0.0f, g_normal[k][1]};
@@ -455,7 +458,7 @@ namespace vendetta_cage_draw
                 addTube(at(length * i / panels, kBase, 0.0f), at(length * i / panels, meshTop, 0.0f), out, kTube, k, -1);
             // the truss: a top and a bottom tube on its outer and inner faces, zig-zag braces between them on each face,
             // cross tubes at the panels' uprights and the ends
-            const float low = meshTop + kChord, high = kTop - kChord;
+            const float low = meshTop + kChord, high = topOfCage() - kChord;
             for (const float face : {kTrussHalf, -kTrussHalf})
             {
                 addTube(at(0.0f, high, face), at(length, high, face), out, kChord, k, -1);
@@ -490,7 +493,7 @@ namespace vendetta_cage_draw
         for (int k = 0; k < g_sides; ++k)
         {
             // a post at each corner, from the apron to the top of the truss, turned to the corner
-            const V3 c0 = corner(k, kFrame, kBase), c1 = corner(k, kFrame, kTop + 0.6f);
+            const V3 c0 = corner(k, kFrame, kBase), c1 = corner(k, kFrame, topOfCage() + 0.6f);
             addTube(c0, c1, unit({c0.x, 0.0f, c0.z}), kCornerTube, (k + g_sides - 1) % g_sides, k, true);
         }
         std::cerr << "[cage] the cage drawn: " << g_sides << " sides, " << g_pieces.size() << " pieces, the door on side "
@@ -695,11 +698,7 @@ void vendetta_cage::ringDrawing(uint8_t *rdram, uint32_t cameraMatrix)
 
 std::filesystem::path vendetta_cage::cageFolder()
 {
-    const std::filesystem::path game = PS2Runtime::getIoPaths().elfDirectory;
-    std::error_code ec;
-    if (std::filesystem::is_directory(game / "cage", ec))
-        return game / "cage";
-    return game / "standard" / "cage";
+    return PS2Runtime::getIoPaths().elfDirectory / "standard" / "cage";
 }
 
 bool vendetta_cage::screenSide(float x, float y, float z, float dx, float dz, float &sign)

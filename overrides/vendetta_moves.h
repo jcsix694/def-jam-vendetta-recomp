@@ -67,12 +67,15 @@ namespace vendetta_moves
     const std::vector<std::filesystem::path> &filesRead();
 
     // A clip our own code plays (not a move's): its playback record plain, as a new move's animation without settings
-    // (speed 100, no camera, no eyes), looping or not, with up to four windows {from frame, to frame, what} (the move
-    // timing record's: 1-6 the ropes by the body, 7-24 one rope pulled to a hand or a foot, 25 a screen shake; none if
-    // not given).
+    // (no camera, no eyes), looping or not, at a speed (100 = its own), with up to four windows {from frame, to frame,
+    // what} (the move timing record's: 1-6 the ropes by the body, 7-24 one rope pulled to a hand or a foot, 25 a screen
+    // shake; none if not given).
     struct PlainWindow
     {
         uint32_t from, to, what;
     };
-    void plainPlayback(uint32_t clipId, bool loop, std::initializer_list<PlainWindow> windows = {});
+    void plainPlayback(uint32_t clipId, bool loop, const std::vector<PlainWindow> &windows = {}, uint32_t speed = 100u);
+
+    // A window's word, as a mod move's settings file has it ("top rope, right foot"): its type 1-26, or 0.
+    uint32_t windowCode(const std::string &words);
 }

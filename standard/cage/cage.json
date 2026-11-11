@@ -1,0 +1,75 @@
+{
+  "rope bends": {
+    "3203": [
+      {
+        "from": 30,
+        "to": 58,
+        "what": "bottom rope, right foot"
+      },
+      {
+        "from": 46,
+        "to": 90,
+        "what": "middle rope, left foot"
+      },
+      {
+        "from": 70,
+        "to": 132,
+        "what": "top rope, right foot"
+      }
+    ],
+    "3204 at the rope hold": [
+      {
+        "from": 0,
+        "to": "end",
+        "what": "top rope, right foot"
+      }
+    ],
+    "3205": [
+      {
+        "from": 0,
+        "to": 38,
+        "what": "top rope, right foot"
+      },
+      {
+        "from": 20,
+        "to": 52,
+        "what": "middle rope, left foot"
+      }
+    ]
+  },
+  "sounds": {},
+  "speeds": {},
+  "loops": [
+    "3204",
+    "3239",
+    "323E",
+    "3246",
+    "324A"
+  ],
+  "numbers": {
+    "the cage's height above the mat": 44,
+    "the cage's walls from the middle": 40,
+    "a step up": 4.8,
+    "steps to the top hold": 2,
+    "a step sideways": 5,
+    "kept from each corner": 8,
+    "a step's momentum": 3,
+    "dangling, pictures": 90,
+    "the wires": 39.8,
+    "toward the cage, a picture": 0.5,
+    "back from the cage, a picture": 2,
+    "ankles above the mat, least": 1.3,
+    "ankles above the mat, standing": 1.7,
+    "a foot on a rope presses it down": 1,
+    "room, chest": 2.2,
+    "room, head": 1.8,
+    "room, left elbow": 1,
+    "room, left fist": 0.6,
+    "room, right elbow": 1,
+    "room, right fist": 0.6,
+    "room, left knee": 1.8,
+    "room, left ankle": 1.2,
+    "room, right knee": 1.8,
+    "room, right ankle": 1.2
+  }
+}

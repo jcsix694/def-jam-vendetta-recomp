@@ -41,7 +41,8 @@
 // A cage match (vendetta_cage.h) also gets the cage's own clips, the climb, the top and the shake, from the cage's folder's
 // animations\*.bin (vendetta_cage::cageFolder), named by their first word (the number they had in the game they were
 // converted from, e.g. "3203 Climb onto the cage.bin"), as new clips after the mods' (vendetta_cage_climb.cpp asks for
-// them by that number, cageClip). Without mods the loader still runs when that folder has clips.
+// them by that number, cageClip), each with its rope bends, sounds, speed and loop from the folder's cage.json
+// (vendetta_cage_file.h). Without mods the loader still runs when that folder has clips.
 //
 // VENDETTA_MODS=0        the plain game (mods\ ignored; the hooks pass straight through, nothing is changed)
 // VENDETTA_MODLOG=1      every animation, move, slot and sound list each match puts in (vendetta_mods.h)
@@ -55,6 +56,7 @@
 #include "game_overrides.h"
 #include "runtime/ee_scheduler.h"
 #include "vendetta_cage.h"
+#include "vendetta_cage_file.h"
 #include "vendetta_clipsounds.h"
 #include "vendetta_mods.h"
 #include "vendetta_moves.h"
@@ -547,6 +549,7 @@ namespace vendetta_animations
         return there;
     }
     std::unordered_map<uint32_t, uint32_t> g_cageIds; // this match's cage clips: their number -> the clip id
+    std::unordered_map<uint32_t, const std::vector<uint8_t> *> g_cageBytes; // and -> its bytes (g_modClips', this match)
     bool g_builtCage = false;                           // the last build was a cage match's
 
     enum class State
@@ -884,6 +887,13 @@ namespace vendetta_animations
             added.push_back({moveClips[i].name, &kept, static_cast<int>(i)});
         }
         g_cageIds.clear();
+        g_cageBytes.clear();
+        if (g_builtCage)
+        {
+            // the cage's own values (rope bends, sounds, speeds, loops, the climb's numbers), read afresh each cage match
+            vendetta_cage::readCageFile();
+            track(vendetta_cage::cageFolder() / "cage.json");
+        }
         if (g_builtCage)
             for (const std::filesystem::path &file : cageClipFiles())
             {
@@ -900,7 +910,12 @@ namespace vendetta_animations
                     continue;
                 }
                 track(file);
-                clip.hasSounds = true; // silent for now
+                // its sounds from cage.json (the hang's for both its copies); none there = silent
+                clip.hasSounds = true;
+                const vendetta_cage::CageFile &cage = vendetta_cage::cageFile();
+                if (const auto sounds = cage.sounds.find(vendetta_cage::clipKey(number)); sounds != cage.sounds.end())
+                    clip.sounds = vendetta_clipsounds::readSounds(sounds->second, "the cage's cage.json, " + sounds->first,
+                                                                  lastFrameOf(clip.bytes));
                 ModClip &kept = g_modClips[file] = std::move(clip);
                 NewClip item{stem, &kept};
                 item.cageNumber = static_cast<int>(number);
@@ -945,24 +960,25 @@ namespace vendetta_animations
             if (item.cageNumber >= 0)
             {
                 g_cageIds[static_cast<uint32_t>(item.cageNumber)] = clip.index;
-                // played by our code: speed 100; the loops (hanging, dangling, the top's straining and crouching, the
-                // shake) looping. The ropes the feet stand on bent to them, by the game's own windows (16-18 the top /
-                // middle / bottom rope pulled to the right ankle, 19-21 to the left): getting on (3203) goes up them as
-                // a ladder, the right foot on the bottom rope, the left on the middle, the right on the top; the hang
-                // at the rope hold keeps the top rope on the right foot; letting go (3205) starts there, the right foot
-                // riding the top rope until it comes over it, the left resting on the middle rope from inside (the
-                // frames from the clips' own poses with the climb's lowering and raising, vendetta_cage_climb.cpp)
+                g_cageBytes[static_cast<uint32_t>(item.cageNumber)] = &item.clip->bytes;
+                // played by our code, by cage.json: its speed, whether it loops, its rope bends (the game's own windows:
+                // 16-18 the top / middle / bottom rope pulled to the right ankle, 19-21 to the left, ...). The hang's
+                // copy at the rope hold has its own rope bends and the hang's loop and speed
                 const uint32_t n = static_cast<uint32_t>(item.cageNumber);
-                const bool loop = n == 0x3204u || n == vendetta_cage::kHangOnRopeClip || n == 0x323Eu || n == 0x3246u ||
-                                  n == 0x324Au || n == 0x3239u;
-                if (n == 0x3203u)
-                    vendetta_moves::plainPlayback(clip.index, loop, {{30u, 58u, 18u}, {46u, 90u, 20u}, {70u, 132u, 16u}});
-                else if (n == vendetta_cage::kHangOnRopeClip)
-                    vendetta_moves::plainPlayback(clip.index, loop, {{0u, 2000u, 16u}});
-                else if (n == 0x3205u)
-                    vendetta_moves::plainPlayback(clip.index, loop, {{0u, 38u, 16u}, {20u, 52u, 20u}});
-                else
-                    vendetta_moves::plainPlayback(clip.index, loop);
+                const vendetta_cage::CageFile &cage = vendetta_cage::cageFile();
+                const bool onRope = n == vendetta_cage::kHangOnRopeClip;
+                const std::string key = onRope ? std::string(vendetta_cage::kHangOnRopeKey) : vendetta_cage::clipKey(n);
+                const std::string clipOf = onRope ? vendetta_cage::clipKey(0x3204u) : key;
+                std::vector<vendetta_moves::PlainWindow> windows;
+                if (const auto bends = cage.ropeBends.find(key); bends != cage.ropeBends.end())
+                    for (const vendetta_cage::CageWindow &w : bends->second)
+                        windows.push_back({w.from, w.to, w.what});
+                uint32_t speed = 100u;
+                if (const auto s = cage.speeds.find(key); s != cage.speeds.end())
+                    speed = s->second;
+                else if (const auto s2 = cage.speeds.find(clipOf); s2 != cage.speeds.end())
+                    speed = s2->second;
+                vendetta_moves::plainPlayback(clip.index, cage.loops.count(clipOf) != 0u, windows, speed);
             }
             clips.push_back(clip);
             ++counts.added;
@@ -1414,6 +1430,12 @@ uint32_t vendetta_animations_cageClip(uint32_t number)
 {
     const auto found = vendetta_animations::g_cageIds.find(number);
     return found == vendetta_animations::g_cageIds.end() ? 0u : found->second;
+}
+
+const std::vector<uint8_t> *vendetta_animations_cageClipBytes(uint32_t number)
+{
+    const auto found = vendetta_animations::g_cageBytes.find(number);
+    return found == vendetta_animations::g_cageBytes.end() ? nullptr : found->second;
 }
 
 void installVendettaAnimations(PS2Runtime &runtime) { vendetta_animations::install(runtime); }

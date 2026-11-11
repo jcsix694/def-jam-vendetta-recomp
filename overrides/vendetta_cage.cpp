@@ -45,6 +45,7 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_cage.h"
+#include "vendetta_cage_file.h"
 #include "vendetta_ring.h"
 #include "vendetta_store.h"
 
@@ -66,7 +67,12 @@ namespace vendetta_cage_walls
     constexpr uint16_t kThrowOverTop = 0x10u, kStepOut = 0x2u;         // a wall's permissions (+0x44): 2 a rope's step out,
                                                                        // an apron wall's step down
     constexpr uint16_t kCagePermissions = 0xA1u;                       // as the outside barrier's
-    constexpr float kCageDistance = 43.0f, kCageTop = 54.5f; // the apron's outer edge; 2 wrestlers above the apron (the user's choice)
+    // the cage's walls from the middle: cage.json's "the cage's walls from the middle" (the standard cage's 40, where its
+    // model's chain-link stands; they stood at the apron's outer edge, 43, until 2026-11-11)
+    float cageDistance() { return vendetta_cage::cageFile().numbers.walls; }
+    // the cage's top: the mat (10.5) and cage.json's "the cage's height above the mat" (the standard cage's 44, 2
+    // wrestlers: the user's choice)
+    float cageTop() { return 10.5f + vendetta_cage::cageFile().numbers.height; }
 
     // the fighter's fields
     constexpr uint32_t kPlayer = 0x30u, kState = 0x40u, kStep = 0x44u, kHistory = 0x54u, kX = 0xCCu, kZ = 0xD4u,
@@ -111,7 +117,7 @@ namespace vendetta_cage_walls
         g_gameValues.clear();
     }
 
-    // one wall from a to b, from the floor to kCageTop, facing out: its corners in the game's order, normal and size as
+    // one wall from a to b, from the floor to the cage's top, facing out: its corners in the game's order, normal and size as
     // FUN_00130ba8 works them out at a match's start
     void putCageWall(uint8_t *rdram, uint32_t at, Vec a, Vec b, Vec out, int number)
     {
@@ -119,7 +125,8 @@ namespace vendetta_cage_walls
         std::memset(record, 0, kRecordBytes);
         for (int attempt = 0; attempt < 2; ++attempt)
         {
-            const Vec c[4] = {{a.x, kCageTop, a.z}, {b.x, kCageTop, b.z}, {b.x, 0.0f, b.z}, {a.x, 0.0f, a.z}};
+            const float top = cageTop();
+            const Vec c[4] = {{a.x, top, a.z}, {b.x, top, b.z}, {b.x, 0.0f, b.z}, {a.x, 0.0f, a.z}};
             std::memcpy(record, c, sizeof(c));
             Vec n = cross(c[3] - c[0], c[2] - c[0]);
             const float size = length(n);
@@ -159,7 +166,7 @@ namespace vendetta_cage_walls
         const float toCorner = 1.0f / std::cos(pi / sides);
         auto corner = [&](int k) {
             const float rad = (firstAngle - 360.0f * k / sides) * pi / 180.0f;
-            return Vec{std::sin(rad) * kCageDistance * toCorner, 0.0f, std::cos(rad) * kCageDistance * toCorner};
+            return Vec{std::sin(rad) * cageDistance() * toCorner, 0.0f, std::cos(rad) * cageDistance() * toCorner};
         };
         const uint32_t first = g_area + kRecords;
         for (int k = 0; k < sides && k < int(kMaxSides); ++k)
@@ -171,7 +178,7 @@ namespace vendetta_cage_walls
         g_cageSides = static_cast<uint32_t>(sides);
         write32(g_area + kPair, first);
         write32(g_area + kPair + 4u, first + (sides - 1) * kRecordBytes);
-        std::cerr << "[cage] a cage match: " << sides << " cage walls at " << kCageDistance << " round the "
+        std::cerr << "[cage] a cage match: " << sides << " cage walls at " << cageDistance() << " round the "
                   << (ringSides > 0 ? "six-sided ring" : "square ring") << std::endl;
     }
 
