@@ -16,9 +16,10 @@
 // as a host image of the graphics card renderer, larger than its GS size so paraLLEl-GS samples it with mipmaps and
 // repeats it (no shimmer); the steel a second one. Without the graphics card renderer nothing is drawn.
 // The pieces are a list (a polygon, its image, solid or see-through, its side) built once per match. A model can fill it:
-// <the game's folder>\cage\cage4.vcage (the square) / cage6.vcage (six sides), made from a Blender model by
-// research's fit_cage.py (the polygons in the game's units, their texture places, the textures; the textures drawn at 4
-// times their size so paraLLEl-GS samples them with mipmaps). Without the file the cage built here is drawn.
+// cage4.vcage (the square) / cage6.vcage (six sides) in the cage's folder (vendetta_cage::cageFolder: the standard cage
+// the setup copies from standard\cage\, or a cage\ folder of one's own beside the game), made from a Blender model
+// (the polygons in the game's units, their texture places, the textures; the textures drawn at 4 times their size so
+// paraLLEl-GS samples them with mipmaps). Without the file the cage built here is drawn.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "runtime/gs/gs_gpu.h"
@@ -273,7 +274,7 @@ namespace vendetta_cage_draw
         if (g_modelsRead)
             return;
         g_modelsRead = true;
-        const std::filesystem::path folder = PS2Runtime::getIoPaths().elfDirectory / "cage";
+        const std::filesystem::path folder = vendetta_cage::cageFolder();
         const char *names[2] = {"cage4.vcage", "cage6.vcage"};
         for (int i = 0; i < 2; ++i)
         {
@@ -684,6 +685,15 @@ void vendetta_cage::ringDrawing(uint8_t *rdram, uint32_t cameraMatrix)
         return;
     std::memcpy(g_matrix, rdram + (cameraMatrix & PS2_RAM_MASK), sizeof(g_matrix));
     g_haveMatrix = true;
+}
+
+std::filesystem::path vendetta_cage::cageFolder()
+{
+    const std::filesystem::path game = PS2Runtime::getIoPaths().elfDirectory;
+    std::error_code ec;
+    if (std::filesystem::is_directory(game / "cage", ec))
+        return game / "cage";
+    return game / "standard" / "cage";
 }
 
 bool vendetta_cage::screenRight(float &x, float &z)

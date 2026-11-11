@@ -539,8 +539,8 @@ def step_graphics(data):
 def step_arenas(data):
     """The arenas the recomp brings for every player (standard\\arenas\\<name>\\: THE FACE CLUB SIX SIDES, The Face Club
     with a six-sided ring, finished, with its Choose Stage pictures) copied into the game's folder,
-    game\\standard\\arenas\\, where the game finds them: on every install and update, each in place of the copy before.
-    Never stops the setup."""
+    game\\standard\\arenas\\, where the game finds them: on every install and update, each in place of the copy before;
+    and the standard cage (standard\\cage\\) into game\\standard\\cage\\. Never stops the setup."""
     step(7, STEPS[6])
     shipped = os.path.join(SRC, 'standard', 'arenas')
     target = os.path.join(data, 'game', 'standard', 'arenas')
@@ -553,7 +553,17 @@ def step_arenas(data):
             shutil.copytree(os.path.join(shipped, name), folder)
         except OSError as error:
             say(f'the arena {name} not copied ({error})')
-        progress((i + 1) / len(names))
+        progress((i + 1) / (len(names) + 1))
+    # the standard cage (standard\cage\: the cage match's model and climbing animations) the same way, into
+    # game\standard\cage\
+    cage = os.path.join(SRC, 'standard', 'cage')
+    if os.path.isdir(cage):
+        folder = os.path.join(data, 'game', 'standard', 'cage')
+        try:
+            shutil.rmtree(folder, ignore_errors=True)
+            shutil.copytree(cage, folder)
+        except OSError as error:
+            say(f'the cage not copied ({error})')
     progress(1.0)
 
 

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 
 class PS2Runtime;
 
@@ -45,6 +46,10 @@ namespace vendetta_cage
     void prepareDraw(uint8_t *rdram, PS2Runtime &runtime);
     void ringDrawing(uint8_t *rdram, uint32_t cameraMatrix);
     void drawCage(uint8_t *rdram, PS2Runtime &runtime);
+    // The cage's files (its model cage4.vcage / cage6.vcage, its clips in animations\): <the game's folder>\cage\ when
+    // there (one's own), else <the game's folder>\standard\cage\ (the standard cage, copied there by the setup from the
+    // repository's standard\cage\).
+    std::filesystem::path cageFolder();
     // The direction (x, z) the screen's right is in the world, from the last picture's camera; false before one.
     bool screenRight(float &x, float &z);
 

@@ -4,7 +4,7 @@
 // Triangle with the stick toward a rope, which a cage stops from stepping out (vendetta_cage.cpp), starts the climb
 // instead, ESCAPE on or off: state 2's check FUN_0013c1b8 is wrapped. The climber is in state 102 (the state table
 // 0x27A400 has no routine there; its entry is pointed at ours for a cage match and put back after) and our code moves the
-// wrestler, as the clips (the cage's own, vendetta_animations.cpp: cageClip) don't:
+// wrestler, as the clips (the cage's own, standard\cage\animations\, vendetta_animations.cpp: cageClip) don't:
 //   onto the cage (3203), then hanging (3204), the anchor raised and moved out to the cage;
 //   up a step (3212-3216 by momentum, Blazin' 320E, each step costing momentum unless in Blazin'), down (3208 / 320F),
 //   sideways (3209 / 320A, Blazin' 3210 / 3211) with the stick held (up / down / left / right as on screen);

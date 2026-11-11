@@ -38,8 +38,8 @@
 //    { "frame": 12, "sound": "Swing (whoosh)", "value": 3 } ] } (vendetta_clipsounds.cpp). A mod's animation, new or
 //    replacing a game clip, plays exactly that list: without one it is silent.
 // A mistake in a file leaves that one thing out of the match (a slot then keeps the game's move), with a message.
-// A cage match (vendetta_cage.h) also gets the cage's own clips, the climb, the top and the shake, from
-// <the game's folder>\cage\animations\*.bin, named by their first word (the number they had in the game they were
+// A cage match (vendetta_cage.h) also gets the cage's own clips, the climb, the top and the shake, from the cage's folder's
+// animations\*.bin (vendetta_cage::cageFolder), named by their first word (the number they had in the game they were
 // converted from, e.g. "3203 Climb onto the cage.bin"), as new clips after the mods' (vendetta_cage_climb.cpp asks for
 // them by that number, cageClip). Without mods the loader still runs when that folder has clips.
 //
@@ -529,8 +529,8 @@ namespace vendetta_animations
         return true;
     }
 
-    // The cage's own clips: <the game's folder>\cage\animations\*.bin (read once a match, kept as mod clips are)
-    std::filesystem::path cageClipFolder() { return PS2Runtime::getIoPaths().elfDirectory / "cage" / "animations"; }
+    // The cage's own clips: the cage's folder's animations\*.bin (read once a match, kept as mod clips are)
+    std::filesystem::path cageClipFolder() { return vendetta_cage::cageFolder() / "animations"; }
     std::vector<std::filesystem::path> cageClipFiles()
     {
         std::vector<std::filesystem::path> files;
