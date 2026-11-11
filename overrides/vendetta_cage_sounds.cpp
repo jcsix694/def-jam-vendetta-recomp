@@ -20,7 +20,8 @@
 // Both taken when it starts. The pause as the game's own sounds: FUN_001c0650(1) (the pause) fades the game's sound
 // levels to nothing in 250 ms and FUN_001c0650(0) (the resume) back in 250 ms, the sounds playing on unheard (the song
 // isn't stopped either); so ours fade out and back the same, playing on.
-// VENDETTA_CAGESOUNDLOG=1: each recording read, each one started (its level and place), the pause's fades.
+// VENDETTA_CAGESOUNDLOG=1: each recording read, each one started (its level and place), the pause's fades; =2 also
+// every clip event the game runs (player, id, frame, play).
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_cage.h"
@@ -45,6 +46,10 @@ namespace vendetta_cage_sounds
 {
     constexpr uint32_t kDispatch = 0x1C3E18u; // FUN_001c3e18(player, event, play): a clip event's command or "a sound"
     constexpr uint32_t kPauseFade = 0x1C0650u; // FUN_001c0650(1 the pause, 0 the resume): the game's sound faded out / in
+    // research (VENDETTA_CAGESOUNDLOG=3): the gate FUN_001c44a0 plays most sounds behind (0x29AAFC: WCommon2 loaded) and
+    // the routines that load and unload the banks, logged with their callers
+    constexpr uint32_t kSoundGate = 0x29AAFCu;
+    constexpr uint32_t kWatched[] = {0x1C1B58u, 0x1C12B8u, 0x1C1C20u, 0x1C0968u}; // FUN_001c6178 (writes the gate) runs every tick
     constexpr uint32_t kRate = 48000u, kMostSeconds = 20u;
     constexpr uint32_t kEffectsGroup = 0x1E31540u; // + 8 the effects' level now
     constexpr uint32_t kEffectsTable = 0x1E31650u; // its 33 levels; the last the loudest
@@ -68,15 +73,33 @@ namespace vendetta_cage_sounds
     std::vector<Playing> g_playing;
     std::map<std::string, uint32_t> g_ids; // by name: the recordings read (the game thread's)
     PS2Runtime::RecompiledFunction g_original = nullptr, g_originalPause = nullptr;
+    PS2Runtime::RecompiledFunction g_watchedOriginal[4] = {};
+    uint32_t g_gateSeen = 0xFFFFFFFFu;
+    void gateCheck(uint8_t *rdram, const char *where)
+    {
+        const uint32_t gate = Ps2FastRead32(rdram, kSoundGate);
+        if (gate != g_gateSeen)
+            std::cerr << "[cage] sound gate 0x29AAFC " << g_gateSeen << " -> " << gate << " (" << where << ")" << std::endl;
+        g_gateSeen = gate;
+    }
+    template <int N>
+    void watched(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        std::cerr << "[cage] sound: FUN_00" << std::hex << kWatched[N] << " called from 0x" << getRegU32(ctx, 31) << " ($a0 0x"
+                  << getRegU32(ctx, 4) << ")" << std::dec << std::endl;
+        gateCheck(rdram, "before it");
+        g_watchedOriginal[N](rdram, ctx, runtime);
+    }
     std::atomic<float> g_pauseTarget{1.0f}; // 0 while the game is paused
     float g_pauseGain = 1.0f;               // the mixer's: toward the target, 250 ms the whole way
     constexpr float kPauseStep = 1.0f / (0.25f * kRate);
 
-    bool logOn()
+    int logLevel()
     {
-        static const bool on = [] { const char *v = std::getenv("VENDETTA_CAGESOUNDLOG"); return v && *v && *v != '0'; }();
-        return on;
+        static const int level = [] { const char *v = std::getenv("VENDETTA_CAGESOUNDLOG"); return v ? std::atoi(v) : 0; }();
+        return level;
     }
+    bool logOn() { return logLevel() >= 1; }
 
     // to 48 kHz, a straight line between samples
     std::vector<int16_t> to48k(const std::vector<int16_t> &in, uint32_t rate)
@@ -132,6 +155,12 @@ namespace vendetta_cage_sounds
     void dispatch(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         const uint32_t event = getRegU32(ctx, 5);
+        if (logLevel() >= 3)
+            gateCheck(rdram, "an event");
+        if (logLevel() >= 2) // every clip event the game runs (the game's own sounds and commands too)
+            std::cerr << "[cage] event: player " << getRegU32(ctx, 4) << " id 0x" << std::hex << Ps2FastRead32(rdram, event + 4u)
+                      << std::dec << " frame " << static_cast<int16_t>(Ps2FastRead16(rdram, event)) << " play "
+                      << getRegU32(ctx, 6) << std::endl;
         if ((Ps2FastRead32(rdram, event + 4u) & ~0x10000000u) != vendetta_clipsounds::kCustomSound)
         {
             g_original(rdram, ctx, runtime);
@@ -239,6 +268,13 @@ void installVendettaCageSounds(PS2Runtime &runtime)
     }
     runtime.replaceFunction(kDispatch, dispatch);
     vendetta_mixer::add(mix);
+    if (logLevel() >= 3)
+    {
+        const PS2Runtime::RecompiledFunction hooks[] = {watched<0>, watched<1>, watched<2>, watched<3>};
+        for (int i = 0; i < 4; ++i)
+            if ((g_watchedOriginal[i] = runtime.lookupFunction(kWatched[i])))
+                runtime.replaceFunction(kWatched[i], hooks[i]);
+    }
     g_originalPause = runtime.lookupFunction(kPauseFade);
     if (g_originalPause)
         runtime.replaceFunction(kPauseFade, pauseFade);
