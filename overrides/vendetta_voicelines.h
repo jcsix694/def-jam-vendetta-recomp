@@ -13,10 +13,15 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace vendetta_voicelines
 {
     // A line from a recording, for voice row `row`: checks the file (problems named with `label`) and returns the bank
     // name the row gets (8 letters), or "" when the file can't be used.
     std::string add(uint32_t row, bool intro, const std::filesystem::path &file, const std::string &label);
+
+    // A WAV read as mono 16-bit (PCM 8 / 16 / 24 / 32-bit or 32-bit float, any rate, the channels averaged): false with
+    // `error` saying why ("can't be opened", "isn't a WAV file", ...).
+    bool readWavFile(const std::filesystem::path &file, std::vector<int16_t> &pcm, uint32_t &rate, std::string &error);
 }

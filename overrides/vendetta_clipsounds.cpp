@@ -187,7 +187,8 @@ namespace vendetta_clipsounds
         return true;
     }
 
-    std::vector<Event> readSounds(const vendetta_mods::Json &list, const std::string &where, uint32_t lastFrame)
+    std::vector<Event> readSounds(const vendetta_mods::Json &list, const std::string &where, uint32_t lastFrame,
+                                  const std::map<std::string, uint32_t> *custom)
     {
         std::vector<Event> events;
         if (!list.isArray())
@@ -208,6 +209,27 @@ namespace vendetta_clipsounds
             {
                 std::cerr << "[mods] " << which << ": needs \"frame\": a whole number from 0 - skipped" << std::endl;
                 continue;
+            }
+            if (custom && sound && sound->isString())
+            {
+                std::string name = sound->text;
+                for (char &c : name)
+                    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                if (const auto found = custom->find(name); found != custom->end())
+                {
+                    Event event;
+                    event.frame = static_cast<int16_t>(frameNumber);
+                    event.id = kCustomSound;
+                    const vendetta_mods::Json *firstTime = item.find("first time only");
+                    if (firstTime && firstTime->type == vendetta_mods::Json::Type::Bool && firstTime->boolean)
+                        event.id |= kFirstTimeOnly;
+                    event.values.push_back(found->second);
+                    if (static_cast<uint32_t>(frameNumber) > lastFrame)
+                        std::cerr << "[mods] " << which << ": frame " << frameNumber << " is after the animation's last frame ("
+                                  << lastFrame << "): a sound there never plays" << std::endl;
+                    events.push_back(std::move(event));
+                    continue;
+                }
             }
             if (!sound || !soundId(*sound, id))
             {

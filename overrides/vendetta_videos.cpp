@@ -19,7 +19,7 @@
 // FUN_001f7690 and FUN_001b5a50, for what comes after). A video wider than 4:3 with widescreen on: each picture marked
 // wide (the window shows it at the target shape, as a match) and the video fitted inside that; otherwise fitted
 // inside the 4:3 picture; bars black.
-// The sound: resampled to 48 kHz stereo and mixed into the game's own output (PS2AudioBackend::setPcmMixer; the
+// The sound: resampled to 48 kHz stereo and mixed into the game's own output (vendetta_mixer.h; the
 // caller has paused the game's music, as around its own movies); the picture follows the sound (the frames heard),
 // the clock drawn to it slowly. The video ends with its last picture (sound past it cut, as the game's player does).
 // After the last picture (or the skip) the hook returns 1 as the game's routine does; the caller puts the menus'
@@ -45,6 +45,7 @@
 #include "runtime/gs/gs_gpu.h"
 #include "runtime/ps2_audio.h"
 #include "runtime/ps2_widescreen.h"
+#include "vendetta_mixer.h"
 #include "vendetta_mods.h"
 
 extern "C"
@@ -829,7 +830,7 @@ namespace vendetta_videos
             return;
         }
         runtime.replaceFunction(kPlayMovie, playMovie);
-        PS2AudioBackend::setPcmMixer(mix);
+        vendetta_mixer::add(mix);
         if (g_log)
             for (const auto &[movie, files] : g_videos)
                 std::cerr << "[videos] " << movie << " plays " << files.back().theme << "'s " << utf8(files.back().file)
@@ -838,9 +839,6 @@ namespace vendetta_videos
 }
 
 void installVendettaVideos(PS2Runtime &runtime) { vendetta_videos::install(runtime); }
-
-// The videos' sound, for the music themes' mixer (the game's output has one mixer).
-void vendettaVideoMix(int16_t *out, size_t count, size_t queued) { vendetta_videos::mix(out, count, queued); }
 
 // One of our videos made a picture in the last second (the freeze watch: the game's frame counter stands still meanwhile).
 bool vendettaVideoPlaying()

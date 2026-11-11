@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,9 @@ namespace vendetta_clipsounds
 {
     // One sound event: at `frame` of the animation, event `id` (below 0x10000 a sound, 0x10000 and up a command;
     // 0x10000000 = only the first time the animation starts) with its values.
+    // kCustomSound: a recording of our own (the cage's "custom sounds"), its one value the recording's number; the game's
+    // dispatcher FUN_001c3e18 doesn't handle 0x1000D, so it is ours (vendetta_cage_sounds.cpp plays it)
+    constexpr uint32_t kCustomSound = 0x1000Du;
     struct Event
     {
         int16_t frame = 0;
@@ -29,7 +33,10 @@ namespace vendetta_clipsounds
 
     // An animation's "sounds" list (from its settings file) as events, sorted by frame; an event that can't be used is
     // left out with a message naming `where`. `lastFrame` = the animation's last frame (events after it never play).
-    std::vector<Event> readSounds(const vendetta_mods::Json &list, const std::string &where, uint32_t lastFrame);
+    // `custom`: recordings of our own by name (capitals) and number; an entry whose "sound" is one of them (no "value")
+    // becomes a kCustomSound event.
+    std::vector<Event> readSounds(const vendetta_mods::Json &list, const std::string &where, uint32_t lastFrame,
+                                  const std::map<std::string, uint32_t> *custom = nullptr);
 
     // A new bank 1 clip (2003 and up) gets its name in the sound step's table: ZNEW<clip>. Returns the name.
     std::string nameNewClip(uint32_t clip);

@@ -2,18 +2,13 @@
   "rope bends": {
     "3203": [
       {
-        "from": 30,
-        "to": 58,
-        "what": "bottom rope, right foot"
-      },
-      {
-        "from": 46,
-        "to": 90,
+        "from": 32,
+        "to": 69,
         "what": "middle rope, left foot"
       },
       {
-        "from": 70,
-        "to": 132,
+        "from": 49,
+        "to": 111,
         "what": "top rope, right foot"
       }
     ],
@@ -37,8 +32,55 @@
       }
     ]
   },
-  "sounds": {},
-  "speeds": {},
+  "custom sounds": {},
+  "sounds": {
+    "3203": [
+      {
+        "frame": 33,
+        "sound": "Ropes"
+      },
+      {
+        "frame": 49,
+        "sound": "Ropes"
+      }
+    ],
+    "3205": [
+      {
+        "frame": 0,
+        "sound": "Ropes"
+      },
+      {
+        "frame": 21,
+        "sound": "Ropes"
+      }
+    ],
+    "323D": [
+      {
+        "frame": 5,
+        "sound": "Grunt",
+        "value": 1
+      }
+    ]
+  },
+  "speeds": {
+    "3204": 120,
+    "3205": 120,
+    "3208": 120,
+    "3209": 120,
+    "320A": 120,
+    "320E": 120,
+    "320F": 120,
+    "3210": 120,
+    "3211": 120,
+    "3212": 120,
+    "3213": 120,
+    "3214": 120,
+    "3215": 120,
+    "3216": 120,
+    "323D": 120,
+    "323E": 120,
+    "323F": 120
+  },
   "loops": [
     "3204",
     "3239",
@@ -58,7 +100,7 @@
     "the wires": 39.8,
     "toward the cage, a picture": 0.5,
     "back from the cage, a picture": 2,
-    "ankles above the mat, least": 1.3,
+    "ankles above the mat, least": 1.7,
     "ankles above the mat, standing": 1.7,
     "a foot on a rope presses it down": 1,
     "room, chest": 2.2,
@@ -74,10 +116,10 @@
     "taps, part 1 (pulling up)": 30,
     "taps, part 2 (crouched on top)": 30,
     "resting on top, down held to climb back down, pictures": 20,
-    "resting on top, pictures before cross or triangle count": 30,
     "the top's depth": 4.7,
     "the top's height": 4.7,
     "the dive's take-off, out past the walls": 2,
-    "the dive's take-off, feet over the top": 1
+    "the dive's take-off, feet over the top": 1,
+    "resting on top, pictures before cross or triangle count": 30
   }
 }

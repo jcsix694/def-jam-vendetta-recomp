@@ -915,7 +915,7 @@ namespace vendetta_animations
                 const vendetta_cage::CageFile &cage = vendetta_cage::cageFile();
                 if (const auto sounds = cage.sounds.find(vendetta_cage::clipKey(number)); sounds != cage.sounds.end())
                     clip.sounds = vendetta_clipsounds::readSounds(sounds->second, "the cage's cage.json, " + sounds->first,
-                                                                  lastFrameOf(clip.bytes));
+                                                                  lastFrameOf(clip.bytes), &vendetta_cage::customSoundIds());
                 ModClip &kept = g_modClips[file] = std::move(clip);
                 NewClip item{stem, &kept};
                 item.cageNumber = static_cast<int>(number);

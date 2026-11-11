@@ -5,6 +5,7 @@
 #include "vendetta_moves.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -162,6 +163,7 @@ void vendetta_cage::readCageFile()
 {
     using namespace vendetta_cage_file;
     g_file = standard();
+    loadCustomSounds(g_file); // none until the file names some
     const std::filesystem::path path = cageFolder() / "cage.json";
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec))
@@ -203,10 +205,34 @@ void vendetta_cage::readCageFile()
     }
     if (const Json *numbers = root.find("numbers"); numbers && numbers->isObject())
         readNumbers(*numbers, g_file.numbers, skipped);
+    if (const Json *custom = root.find("custom sounds"); custom && custom->isObject())
+        for (const auto &[key, value] : custom->members)
+        {
+            const Json *file = value.isObject() ? value.find("file") : nullptr;
+            if (!file || !file->isString() || file->text.empty() || file->text.find("..") != std::string::npos)
+            {
+                skipped.push_back("custom sounds \"" + key + "\" (\"file\": a file beside cage.json)");
+                continue;
+            }
+            CustomSound sound;
+            sound.file = path.parent_path() / std::filesystem::path(file->text);
+            double volume = 1.0;
+            if (const Json *v = value.find("volume"); v && !(number(*v, volume) && volume >= 0.0 && volume <= 4.0))
+            {
+                skipped.push_back("custom sounds \"" + key + "\" \"volume\" (0 to 4): 1 used");
+                volume = 1.0;
+            }
+            sound.volume = static_cast<float>(volume);
+            std::string name = key;
+            for (char &c : name)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            g_file.customSounds[name] = sound;
+        }
     g_file.from = path.string();
     std::cerr << "[cage] " << path.string() << ": rope bends for " << g_file.ropeBends.size() << " clips, sounds for "
-              << g_file.sounds.size() << ", " << g_file.speeds.size() << " speeds, " << g_file.loops.size() << " loops"
-              << std::endl;
+              << g_file.sounds.size() << ", " << g_file.speeds.size() << " speeds, " << g_file.loops.size() << " loops, "
+              << g_file.customSounds.size() << " custom sounds" << std::endl;
     for (const std::string &s : skipped)
         std::cerr << "[cage] cage.json: " << s << " not used" << std::endl;
+    loadCustomSounds(g_file);
 }

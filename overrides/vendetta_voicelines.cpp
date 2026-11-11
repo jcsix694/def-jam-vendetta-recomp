@@ -321,6 +321,12 @@ namespace vendetta_voicelines
     }
 }
 
+bool vendetta_voicelines::readWavFile(const std::filesystem::path &file, std::vector<int16_t> &pcm, uint32_t &rate,
+                                      std::string &error)
+{
+    return readWav(file, pcm, rate, error);
+}
+
 void installVendettaVoiceLines(PS2Runtime &runtime)
 {
     g_runtime = &runtime;

@@ -59,6 +59,9 @@ namespace vendetta_cage
     // (both ends projected as the cage's own points are): sign +1 right, -1 left; false before a picture, or with the
     // place behind the camera.
     bool screenSide(float x, float y, float z, float dx, float dz, float &sign);
+    // Where the world place (x, y, z) is across the screen, by the last picture's camera: pan -1 the left edge, 0 the
+    // middle, +1 the right edge (held there beyond); false before a picture, or with the place behind the camera.
+    bool screenPan(float x, float y, float z, float &pan);
 
     // This match is a cage match (the rule word's 0x8000).
     bool cageMatch(uint8_t *rdram);

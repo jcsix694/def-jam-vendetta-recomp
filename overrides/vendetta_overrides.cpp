@@ -35,6 +35,7 @@ void installVendettaMenu(PS2Runtime &runtime);       // vendetta_menu.cpp: the m
 void installVendettaCageMenu(PS2Runtime &runtime);   // vendetta_cage_menu.cpp: Choose Match's match types, a cage match's rules (with config/patches.toml)
 void installVendettaCage(PS2Runtime &runtime);       // vendetta_cage.cpp: a cage match's walls (through vendetta_ring.cpp's wall searches)
 void installVendettaCageClimb(PS2Runtime &runtime);  // vendetta_cage_climb.cpp: climbing the cage (state 102, triangle at the ropes)
+void installVendettaCageSounds(PS2Runtime &runtime); // vendetta_cage_sounds.cpp: the cage's own recordings on its clips' frames
 void installVendettaMatchSpeed(PS2Runtime &runtime); // vendetta_matchspeed.cpp: the fight's speed (VENDETTA_MATCH_SPEED)
 void installVendettaRing(PS2Runtime &runtime);       // vendetta_ring.cpp: a mod arena's ring read from its arena.json (with config/patches.toml)
 void installVendettaTestMatch(PS2Runtime &runtime);  // vendetta_testmatch.cpp: a test match from a file (--test-match)
@@ -591,6 +592,7 @@ namespace
         installVendettaCageMenu(runtime);
         installVendettaCage(runtime);
         installVendettaCageClimb(runtime);
+        installVendettaCageSounds(runtime);
         installVendettaMatchSpeed(runtime);
         installVendettaRing(runtime);
         installVendettaTestMatch(runtime);

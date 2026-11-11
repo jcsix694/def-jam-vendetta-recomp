@@ -3,7 +3,7 @@
 //
 // The game has two sets of songs, numbered alike (0 to 17): the menus' one file (DJFE, an event per song) and a file per song for
 // the matches. Ours is decoded whole to 48 kHz stereo when its song starts and mixed into the game's output
-// (PS2AudioBackend::setPcmMixer). The game's own song keeps running, silent, so nothing around it changes:
+// (vendetta_mixer.h). The game's own song keeps running, silent, so nothing around it changes:
 //
 // - FUN_001cc158(-1, volume) is the one way to the music's loudness (only caller FUN_001c23e8): the volume asked for (0 to 100, the
 //   player's setting and every fade in it) is written down and 0 passed on while the current song is replaced.
@@ -29,6 +29,7 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "runtime/ps2_audio.h"
+#include "vendetta_mixer.h"
 #include "vendetta_mods.h"
 
 extern "C"
@@ -57,8 +58,6 @@ extern "C"
 #include <thread>
 #include <utility>
 #include <vector>
-
-void vendettaVideoMix(int16_t *out, size_t count, size_t queued); // vendetta_videos.cpp
 
 namespace vendetta_music
 {
@@ -301,7 +300,6 @@ namespace vendetta_music
 
     void mix(int16_t *out, size_t count, size_t queued)
     {
-        vendettaVideoMix(out, count, queued);
         std::unique_lock<std::mutex> lk(g_lock, std::try_to_lock);
         if (!lk.owns_lock() || !g_pcm)
             return;
@@ -642,7 +640,7 @@ namespace vendetta_music
             hook(runtime, kMatchSound, g_matchSound, matchSound);
         if (g_hideBox || g_anyNoBox)
             hook(runtime, kAskSongBox, g_askSongBox, askSongBox);
-        PS2AudioBackend::setPcmMixer(mix);
+        vendetta_mixer::add(mix);
         std::cerr << "[music] " << (g_hasEvery ? 18u : g_songs.size()) << " songs replaced" << std::endl;
     }
 }

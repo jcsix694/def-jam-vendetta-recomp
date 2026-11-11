@@ -724,6 +724,20 @@ bool vendetta_cage::screenSide(float x, float y, float z, float dx, float dz, fl
     return true;
 }
 
+bool vendetta_cage::screenPan(float x, float y, float z, float &pan)
+{
+    using namespace vendetta_cage_draw;
+    if (!g_haveCamera)
+        return false;
+    // the screen's x as polygon() projects the cage: its middle 2048, its half-width 256 (the x clip at 1792 / 2304)
+    const float cx = ((x * g_camera[0] + y * g_camera[4]) + z * g_camera[8]) + g_camera[12];
+    const float w = ((x * g_camera[3] + y * g_camera[7]) + z * g_camera[11]) + g_camera[15];
+    if (!(w > 1e-4f))
+        return false;
+    pan = std::clamp((cx / w - 2048.0f) / 256.0f, -1.0f, 1.0f);
+    return true;
+}
+
 void vendetta_cage::drawCage(uint8_t *rdram, PS2Runtime &runtime)
 {
     vendetta_cage_draw::g_runtime = &runtime;

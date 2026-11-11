@@ -11,6 +11,8 @@
 //   "speeds":     { "<clip>": 120 } (100 = the clip's own speed, the default)
 //   "loops":      [ "<clip>", ... ] (the clips that loop)
 //   "numbers":    { "a step up": 4.8, ... } (the climb's numbers by name: CageNumbers, vendetta_cage_rules.h)
+//   "custom sounds": { "<NAME>": { "file": "sounds/<NAME>.wav", "volume": 1 } } (recordings of the cage's own, the file
+//                 beside cage.json, volume 0 to 4; a clip's "sounds" entry names one by "sound", vendetta_cage_sounds.cpp)
 // Anything else (a tool's own notes) is left alone.
 #pragma once
 
@@ -18,6 +20,7 @@
 #include "vendetta_mods.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <string>
@@ -37,8 +40,15 @@ namespace vendetta_cage
     // ankle, right knee, right ankle)
     constexpr uint32_t kRoomPoints[CAGE_ROOMS] = CAGE_ROOM_POINTS;
 
+    struct CustomSound
+    {
+        std::filesystem::path file; // the recording, beside cage.json
+        float volume = 1.0f;        // 1 = as recorded, 0 to 4
+    };
+
     struct CageFile
     {
+        std::map<std::string, CustomSound> customSounds; // by name (capitals)
         std::map<std::string, std::vector<CageWindow>> ropeBends;
         std::map<std::string, vendetta_mods::Json> sounds; // each clip's list, read with the clip (its last frame known)
         std::map<std::string, uint32_t> speeds;
@@ -55,4 +65,9 @@ namespace vendetta_cage
     // was read, and any key it couldn't use.
     void readCageFile();
     const CageFile &cageFile();
+
+    // The custom sounds (vendetta_cage_sounds.cpp): each read and made 48 kHz when cage.json is read (one that can't be
+    // is left out with a line on stderr); the numbers the ones read go by, by name, for the clips' sounds lists.
+    void loadCustomSounds(const CageFile &file);
+    const std::map<std::string, uint32_t> &customSoundIds();
 }
