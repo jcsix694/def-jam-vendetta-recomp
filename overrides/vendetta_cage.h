@@ -66,6 +66,13 @@ namespace vendetta_cage
     // cage match. climbing: the fighter is on the cage.
     void climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime);
     bool climbing(uint8_t *rdram, uint32_t fighter);
+    // A move's rope window (FUN_00131848's type) for this fighter skipped: a dive from the cage's top while it is above
+    // the mat (its take-off's windows would pull the top rope up to the feet); the ring shaking (6) never
+    bool skipRopeWindow(uint8_t *rdram, uint32_t fighter, uint32_t type);
+    // The escape's result lists ({a fighter's +0x30 ...} each, the last -1) written into the cage's own store area, for
+    // the game's result routine (FUN_00135BB8): their guest addresses; false without the area.
+    bool resultLists(const int32_t *winners, int winnerCount, const int32_t *losers, int loserCount, uint32_t &winnersAt,
+                     uint32_t &losersAt);
     // VENDETTA_CAGECLIMBLOG=2: the pictures after a landing, logged (from walls, every fighter every picture)
     void climbWatch(uint8_t *rdram, uint32_t fighter);
 }

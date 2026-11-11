@@ -70,6 +70,14 @@
     "room, left knee": 1.8,
     "room, left ankle": 1.2,
     "room, right knee": 1.8,
-    "room, right ankle": 1.2
+    "room, right ankle": 1.2,
+    "taps, part 1 (pulling up)": 30,
+    "taps, part 2 (crouched on top)": 30,
+    "resting on top, down held to climb back down, pictures": 20,
+    "resting on top, pictures before cross or triangle count": 30,
+    "the top's depth": 4.7,
+    "the top's height": 4.7,
+    "the dive's take-off, out past the walls": 2,
+    "the dive's take-off, feet over the top": 1
   }
 }

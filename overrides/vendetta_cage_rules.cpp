@@ -11,7 +11,7 @@
 namespace cage_rules_inside // named, not unnamed: a build that merges files into one (a unity build) keeps it apart
 {
     // the ring (game units): the mat; the ropes' middles, top / middle / bottom (the ring draw's table 0x2585D0)
-    constexpr float kMat = 10.5f;
+    constexpr float kMat = 10.5f, kFloor = 0.0f;
     constexpr float kRopeY[3] = {24.1f, 19.3f, 14.5f};
     constexpr float kPi = 3.14159265f;
 
@@ -35,6 +35,7 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         c.clipBlend = blend;
         c.fromY = c.y;
         c.raised = 0.0f;
+        c.downHeld = 0;
         out.started = 1;
         out.startedPhase = phase;
         out.startedHold = c.hold;
@@ -71,7 +72,7 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         out.x = c.nx * c.out + c.tx * c.along;
         out.y = c.y;
         out.z = c.nz * c.out + c.tz * c.along;
-        out.facing = std::atan2(c.nx, c.nz) * 180.0f / kPi;
+        out.facing = c.outside ? std::atan2(-c.nx, -c.nz) * 180.0f / kPi : std::atan2(c.nx, c.nz) * 180.0f / kPi;
         c.writtenOut = c.out;
         c.writtenAlong = c.along;
         c.writtenY = c.y;
@@ -88,11 +89,27 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
     }
 
     // the body on the cage's wires: its outermost part (each point with the room its flesh takes) at "the wires"; touch =
-    // moved out to them as well as kept from going through
+    // moved out to them as well as kept from going through. Outside the cage the same on the wires' other face (as far
+    // past the walls as the wires are inside them), and where a point is as high as the cage's top, on the top's outer
+    // face ("the top's depth" past the walls): each point there or farther out
     void againstCage(const CageNumbers &n, CageClimber &c, const CageBody &body, bool touch)
     {
         if (c.settle > 0)
             return;
+        if (c.outside)
+        {
+            const float topBottom = kMat + n.height - n.topHeight, behind = n.walls - n.wires;
+            float move = -1e9f;
+            for (int32_t i = 0; i < CAGE_ROOMS; ++i)
+            {
+                const float face = n.walls + behind + (c.writtenY + body.rooms[i].z >= topBottom ? n.topDepth : 0.0f);
+                move = std::max(move, face - (body.rooms[i].x - n.room[i] + c.out));
+            }
+            if (move < 0.0f && !touch)
+                return;
+            c.out += std::clamp(move, -n.toCage, n.offCage);
+            return;
+        }
         float most = -1e9f;
         for (int32_t i = 0; i < CAGE_ROOMS; ++i)
             most = std::max(most, body.rooms[i].x + n.room[i]);
@@ -100,6 +117,48 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         if (move > 0.0f && !touch)
             return;
         c.out += std::clamp(move, -n.offCage, n.toCage);
+    }
+
+    // the bar's taps as the game counts a pin's: a press counts while fewer than two have counted in the window; the
+    // window starts again each 6.0 of the game's time
+    void countTap(CageClimber &c, const CagePictureIn &in)
+    {
+        if (in.pressed && c.tapsInWindow < 2)
+        {
+            ++c.taps;
+            ++c.tapsInWindow;
+        }
+        c.tapWindow += in.step;
+        if (c.tapWindow >= 6.0f)
+        {
+            c.tapWindow = 0.0f;
+            c.tapsInWindow = 0;
+        }
+    }
+
+    // over the top: down the outside a step at a time (each the same, as many as "a step up" fits best) until the drop,
+    // which starts high enough for its last frame's lower ankle to land "ankles above the mat, standing" over the floor
+    float dropStart(const CageNumbers &n, const CageHeights &h) { return kFloor + n.ankleUp - h.dropLanding; }
+    void nextOutside(const CageNumbers &n, const CageHeights &h, CageClimber &c, CagePictureOut &out)
+    {
+        const float to = dropStart(n, h);
+        if (c.stepsOutside > 0 && c.y - to > 0.1f)
+        {
+            const float step = (c.y - to) / static_cast<float>(c.stepsOutside);
+            --c.stepsOutside;
+            startPhase(c, out, CAGE_PHASE_DOWN_OUTSIDE, CAGE_CLIP_DOWN_BLAZIN, 0);
+            c.toY = c.y - step;
+        }
+        else
+            startPhase(c, out, CAGE_PHASE_DROP, CAGE_CLIP_DROP, 0);
+    }
+
+    // the first bar full: onto the top, the second bar starting from nothing
+    void ontoTop(CageClimber &c, CagePictureOut &out, int32_t blend)
+    {
+        c.taps = c.tapsInWindow = 0;
+        c.tapWindow = 0.0f;
+        startPhase(c, out, CAGE_PHASE_ONTO_TOP, CAGE_CLIP_ONTO_TOP, blend);
     }
 
     int32_t upClip(float momentum)
@@ -175,6 +234,14 @@ void cage_rules_standard_numbers(CageNumbers *numbers)
     n.ropePress = 1.0f;
     const float rooms[CAGE_ROOMS] = {2.2f, 1.8f, 1.0f, 0.6f, 1.0f, 0.6f, 1.8f, 1.2f, 1.8f, 1.2f};
     std::copy(rooms, rooms + CAGE_ROOMS, n.room);
+    n.tapsPart1 = 30;
+    n.tapsPart2 = 30;
+    n.downPictures = 20;
+    n.topDepth = 4.7f;
+    n.topHeight = 4.7f;
+    n.diveOut = 2.0f;
+    n.diveFeet = 1.0f;
+    n.restPictures = 30;
     *numbers = n;
 }
 
@@ -184,13 +251,17 @@ void cage_rules_standard_numbers(CageNumbers *numbers)
 //   value held; never so low an ankle comes nearer the mat than "ankles above the mat, least"; smoothed over 5 frames
 //   (f-2 .. f+2), the ankle rule again. Its last frame's is where the rope hold is;
 // - the hang starts with the root where getting on's last frame left it;
-// - letting go: the hips' height each frame, the frame they are lowest (the landing) and the lower ankle then.
+// - letting go: the hips' height each frame, the frame they are lowest (the landing) and the lower ankle then;
+// - the hang's first frame's hips (over the top ends in the hang turned round: turned there) and the drop's last frame's
+//   lower ankle (the drop starts that high over the floor).
 int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFrame *onto, int32_t ontoFrames,
                                    const CageRopeBend *bends, int32_t bendCount, const CageClipFrame *hangFirst,
-                                   const CageClipFrame *letGo, int32_t letGoFrames, CageHeights *heights)
+                                   const CageClipFrame *letGo, int32_t letGoFrames, const CageClipFrame *dropLast,
+                                   CageHeights *heights)
 {
     using namespace cage_rules_inside;
-    if (!numbers || !onto || !hangFirst || !letGo || !heights || ontoFrames <= 0 || ontoFrames > CAGE_MOST_FRAMES ||
+    if (!numbers || !onto || !hangFirst || !letGo || !dropLast || !heights || ontoFrames <= 0 ||
+        ontoFrames > CAGE_MOST_FRAMES ||
         letGoFrames <= 0 || letGoFrames > CAGE_MOST_FRAMES)
         return 0;
     const CageNumbers &n = *numbers;
@@ -280,6 +351,12 @@ int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFr
     }
     if (h.landing == 0)
         h.landingAnkle = std::min(letGo[0].ankleLeft.y, letGo[0].ankleRight.y);
+
+    // the top and the outside
+    h.hangHips[0] = hangFirst->hips.x;
+    h.hangHips[1] = hangFirst->hips.y;
+    h.hangHips[2] = hangFirst->hips.z;
+    h.dropLanding = std::min(dropLast->ankleLeft.y, dropLast->ankleRight.y);
     return 1;
 }
 
@@ -360,7 +437,13 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         if (in->up)
         {
             if (c.hold >= n.steps)
-                break; // the top (what comes next: the top's own step)
+            {
+                // the top hold: pulling up to look over (the bar starts again from nothing each time)
+                c.taps = c.tapsInWindow = 0;
+                c.tapWindow = 0.0f;
+                startPhase(c, o, CAGE_PHASE_PULL_UP, CAGE_CLIP_PULL_UP, 0);
+                break;
+            }
             if (!in->blazin && in->momentum < n.stepCost)
                 startPhase(c, o, CAGE_PHASE_SLIP, CAGE_CLIP_SLIP, 0);
             else
@@ -432,10 +515,144 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
             return 1;
         }
         break;
+    case CAGE_PHASE_PULL_UP:
+    case CAGE_PHASE_STRAIN:
+        // ESCAPE on: the first bar, filled by taps while straining; full (or ESCAPE off, once pulled up) = onto the top;
+        // down = back to the hang
+        if (in->escape)
+            countTap(c, *in);
+        if (!started)
+            break;
+        if (in->down)
+            startPhase(c, o, CAGE_PHASE_PULL_BACK, CAGE_CLIP_PULL_BACK, 1);
+        else if (c.phase == CAGE_PHASE_PULL_UP && in->clipEnded)
+        {
+            if (!in->escape || c.taps >= n.tapsPart1)
+                ontoTop(c, o, 0);
+            else
+                startPhase(c, o, CAGE_PHASE_STRAIN, CAGE_CLIP_STRAIN, 0);
+        }
+        else if (c.phase == CAGE_PHASE_STRAIN && c.taps >= n.tapsPart1)
+            ontoTop(c, o, 1);
+        break;
+    case CAGE_PHASE_PULL_BACK:
+    case CAGE_PHASE_OFF_TOP:
+        if (started && in->clipEnded)
+            startPhase(c, o, CAGE_PHASE_HANG, hangClip(c.hold), 0);
+        break;
+    case CAGE_PHASE_ONTO_TOP:
+    case CAGE_PHASE_CROUCH:
+        // ESCAPE on: the second bar, from climbing on through crouching there; full (or ESCAPE off, once on) = resting on
+        // top (the crouch's loop plays on); down = back to the hang
+        if (in->escape)
+            countTap(c, *in);
+        if (!started)
+            break;
+        if (in->escape && in->down)
+            startPhase(c, o, CAGE_PHASE_OFF_TOP, CAGE_CLIP_OFF_TOP, 1);
+        else if (c.phase == CAGE_PHASE_ONTO_TOP && in->clipEnded)
+        {
+            if (!in->escape || c.taps >= n.tapsPart2)
+                startPhase(c, o, CAGE_PHASE_ON_TOP, CAGE_CLIP_ON_TOP, 0);
+            else
+                startPhase(c, o, CAGE_PHASE_CROUCH, CAGE_CLIP_ON_TOP, 0);
+        }
+        else if (c.phase == CAGE_PHASE_CROUCH && c.taps >= n.tapsPart2)
+            startPhase(c, o, CAGE_PHASE_ON_TOP, 0, 0); // the same loop, now resting
+        break;
+    case CAGE_PHASE_ON_TOP:
+        // resting on top: cross the dive (the caller's); down with triangle over the top; down held on its own back down
+        // inside
+        if (!started)
+            break;
+        {
+            const bool settled = c.pictures > n.restPictures; // the second bar's taps (cross, triangle) don't count yet
+            if (settled && in->cross)
+                o.dive = 1;
+            else if (in->down)
+            {
+                ++c.downHeld;
+                if (settled && in->triangle && in->mayGoOver)
+                {
+                    startPhase(c, o, CAGE_PHASE_OVER, CAGE_CLIP_OVER, 1);
+                    c.fromOut = c.out;
+                }
+                else if (c.downHeld >= n.downPictures)
+                    startPhase(c, o, CAGE_PHASE_OFF_TOP, CAGE_CLIP_OFF_TOP, 1);
+            }
+            else
+                c.downHeld = 0;
+        }
+        break;
+    case CAGE_PHASE_OVER:
+        // the clip carries the body over the top and down the far side, ending in the hang turned round (made for a top no
+        // deeper than a bar): across the middle of it the anchor slides out over the top's depth (and the wires' room on
+        // both faces), the hands crossing the top, so the body comes down on the outer face. At its end the escape is
+        // told, the last frame held a picture (the caller ends the match); then the climber turns to face the cage from
+        // outside, the anchor put where the hang's hips meet the body's
+        if (started && !in->clipEnded)
+        {
+            const float t = std::clamp((in->progress - 0.25f) / 0.6f, 0.0f, 1.0f);
+            c.out = c.fromOut + (n.topDepth + 2.0f * (n.walls - n.wires)) * t * t * (3.0f - 2.0f * t);
+        }
+        if (!(started && in->clipEnded))
+            break;
+        if (!c.escaped)
+        {
+            c.escaped = 1;
+            o.escaped = 1;
+            break;
+        }
+        {
+            const float hipsOut = c.writtenOut + body.hips.x, hipsAlong = c.writtenAlong + body.hips.y,
+                        hipsUp = c.writtenY + body.hips.z;
+            c.outside = 1; // facing in: the clip's forward is the side's inward way, its left the side's way back
+            c.out = hipsOut + h.hangHips[2];
+            c.along = hipsAlong + h.hangHips[0];
+            c.y = hipsUp - h.hangHips[1];
+            c.settle = 1;
+            c.stepsOutside = std::max(0, static_cast<int32_t>(std::lround((c.y - dropStart(n, h)) / n.stepUp)));
+            nextOutside(n, h, c, o);
+        }
+        break;
+    case CAGE_PHASE_DOWN_OUTSIDE:
+        c.y = c.fromY + (c.toY - c.fromY) * in->progress;
+        if (started && in->clipEnded)
+        {
+            c.y = c.toY;
+            nextOutside(n, h, c, o);
+        }
+        break;
+    case CAGE_PHASE_DROP:
+        // the clip drops the body to the floor; at its end standing there, outside the cage
+        if (started && in->clipEnded)
+        {
+            c.phase = CAGE_PHASE_NONE;
+            c.out = c.writtenOut + body.hips.x;
+            c.along = c.writtenAlong + body.hips.y;
+            c.y = kFloor;
+            handOut(c, o);
+            o.facing = bodyFacing(c, body);
+            o.landed = 1;
+            o.outside = 1;
+            *out = o;
+            return 1;
+        }
+        break;
     default:
         break;
     }
-    againstCage(n, c, body, c.phase != CAGE_PHASE_ONTO && c.phase != CAGE_PHASE_LET_GO);
+    if (c.phase != CAGE_PHASE_OVER)
+        againstCage(n, c, body, c.phase != CAGE_PHASE_ONTO && c.phase != CAGE_PHASE_LET_GO && c.phase != CAGE_PHASE_DROP);
+    const bool part1 = c.phase == CAGE_PHASE_PULL_UP || c.phase == CAGE_PHASE_STRAIN;
+    const bool part2 = c.phase == CAGE_PHASE_ONTO_TOP || c.phase == CAGE_PHASE_CROUCH;
+    if (in->escape && (part1 || part2))
+    {
+        const int32_t needed = part1 ? n.tapsPart1 : n.tapsPart2;
+        o.bar = 1;
+        o.barNeeded = static_cast<float>(needed);
+        o.barLeft = static_cast<float>(std::max(0, needed - c.taps));
+    }
     handOut(c, o);
     o.clip = c.clip;
     o.blend = c.clipBlend;

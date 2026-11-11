@@ -13,10 +13,31 @@
 // what the rules decide, playing the clip they name, and the logs. The rules' numbers come from the cage's cage.json
 // (vendetta_cage_file.h).
 // The climber can't be hit or grabbed (+0x5AC 0x4000 / 0x1 each picture: the hit test FUN_001290c0 and the grab skip it).
+// At the top hold, up pulls the climber up to look over; with ESCAPE on the game's own tapping bar shows for the climber
+// (the HUD FUN_0011B538 draws a fighter's bar from its own fields: +0x5CF bit 4, which the dispatcher clears before each
+// state call, with +0x570 the taps needed and +0x574 the taps left; nothing else reads them), twice: the taps (any
+// button, +0x66C & 0xFF0F, as the pin counts them) fill the first while straining, which puts the climber onto the top,
+// and the second while crouched there, which leaves the climber resting on top; with ESCAPE off up there goes straight
+// to resting on top. Resting on top, down with triangle (ESCAPE on) climbs over: at the end of the climb over, the escape wins the match, reported as
+// the game reports a pin, through FUN_00135BB8(winners, losers, kind, 1) with a kind of its own (0x81: decided, and 0x80,
+// which nothing reads: no end word, counted and scored as a pin is) with the slow motion flag 0x22FDE4 0x1000 set first
+// (else a loser left standing walks out, state 120) and the match's phase 0x22FBE4 moved to 4; the climber then climbs
+// down the outside and drops to the floor, standing there (+0x5AC the floor's 0x10), where state 2 starts the winner's
+// victory. One on one and Every Man for Himself: the first out wins; tag and handicap (each of a team out) come later.
+// Sat on top, cross dives off: the wrestler's own top-rope move, as from a turnbuckle (states 113 / 114, FUN_0013A828,
+// which state 112 hands over to): the slot picked as FUN_0013A050 picks it (73 / 74 at a standing opponent, 75 / 76 at a
+// downed one; 74 / 76 in Blazin'; none at an opponent outside the ring), the move record set by FUN_00102938(f, f, slot)
+// as the climber's last call, the anchor on the cage's top ("the dive's take-off" numbers: the dive's clips stand the
+// ankles 15.47 over the anchor), facing out (the state's own turn brings it round), +0x414 the ring's corner whose
+// in-angle is nearest the way to the opponent (the aim's clamp is +-40 degrees round it). The dive's states are pointed
+// at diveState in a cage match: on top it can't be grabbed or hit (a grab at a diver in 113-115 would be the
+// turnbuckle's take-down), and in the air it comes down, +0x58C (the height the flight adds a picture, 0x138A5C, which
+// the game keeps at 0 for an opponent in the ring) set so the anchor reaches the mat at the move's f0 (73 / 74, the
+// hit window's start) or the flight's end (75 / 76); the take-off's rope windows are skipped while it is above the mat
+// (they would pull the top rope up to the feet: vendetta_ring.cpp asks skipRopeWindow).
 // A game routine called from here can be left half way by the scheduler (a checkpoint), so each of ours calls at most one,
 // as its very last step, with its own return address: a pause then resumes it and it returns where it should. A state
 // is set by our own writes (FUN_001015d0's, a leaf), never by calling it.
-// At the top the climber stays hanging (the top's bar, sitting on top, the way out and the dive come next).
 // VENDETTA_CAGECLIMBLOG=1: each phase change with the anchor and the hips (=2: also a line a picture, detail()).
 // VENDETTA_CAGECLIMB_MOMENTUM=1 (tests): the climber's momentum kept full.
 #include "ps2_runtime.h"
@@ -47,13 +68,29 @@ namespace vendetta_cage_climb
     constexpr uint32_t kRopesCheck = 0x13C1B8u;     // FUN_0013c1b8: state 2's triangle at the ropes (out through them)
     constexpr uint32_t kPlayClip = 0x132158u;       // FUN_00132158(fighter, clip, flags)
     constexpr uint32_t kFighters = 0x22FE08u, kFighterBytes = 0xCD8u;
+    constexpr uint32_t kResult = 0x135BB8u;        // FUN_00135BB8(winners, losers, kind, 1): the match's result
+    constexpr uint32_t kMatchFlags = 0x22FDE4u;    // halfword: 0x1000 the match decided (slow motion, no input)
+    constexpr uint32_t kMatchPhase = 0x22FBE4u;    // 3 the fight, 4 its end
+    constexpr uint32_t kMatchStep = 0x22FBD4u;     // this picture's time step (1 at full speed)
+    constexpr uint32_t kMatchKind = 0x2361CEu;     // the kind byte: 1 one on one, 2 tag, 4 / 8 every man, 0x10 / 0x20 handicap
+    constexpr uint32_t kDecided = 0x1000u, kFightPhase = 3u, kEndPhase = 4u, kEscapeKind = 0x81u;
+    constexpr uint32_t kMoveSlot = 0x102938u;      // FUN_00102938(fighter, owner, slot): the move record for a slot
+    constexpr uint32_t kHookDiveState = 0x1DF798u; // the dive's state routine in a cage match (no recompiled function covers it)
+    constexpr uint32_t kDiveRoutine = 0x13A828u;   // FUN_0013A828: states 113-115, the top-rope dive
+    constexpr uint32_t kDiveFirst = 0x71u, kDiveLast = 0x73u, kDiveStanding = 0x71u, kDiveDowned = 0x72u;
+    constexpr uint32_t kMoveData = 0x025331C8u;    // the move data (moved into the store): + 0x7C + 16 x record = the moveset
+    constexpr uint32_t kInAngles = 0x033A5C50u;    // the ring's corners' in-angles (the ring code's moved table)
+    constexpr float kDiveAnkles = 15.47f;          // the dive clips' (and H202's) ankles over the anchor
 
     // the fighter's fields
     constexpr uint32_t kState = 0x40u, kX = 0xCCu, kY = 0xD0u, kZ = 0xD4u, kFacing = 0xDCu, kClip = 0xFCu,
                        kFrame = 0x110u, kRemaining = 0x114u, kPoints = 0x150u, kHips = 0x15Cu, kMomentum = 0x3B8u,
-                       kPlace = 0x5ACu, kBlazin = 0x5C3u, kHeld = 0x668u, kPressed = 0x66Cu, kTouched = 0x7A0u;
-    constexpr uint16_t kInRing = 4u, kCantBeGrabbed = 0x1u, kCantBeHit = 0x4000u;
-    constexpr uint32_t kTriangle = 0x1000u;
+                       kPlace = 0x5ACu, kBlazin = 0x5C3u, kHeld = 0x668u, kPressed = 0x66Cu, kTouched = 0x7A0u,
+                       kPlayer = 0x30u, kOut = 0x5BBu, kSide = 0x5BCu, kBarBits = 0x5CFu, kTapsNeeded = 0x570u,
+                       kTapsLeft = 0x574u;
+    constexpr uint16_t kInRing = 4u, kOnApron = 8u, kOnFloor = 0x10u, kCantBeGrabbed = 0x1u, kCantBeHit = 0x4000u;
+    constexpr uint32_t kTriangle = 0x1000u, kCross = 0x4000u, kTapButtons = 0xFF0Fu;
+    constexpr uint8_t kBar = 4u, kOutOfMatch = 0x10u, kComputer = 1u;
     constexpr uint32_t kUp = 1u, kRight = 2u, kDown = 4u, kLeft = 8u; // the stick's bits in +0x668 (as the corners' 3 6 12 9)
 
     // the rules' numbers, from the cage's cage.json (the standard cage's when it has none)
@@ -312,6 +349,16 @@ namespace vendetta_cage_climb
         return world;
     }
 
+    // a dive from the top, by fighter: on from the hand-over until its states end
+    struct Dive
+    {
+        bool on = false;
+        uint32_t slot = 0;
+    };
+    Dive g_dives[4];
+    uint32_t g_diveTableWas[3] = {};
+    bool g_diveTableSet = false;
+
     const char *phaseName(int32_t p)
     {
         switch (p)
@@ -324,6 +371,16 @@ namespace vendetta_cage_climb
         case CAGE_PHASE_DANGLE: return "dangling";
         case CAGE_PHASE_RECOVER: return "back to the hang";
         case CAGE_PHASE_LET_GO: return "letting go";
+        case CAGE_PHASE_PULL_UP: return "pulling up";
+        case CAGE_PHASE_STRAIN: return "straining at the top";
+        case CAGE_PHASE_PULL_BACK: return "back from the top";
+        case CAGE_PHASE_ONTO_TOP: return "onto the top";
+        case CAGE_PHASE_CROUCH: return "crouched on top";
+        case CAGE_PHASE_ON_TOP: return "resting on top";
+        case CAGE_PHASE_OFF_TOP: return "down from the top";
+        case CAGE_PHASE_OVER: return "over the top";
+        case CAGE_PHASE_DOWN_OUTSIDE: return "down the outside";
+        case CAGE_PHASE_DROP: return "dropping outside";
         }
         return "?";
     }
@@ -492,11 +549,13 @@ namespace vendetta_cage_climb
         const std::vector<uint8_t> *onto = vendetta_animations_cageClipBytes(CAGE_CLIP_ONTO);
         const std::vector<uint8_t> *hang = vendetta_animations_cageClipBytes(CAGE_CLIP_HANG);
         const std::vector<uint8_t> *letGo = vendetta_animations_cageClipBytes(CAGE_CLIP_LET_GO);
-        if (!onto || !hang || !letGo)
-            return why = "the cage's clips 3203, 3204 and 3205 aren't all there", false;
-        std::vector<Channel> co, ch, cl;
-        uint32_t lastO = 0, lastH = 0, lastL = 0;
-        if (!readClip(*onto, s, lastO, co) || !readClip(*hang, s, lastH, ch) || !readClip(*letGo, s, lastL, cl))
+        const std::vector<uint8_t> *dropOff = vendetta_animations_cageClipBytes(CAGE_CLIP_DROP);
+        if (!onto || !hang || !letGo || !dropOff)
+            return why = "the cage's clips 3203, 3204, 3205 and 3206 aren't all there", false;
+        std::vector<Channel> co, ch, cl, cd;
+        uint32_t lastO = 0, lastH = 0, lastL = 0, lastD = 0;
+        if (!readClip(*onto, s, lastO, co) || !readClip(*hang, s, lastH, ch) || !readClip(*letGo, s, lastL, cl) ||
+            !readClip(*dropOff, s, lastD, cd))
             return why = "a clip doesn't fit the body's template", false;
         const float sc = s.scale;
         auto frameOf = [&](const std::vector<Channel> &channels, float t) {
@@ -509,7 +568,7 @@ namespace vendetta_cage_climb
             ontoFrames.push_back(frameOf(co, static_cast<float>(f)));
         for (uint32_t f = 0; f <= lastL; ++f)
             letGoFrames.push_back(frameOf(cl, static_cast<float>(f)));
-        const CageClipFrame hangFirst = frameOf(ch, 0.0f);
+        const CageClipFrame hangFirst = frameOf(ch, 0.0f), dropLast = frameOf(cd, static_cast<float>(lastD));
         std::vector<CageRopeBend> bends;
         if (const auto b = vendetta_cage::cageFile().ropeBends.find(vendetta_cage::clipKey(CAGE_CLIP_ONTO));
             b != vendetta_cage::cageFile().ropeBends.end())
@@ -517,7 +576,7 @@ namespace vendetta_cage_climb
                 bends.push_back({static_cast<int32_t>(w.from), static_cast<int32_t>(w.to), static_cast<int32_t>(w.what)});
         if (!cage_rules_work_out_heights(&num(), ontoFrames.data(), static_cast<int32_t>(ontoFrames.size()), bends.data(),
                                          static_cast<int32_t>(bends.size()), &hangFirst, letGoFrames.data(),
-                                         static_cast<int32_t>(letGoFrames.size()), &hs.h))
+                                         static_cast<int32_t>(letGoFrames.size()), &dropLast, &hs.h))
             return why = "a clip has more frames than the climb's rules take (" + std::to_string(CAGE_MOST_FRAMES) + ")", false;
         hs.model = model;
         hs.ready = true;
@@ -528,7 +587,9 @@ namespace vendetta_cage_climb
         std::cerr << " (frame " << h.ontoFrames - 1 << " " << h.drop[h.ontoFrames - 1] << "); the hang moved along " << h.hang[0]
                   << ", up " << h.hang[1] << ", out " << h.hang[2] << " (the rope hold " << cage_rules_rope_hold(&h)
                   << "); letting go lands at frame " << h.landing << ", its lower ankle " << h.landingAnkle
-                  << " from the hold (the climb's rules version " << cage_rules_version() << ")" << std::endl;
+                  << " from the hold; the hang's hips " << h.hangHips[0] << " " << h.hangHips[1] << " " << h.hangHips[2]
+                  << "; the drop's lower ankle " << h.dropLanding << " (the climb's rules version " << cage_rules_version()
+                  << ")" << std::endl;
         return true;
     }
 
@@ -552,6 +613,177 @@ namespace vendetta_cage_climb
         const float dy = readFloat(rdram, a + 4u) - readFloat(rdram, fighter + kY);
         const float dz = readFloat(rdram, a + 8u) - readFloat(rdram, fighter + kZ);
         return CagePoint{dx * c.nx + dz * c.nz, dx * c.tx + dz * c.tz, dy};
+    }
+
+    // the match kind's teams: tag and handicap (each member of a team must be out: not yet)
+    bool teamMatch(uint8_t *rdram) { return (Ps2FastRead8(rdram, kMatchKind) & 0x32u) != 0u; }
+
+    // the escape: the climber's side wins. The lists ({the fighters' +0x30 ...}, -1) in the cage's own store area; the
+    // match decided (0x1000) before the report so no loser left standing walks out; the phase moved to the end as the
+    // match step does after a decided report. False when the fight isn't on (the result is the game's already).
+    bool reportEscape(uint8_t *rdram, uint32_t fighter, uint32_t &winners, uint32_t &losers)
+    {
+        if (Ps2FastRead32(rdram, kMatchPhase) != kFightPhase || (Ps2FastRead16(rdram, kMatchFlags) & kDecided))
+            return false;
+        int32_t won[2] = {static_cast<int32_t>(Ps2FastRead32(rdram, fighter + kPlayer)), -1};
+        int32_t lost[5] = {-1, -1, -1, -1, -1};
+        int count = 0;
+        for (uint32_t j = 0; j < 4u; ++j)
+        {
+            const uint32_t other = kFighters + kFighterBytes * j;
+            const int32_t who = static_cast<int32_t>(Ps2FastRead32(rdram, other + kPlayer));
+            if (other == fighter || who == -1 || (Ps2FastRead8(rdram, other + kOut) & kOutOfMatch))
+                continue;
+            lost[count++] = who;
+        }
+        if (count == 0 || !vendetta_cage::resultLists(won, 2, lost, count + 1, winners, losers))
+            return false;
+        Ps2FastWrite16(rdram, kMatchFlags, static_cast<uint16_t>(Ps2FastRead16(rdram, kMatchFlags) | kDecided));
+        Ps2FastWrite32(rdram, kMatchPhase, kEndPhase);
+        if (logOn())
+        {
+            std::cerr << "[cage] escape: player " << won[0] << " is over the top and wins; the losers";
+            for (int k = 0; k < count; ++k)
+                std::cerr << " " << lost[k];
+            std::cerr << std::endl;
+        }
+        return true;
+    }
+
+    // the wrestler's top-rope slot for its opponent, as FUN_0013A050 picks it (0: none fits): the opponent held for a
+    // partner (state 0x3B, the shared 10004) and on the apron or the floor give none here
+    uint32_t diveSlot(uint8_t *rdram, uint32_t fighter, uint32_t opponent)
+    {
+        const uint16_t place = Ps2FastRead16(rdram, opponent + kPlace);
+        const uint32_t state = Ps2FastRead32(rdram, opponent + kState);
+        if (!(place & kInRing) || (place & (kOnApron | kOnFloor)) || state == 0x3Bu)
+            return 0u;
+        const bool down = ((place & 0x80u) && !(place & 0xC00u)) || (state >= 0x50u && state <= 0x53u) || state == 0x69u ||
+                          state == 0x6Au;
+        const bool blazin = (Ps2FastRead8(rdram, fighter + kBlazin) & 2u) != 0u;
+        // FUN_00102AC8: the moveset (at the move data + 0x7C + 16 x the record +0x38) has the slot when its entry isn't -1
+        const uint8_t *entry = guestBytes(rdram, kMoveData + 0x7Cu + 16u * Ps2FastRead32(rdram, fighter + 0x38u), 4u);
+        const uint32_t moveset = entry ? u32(entry) : 0u;
+        auto has = [&](uint32_t slot) {
+            const uint8_t *s = moveset ? guestBytes(rdram, moveset + 2u * slot, 2u) : nullptr;
+            return s && (s[0] != 0xFFu || s[1] != 0xFFu);
+        };
+        const uint32_t plain = down ? 75u : 73u, hot = down ? 76u : 74u;
+        if (blazin && has(hot))
+            return hot;
+        return has(plain) ? plain : 0u;
+    }
+
+    // the ring's corner whose in-angle is nearest the way from (x, z) to (toX, toZ): the aim is clamped round it
+    uint32_t nearestCorner(uint8_t *rdram, float x, float z, float toX, float toZ)
+    {
+        const uint32_t corners = vendetta_ring::activeSides() == 6 ? 6u : 4u;
+        const float way = std::atan2(toX - x, toZ - z) * 180.0f / 3.14159265f;
+        uint32_t best = 0;
+        float bestOff = 1e9f;
+        for (uint32_t k = 0; k < corners; ++k)
+        {
+            const uint8_t *a = guestBytes(rdram, kInAngles + 4u * k, 4u);
+            if (!a)
+                break;
+            float off = std::fmod(std::fabs(f32(a) - way), 360.0f);
+            off = std::min(off, 360.0f - off);
+            if (off < bestOff)
+            {
+                bestOff = off;
+                best = k;
+            }
+        }
+        return best;
+    }
+
+    // cross on top: the dive handed over (true: the climb is over, the routine's last call made)
+    bool startDive(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t fighter, int index, Climb &cl)
+    {
+        const uint32_t opponent = Ps2FastRead32(rdram, fighter + 0x0u);
+        if (indexOf(opponent) < 0)
+            return false;
+        const uint32_t slot = diveSlot(rdram, fighter, opponent);
+        if (!slot)
+        {
+            static uint32_t told = 0;
+            if (logOn() && told++ % 60u == 0u)
+                std::cerr << "[cage] climb: player " << index << " on top: no dive fits the opponent now" << std::endl;
+            return false;
+        }
+        CageClimber &c = cl.c;
+        const CageNumbers &n = num();
+        const float out = n.walls + n.diveOut, y = 10.5f + n.height + n.diveFeet - kDiveAnkles;
+        const float x = c.nx * out + c.tx * c.along, z = c.nz * out + c.tz * c.along;
+        const uint32_t corner = nearestCorner(rdram, readFloat(rdram, fighter + kHips), readFloat(rdram, fighter + kHips + 8u),
+                                              readFloat(rdram, opponent + kHips), readFloat(rdram, opponent + kHips + 8u));
+        const uint32_t state = (slot == 75u || slot == 76u) ? kDiveDowned : kDiveStanding;
+        if (logOn())
+            std::cerr << "[cage] climb: player " << index << " dives off the top: slot " << slot << ", state " << state
+                      << ", take-off out " << out << " along " << c.along << " y " << y << ", corner " << corner
+                      << " (pressed 0x" << std::hex << Ps2FastRead32(rdram, fighter + kPressed) << std::dec << ")" << std::endl;
+        c.phase = CAGE_PHASE_NONE;
+        g_dives[index] = Dive{true, slot};
+        writeFloat(rdram, fighter + kX, x);
+        writeFloat(rdram, fighter + kY, y);
+        writeFloat(rdram, fighter + kZ, z);
+        Ps2FastWrite32(rdram, fighter + 0x414u, corner);
+        writeFloat(rdram, fighter + 0x58Cu, 0.0f);
+        setState(rdram, fighter, state);
+        Ps2FastWrite16(rdram, fighter + kPlace, static_cast<uint16_t>(Ps2FastRead16(rdram, fighter + kPlace) | kInRing |
+                                                                        kCantBeHit | kCantBeGrabbed));
+        SET_GPR_U64(ctx, 4, fighter);
+        SET_GPR_U64(ctx, 5, fighter);
+        SET_GPR_U64(ctx, 6, slot);
+        runtime->lookupFunction(kMoveSlot)(rdram, ctx, runtime);
+        return true;
+    }
+
+    // states 113-115 in a cage match: a dive from the cage's top kept safe on top and brought down in the air; any other
+    // (a turnbuckle's) the game's own
+    void diveState(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t fighter = getRegU32(ctx, 4);
+        const int index = indexOf(fighter);
+        if (index >= 0 && g_dives[index].on)
+        {
+            const uint32_t step = Ps2FastRead32(rdram, fighter + 0x44u);
+            if (step <= 1u)
+                Ps2FastWrite16(rdram, fighter + kPlace,
+                               static_cast<uint16_t>(Ps2FastRead16(rdram, fighter + kPlace) | kCantBeHit | kCantBeGrabbed));
+            const float y = readFloat(rdram, fighter + kY), frame = readFloat(rdram, fighter + kFrame);
+            const int32_t f0 = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x360u));
+            const int32_t f5 = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x374u));
+            const int32_t f6 = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x378u));
+            const int32_t left = static_cast<int32_t>(Ps2FastRead32(rdram, fighter + 0x424u));
+            float add = 0.0f;
+            if (step >= 2u && frame >= static_cast<float>(f5) && left >= 1 && y > 10.5f)
+            {
+                // the frames the flight still has, over its pictures left: the pictures to the drop's end
+                const bool standing = g_dives[index].slot == 73u || g_dives[index].slot == 74u;
+                const float end = (standing && f0 > f5 && f0 < f6) ? static_cast<float>(f0) : static_cast<float>(f6);
+                const float perPicture = (static_cast<float>(f6) - frame) / static_cast<float>(left);
+                const float pictures = perPicture > 0.0f ? std::ceil((end - frame) / perPicture) : 1.0f;
+                add = -(y - 10.5f) / std::max(1.0f, pictures);
+            }
+            writeFloat(rdram, fighter + 0x58Cu, add);
+            if (logLevel() >= 2)
+            {
+                // the landing spot +0x57C (x, z), +0x5CB: 1 out of reach, 2 a downed target, 8 a hit, 0x40 aimed
+                std::cerr << "[cage] dive: player " << index << " state " << Ps2FastRead32(rdram, fighter + kState) << " step "
+                          << step << " clip " << Ps2FastRead32(rdram, fighter + kClip) << " f " << frame << " (f0 " << f0
+                          << " f5 " << f5 << " f6 " << f6 << ") left " << left << " y " << y << " add " << add << " anchor "
+                          << readFloat(rdram, fighter + kX) << " " << readFloat(rdram, fighter + kZ) << " facing "
+                          << readFloat(rdram, fighter + kFacing) << " aim " << readFloat(rdram, fighter + 0x540u) << " to "
+                          << readFloat(rdram, fighter + 0x57Cu) << " " << readFloat(rdram, fighter + 0x584u) << " flags 0x"
+                          << std::hex << static_cast<uint32_t>(Ps2FastRead8(rdram, fighter + 0x5CBu)) << std::dec;
+                if (const uint32_t o = Ps2FastRead32(rdram, fighter + 0x0u); indexOf(o) >= 0)
+                    std::cerr << " | opponent hips " << readFloat(rdram, o + kHips) << " " << readFloat(rdram, o + kHips + 4u)
+                              << " " << readFloat(rdram, o + kHips + 8u) << " state " << Ps2FastRead32(rdram, o + kState);
+                std::cerr << std::endl;
+            }
+        }
+        runtime->lookupFunction(kDiveRoutine)(rdram, ctx, runtime);
     }
 
     // state 102: the climber, each picture
@@ -595,6 +827,15 @@ namespace vendetta_cage_climb
             in.along = ((held & kRight) ? 1 : -1) * static_cast<int32_t>(screenSign(cl));
         in.momentum = readFloat(rdram, fighter + kMomentum);
         in.blazin = (Ps2FastRead8(rdram, fighter + kBlazin) & 2u) ? 1 : 0;
+        in.step = readFloat(rdram, kMatchStep);
+        const uint32_t pressed = Ps2FastRead32(rdram, fighter + kPressed);
+        // the computer's taps are ours (its own come only in a pin): one every 6 pictures, as its kick-out's
+        in.pressed = (Ps2FastRead8(rdram, fighter + kSide) & kComputer) ? (c.pictures % 6 == 0 ? 1 : 0)
+                                                                          : ((pressed & kTapButtons) ? 1 : 0);
+        in.triangle = (pressed & kTriangle) ? 1 : 0;
+        in.cross = (pressed & kCross) ? 1 : 0;
+        in.escape = (Ps2FastRead16(rdram, vendetta_cage::kRuleWord) & vendetta_cage::kRuleEscape) ? 1 : 0;
+        in.mayGoOver = in.escape && !teamMatch(rdram) ? 1 : 0;
         for (int32_t i = 0; i < CAGE_ROOMS; ++i)
             in.body.rooms[i] = fromAnchor(rdram, fighter, c, vendetta_cage::kRoomPoints[i]);
         in.body.ankleLeft = fromAnchor(rdram, fighter, c, 16u);
@@ -609,6 +850,48 @@ namespace vendetta_cage_climb
         if (out.momentumCost > 0.0f)
             writeFloat(rdram, fighter + kMomentum, std::max(0.0f, in.momentum - out.momentumCost));
         sayStarted(rdram, fighter, cl, out);
+        if (out.bar)
+        {
+            // the game's bar for this fighter, this picture (its fill = 1 - left / needed)
+            Ps2FastWrite8(rdram, fighter + kBarBits, static_cast<uint8_t>(Ps2FastRead8(rdram, fighter + kBarBits) | kBar));
+            writeFloat(rdram, fighter + kTapsNeeded, out.barNeeded);
+            writeFloat(rdram, fighter + kTapsLeft, out.barLeft);
+            if (logOn() && c.taps != before.taps)
+                std::cerr << "[cage] climb: player " << index << " taps " << c.taps << " of " << out.barNeeded << std::endl;
+        }
+        if (out.dive && startDive(rdram, ctx, runtime, fighter, index, cl))
+            return;
+        if (out.escaped)
+        {
+            // the match won this picture: the report is the routine's last call (the next clip starts next picture)
+            place(rdram, fighter, out);
+            Ps2FastWrite16(rdram, fighter + kPlace,
+                           static_cast<uint16_t>(Ps2FastRead16(rdram, fighter + kPlace) | kCantBeHit | kCantBeGrabbed));
+            uint32_t winners = 0, losers = 0;
+            if (reportEscape(rdram, fighter, winners, losers))
+            {
+                SET_GPR_U64(ctx, 4, winners);
+                SET_GPR_U64(ctx, 5, losers);
+                SET_GPR_U64(ctx, 6, kEscapeKind);
+                SET_GPR_U64(ctx, 7, 1u);
+                runtime->lookupFunction(kResult)(rdram, ctx, runtime);
+                return;
+            }
+            finish(rdram, ctx, fighter, 0u);
+            return;
+        }
+        if (out.landed && out.outside)
+        {
+            say(rdram, fighter, cl, "lands outside the cage", before.phase, before.hold, before.out, before.along, before.y);
+            place(rdram, fighter, out);
+            writeFloat(rdram, fighter + 0x148u, out.facing);
+            Ps2FastWrite16(rdram, fighter + kPlace, static_cast<uint16_t>(
+                                                        (Ps2FastRead16(rdram, fighter + kPlace) & ~(kInRing | kOnApron)) | kOnFloor));
+            g_afterLanding[index] = 40;
+            setState(rdram, fighter, kStanding);
+            finish(rdram, ctx, fighter, 0u);
+            return;
+        }
         if (out.landed)
         {
             say(rdram, fighter, cl, "lands in the ring", before.phase, before.hold, before.out, before.along, before.y);
@@ -677,6 +960,17 @@ void vendetta_cage::climbWatch(uint8_t *rdram, uint32_t fighter)
 {
     using namespace vendetta_cage_climb;
     const int index = indexOf(fighter);
+    if (index >= 0 && g_dives[index].on)
+    {
+        const uint32_t state = Ps2FastRead32(rdram, fighter + kState);
+        if (state < kDiveFirst || state > kDiveLast)
+        {
+            g_dives[index].on = false;
+            if (logOn())
+                std::cerr << "[cage] dive: player " << index << " lands (state " << state << ", anchor y "
+                          << readFloat(rdram, fighter + kY) << ")" << std::endl;
+        }
+    }
     if (index < 0 || g_afterLanding[index] <= 0 || logLevel() < 2)
         return;
     static float lastFrame[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
@@ -703,6 +997,16 @@ void vendetta_cage::climbWatch(uint8_t *rdram, uint32_t fighter)
     std::cerr << std::endl;
 }
 
+bool vendetta_cage::skipRopeWindow(uint8_t *rdram, uint32_t fighter, uint32_t type)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    if (index < 0 || !g_dives[index].on || type == 6u)
+        return false;
+    const uint32_t state = Ps2FastRead32(rdram, fighter + kState);
+    return state >= kDiveFirst && state <= kDiveLast && readFloat(rdram, fighter + kY) > 11.0f;
+}
+
 bool vendetta_cage::climbing(uint8_t *rdram, uint32_t fighter)
 {
     using namespace vendetta_cage_climb;
@@ -721,6 +1025,8 @@ void vendetta_cage::climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime)
         cl = Climb();
     for (Heights &h : g_heights) // the clips or cage.json may have changed: worked out again at the first climb
         h = Heights();
+    for (Dive &d : g_dives)
+        d = Dive();
     const uint32_t entry = kStateTable + 4u * kClimbState;
     if (!g_tableSet)
     {
@@ -729,6 +1035,14 @@ void vendetta_cage::climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime)
     }
     g_active = cageMatch(rdram);
     Ps2FastWrite32(rdram, entry, g_active ? kHookClimbState : g_tableWas);
+    for (uint32_t s = kDiveFirst; s <= kDiveLast; ++s)
+    {
+        const uint32_t dive = kStateTable + 4u * s;
+        if (!g_diveTableSet)
+            g_diveTableWas[s - kDiveFirst] = Ps2FastRead32(rdram, dive);
+        Ps2FastWrite32(rdram, dive, g_active ? kHookDiveState : g_diveTableWas[s - kDiveFirst]);
+    }
+    g_diveTableSet = true;
 }
 
 void installVendettaCageClimb(PS2Runtime &runtime)
@@ -745,5 +1059,6 @@ void installVendettaCageClimb(PS2Runtime &runtime)
         return;
     }
     runtime.registerFunction(kHookClimbState, climbState);
+    runtime.registerFunction(kHookDiveState, diveState);
     runtime.replaceFunction(kRopesCheck, ropesCheck);
 }

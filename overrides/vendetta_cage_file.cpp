@@ -71,7 +71,11 @@ namespace vendetta_cage_file
                                 {"room, left knee", &n.room[6]},
                                 {"room, left ankle", &n.room[7]},
                                 {"room, right knee", &n.room[8]},
-                                {"room, right ankle", &n.room[9]}};
+                                {"room, right ankle", &n.room[9]},
+                                {"the top's depth", &n.topDepth},
+                                {"the top's height", &n.topHeight},
+                                {"the dive's take-off, out past the walls", &n.diveOut},
+                                {"the dive's take-off, feet over the top", &n.diveFeet}};
         for (const auto &[key, value] : numbers.members)
         {
             double v = 0.0;
@@ -90,6 +94,26 @@ namespace vendetta_cage_file
             if (key == "dangling, pictures" && number(value, v) && v >= 1.0)
             {
                 n.danglePictures = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "taps, part 1 (pulling up)" && number(value, v) && v >= 1.0 && v <= 1000.0)
+            {
+                n.tapsPart1 = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "taps, part 2 (crouched on top)" && number(value, v) && v >= 1.0 && v <= 1000.0)
+            {
+                n.tapsPart2 = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "resting on top, down held to climb back down, pictures" && number(value, v) && v >= 1.0)
+            {
+                n.downPictures = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "resting on top, pictures before cross or triangle count" && number(value, v) && v >= 0.0)
+            {
+                n.restPictures = static_cast<int>(v);
                 used = true;
             }
             if (key == "getting on from") // a tool's own: where its wrestler stands; in a match, wherever they stood

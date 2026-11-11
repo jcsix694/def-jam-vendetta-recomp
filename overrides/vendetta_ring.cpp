@@ -2447,6 +2447,11 @@ namespace vendetta_ring
         // heights are the game's: the three a pulled rope is taken to, its other numbers beside them.
         void ropeWindows(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            if (vendetta_cage::skipRopeWindow(rdram, getRegU32(ctx, 4), getRegU32(ctx, 5)))
+            {
+                ctx->pc = getRegU32(ctx, 31); // a dive from the cage's top, still high: the ropes left alone
+                return;
+            }
             if (!g_active)
             {
                 g_ropeWindows(rdram, ctx, runtime);

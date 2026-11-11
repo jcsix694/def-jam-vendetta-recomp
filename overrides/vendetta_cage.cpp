@@ -82,6 +82,7 @@ namespace vendetta_cage_walls
     // the store's fixed area, offsets 0x400-0xFFF (vendetta_store.h): the cage's walls, their {first, last}, the lists
     constexpr uint32_t kRecords = 0x400u, kMaxSides = 16u, kPair = 0x900u, kLists = 0x910u, kListBytes = 0x20u,
                        kMaxLists = 32u, kAreaEnd = 0x1000u;
+    constexpr uint32_t kResultLists = 0xF00u; // the escape's winners (16 bytes) and losers (16 bytes), after the lists' 0xD10
 
     struct Vec
     {
@@ -518,6 +519,23 @@ uint32_t vendetta_cage::walls(uint8_t *rdram, uint32_t fighter, uint32_t gameLis
     if (gameList - kGameFloorLists < 0x40u)
         return cageList(list);
     return list;
+}
+
+bool vendetta_cage::resultLists(const int32_t *winners, int winnerCount, const int32_t *losers, int loserCount,
+                                uint32_t &winnersAt, uint32_t &losersAt)
+{
+    using namespace vendetta_cage_walls;
+    static_assert(kLists + kMaxLists * kListBytes <= kResultLists, "the escape's lists past the walls' lists");
+    if (!g_area || winnerCount < 1 || winnerCount > 4 || loserCount < 1 || loserCount > 4)
+        return false;
+    winnersAt = g_area + kResultLists;
+    losersAt = winnersAt + 16u;
+    for (int i = 0; i < 4; ++i)
+    {
+        write32(winnersAt + 4u * static_cast<uint32_t>(i), static_cast<uint32_t>(i < winnerCount ? winners[i] : -1));
+        write32(losersAt + 4u * static_cast<uint32_t>(i), static_cast<uint32_t>(i < loserCount ? losers[i] : -1));
+    }
+    return true;
 }
 
 void installVendettaCage(PS2Runtime &runtime)
