@@ -69,6 +69,10 @@ namespace vendetta_cage
     // cage match. climbing: the fighter is on the cage.
     void climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime);
     bool climbing(uint8_t *rdram, uint32_t fighter);
+    // A team member over the top waiting outside (tag and handicap): out of play, so the fight camera leaves it out
+    // (vendetta_camera.cpp); anyoneWaiting: one of them this match
+    bool waitingOutside(uint8_t *rdram, uint32_t fighter);
+    bool anyoneWaiting(uint8_t *rdram);
     // A move's rope window (FUN_00131848's type) for this fighter skipped: a dive from the cage's top while it is above
     // the mat (its take-off's windows would pull the top rope up to the feet); the ring shaking (6) never
     bool skipRopeWindow(uint8_t *rdram, uint32_t fighter, uint32_t type);

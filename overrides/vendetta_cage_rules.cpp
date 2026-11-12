@@ -44,24 +44,14 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         out.startedY = c.y;
     }
 
+    void sideNormal(int32_t sides, float x, float z, float &nx, float &nz); // (below)
+
     // the side the anchor is at: its outward normal (4 sides: normals at 0, 90, 180, 270 degrees; 6 sides: atan2(x, z) =
     // 60 - 60k degrees), the way along, half its length at the walls
     void sideAt(const CageNumbers &n, CageClimber &c, int32_t sides, float x, float z)
     {
         const int32_t count = sides == 6 ? 6 : 4;
-        float best = -1e9f;
-        for (int32_t k = 0; k < count; ++k)
-        {
-            const float a = (count == 6 ? 60.0f - 60.0f * k : 90.0f * k) * kPi / 180.0f;
-            const float nx = std::sin(a), nz = std::cos(a);
-            const float d = x * nx + z * nz;
-            if (d > best)
-            {
-                best = d;
-                c.nx = nx;
-                c.nz = nz;
-            }
-        }
+        sideNormal(count, x, z, c.nx, c.nz);
         c.tx = c.nz;
         c.tz = -c.nx;
         c.halfSide = count == 6 ? n.walls * std::tan(kPi / 6.0f) : n.walls;
@@ -72,7 +62,8 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         out.x = c.nx * c.out + c.tx * c.along;
         out.y = c.y;
         out.z = c.nz * c.out + c.tz * c.along;
-        out.facing = c.outside ? std::atan2(-c.nx, -c.nz) * 180.0f / kPi : std::atan2(c.nx, c.nz) * 180.0f / kPi;
+        // facing the cage from inside; on its outside or resting on the truss, facing the ring
+        out.facing = (c.outside || c.onTruss) ? std::atan2(-c.nx, -c.nz) * 180.0f / kPi : std::atan2(c.nx, c.nz) * 180.0f / kPi;
         c.writtenOut = c.out;
         c.writtenAlong = c.along;
         c.writtenY = c.y;
@@ -161,6 +152,134 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         startPhase(c, out, CAGE_PHASE_ONTO_TOP, CAGE_CLIP_ONTO_TOP, blend);
     }
 
+    // the second bar full (or ESCAPE off): up onto the truss from where the crouch has the anchor (kept: the truss's
+    // clips are made for it)
+    void ontoTruss(CageClimber &c, CagePictureOut &out)
+    {
+        c.dangles = 0;
+        c.perchOut = c.out;
+        c.perchAlong = c.along;
+        c.perchY = c.y;
+        startPhase(c, out, CAGE_PHASE_ONTO_TRUSS, CAGE_CLIP_ONTO_TRUSS, 1);
+    }
+
+    // off the truss (back or over): the anchor back where the truss's clips are made for, facing the cage, a cut (their
+    // first frame is the resting pose turned round)
+    void offTruss(CageClimber &c, CagePictureOut &out, int32_t phase, int32_t clip)
+    {
+        c.onTruss = 0;
+        c.out = c.perchOut;
+        c.along = c.perchAlong;
+        c.y = c.perchY;
+        startPhase(c, out, phase, clip, 0);
+        c.fromOut = c.out;
+    }
+
+    // the phases the body crosses the wires, stands on the truss or falls back into the ring: not kept off the cage
+    bool onTheTop(int32_t phase)
+    {
+        return phase == CAGE_PHASE_OVER || phase == CAGE_PHASE_ONTO_TRUSS || phase == CAGE_PHASE_ON_TRUSS ||
+               phase == CAGE_PHASE_OFF_TRUSS || phase == CAGE_PHASE_OVER_TRUSS || phase == CAGE_PHASE_LOSE_GRIP ||
+               phase == CAGE_PHASE_FALLING || phase == CAGE_PHASE_LAND;
+    }
+
+    bool canBeShaken(int32_t phase)
+    {
+        switch (phase)
+        {
+        case CAGE_PHASE_ONTO:
+        case CAGE_PHASE_HANG:
+        case CAGE_PHASE_STEP:
+        case CAGE_PHASE_SLIP:
+        case CAGE_PHASE_DANGLE:
+        case CAGE_PHASE_RECOVER:
+        case CAGE_PHASE_PULL_UP:
+        case CAGE_PHASE_STRAIN:
+        case CAGE_PHASE_PULL_BACK:
+        case CAGE_PHASE_ONTO_TOP:
+        case CAGE_PHASE_CROUCH:
+        case CAGE_PHASE_OFF_TOP:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // shaken off, or the dangle too many: losing the grip (the dangles in a row start again)
+    void loseGrip(CageClimber &c, CagePictureOut &out)
+    {
+        c.dangles = 0;
+        c.knocked = 0;
+        c.fallSpeed = 0.0f;
+        startPhase(c, out, CAGE_PHASE_LOSE_GRIP, CAGE_CLIP_LOSE_GRIP, 1);
+    }
+
+    // into the dangle (a shake's, or a step up with too little momentum): counted; the one that makes "dangles in a row
+    // before a fall" is a fall instead; blend: eased in from the pose shown (shaken off the top's stages)
+    void slip(const CageNumbers &n, CageClimber &c, CagePictureOut &out, int32_t fromShake, int32_t blend = 0)
+    {
+        c.knocked = 0;
+        if (++c.dangles >= std::max(1, n.danglesToFall))
+        {
+            loseGrip(c, out);
+            return;
+        }
+        c.shakeDangle = fromShake;
+        startPhase(c, out, CAGE_PHASE_SLIP, CAGE_CLIP_SLIP, blend);
+    }
+
+    // a shaker's bar full on this climber's side: dangling, off the cage when dangling already; pulled up or crouched
+    // on top (stage 1 or 2): straight into the dangle at the top hold, eased in from that pose (the user: no step back
+    // down first), the stages then from the first again; getting on, a step, on the way back down: the dangle when at
+    // the hang
+    void shaken(const CageNumbers &n, CageClimber &c, CagePictureOut &out)
+    {
+        switch (c.phase)
+        {
+        case CAGE_PHASE_SLIP:
+        case CAGE_PHASE_DANGLE:
+            loseGrip(c, out);
+            break;
+        case CAGE_PHASE_HANG:
+            slip(n, c, out, 1);
+            break;
+        case CAGE_PHASE_PULL_UP:
+        case CAGE_PHASE_STRAIN:
+        case CAGE_PHASE_ONTO_TOP:
+        case CAGE_PHASE_CROUCH:
+            slip(n, c, out, 1, 1);
+            break;
+        default:
+            c.knocked = 1;
+            break;
+        }
+        c.taps = c.tapsInWindow = 0;
+        c.tapWindow = 0.0f;
+    }
+
+    // the sides' outward normals: 4 sides at 0, 90, 180, 270 degrees; 6 sides atan2(x, z) = 60 - 60k degrees
+    void sideNormal(int32_t sides, float x, float z, float &nx, float &nz)
+    {
+        const int32_t count = sides == 6 ? 6 : 4;
+        float best = -1e9f;
+        nx = 0.0f;
+        nz = 1.0f;
+        for (int32_t k = 0; k < count; ++k)
+        {
+            const float a = (count == 6 ? 60.0f - 60.0f * k : 90.0f * k) * kPi / 180.0f;
+            const float d = x * std::sin(a) + z * std::cos(a);
+            if (d > best)
+            {
+                best = d;
+                nx = std::sin(a);
+                nz = std::cos(a);
+            }
+        }
+    }
+
+    // a fall's pull down, in the game's units a picture squared (9.8 m/s^2, a wrestler of 22 about 1.85 m, 60 a second)
+    constexpr float kGravity = 9.8f * (22.0f / 1.85f) / 3600.0f;
+
     int32_t upClip(float momentum)
     {
         return CAGE_CLIP_UP_SLOWEST + std::clamp(static_cast<int32_t>(momentum / 20.0f), 0, 4);
@@ -242,6 +361,11 @@ void cage_rules_standard_numbers(CageNumbers *numbers)
     n.diveOut = 2.0f;
     n.diveFeet = 1.0f;
     n.restPictures = 30;
+    n.shakeDanglePictures = 300;
+    n.danglesToFall = 3;
+    n.fallDamage = 10.0f;
+    n.shakeDangleMomentum = 10.0f;
+    n.shakeOffMomentum = 20.0f;
     *numbers = n;
 }
 
@@ -257,10 +381,14 @@ void cage_rules_standard_numbers(CageNumbers *numbers)
 int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFrame *onto, int32_t ontoFrames,
                                    const CageRopeBend *bends, int32_t bendCount, const CageClipFrame *hangFirst,
                                    const CageClipFrame *letGo, int32_t letGoFrames, const CageClipFrame *dropLast,
-                                   CageHeights *heights)
+                                   const CageClipFrame *trussLast, const CageClipFrame *restFirst,
+                                   const CageClipFrame *gripLast, const CageClipFrame *fallPose,
+                                   const CageClipFrame *landFirst, CageHeights *heights)
 {
     using namespace cage_rules_inside;
-    if (!numbers || !onto || !hangFirst || !letGo || !dropLast || !heights || ontoFrames <= 0 ||
+    if (!numbers || !onto || !hangFirst || !letGo || !dropLast || !trussLast || !restFirst || !gripLast || !fallPose ||
+        !landFirst ||
+        !heights || ontoFrames <= 0 ||
         ontoFrames > CAGE_MOST_FRAMES ||
         letGoFrames <= 0 || letGoFrames > CAGE_MOST_FRAMES)
         return 0;
@@ -357,7 +485,56 @@ int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFr
     h.hangHips[1] = hangFirst->hips.y;
     h.hangHips[2] = hangFirst->hips.z;
     h.dropLanding = std::min(dropLast->ankleLeft.y, dropLast->ankleRight.y);
+
+    // onto the truss: the resting clip plays facing the ring (its x the side's way back, its z inward), its first root
+    // where onto the truss's last root is (that clip facing the cage: x along, z out)
+    h.truss[0] = trussLast->root.x + restFirst->root.x;
+    h.truss[1] = trussLast->root.y - restFirst->root.y;
+    h.truss[2] = trussLast->root.z + restFirst->root.z;
+
+    // shaken off: falling's root and landing's first root
+    h.fallRootY = fallPose->root.y;
+    h.landRootY = landFirst->root.y;
+    h.grip[0] = gripLast->root.x - fallPose->root.x;
+    h.grip[1] = gripLast->root.y - fallPose->root.y;
+    h.grip[2] = gripLast->root.z - fallPose->root.z;
     return 1;
+}
+
+int32_t cage_rules_can_be_shaken(const CageClimber *climber)
+{
+    using namespace cage_rules_inside;
+    return climber && canBeShaken(climber->phase) ? 1 : 0;
+}
+
+int32_t cage_rules_shake_result(const CageNumbers *numbers, const CageClimber *climber)
+{
+    using namespace cage_rules_inside;
+    if (!numbers || !climber || !canBeShaken(climber->phase))
+        return 0;
+    // the shake on a copy: what it starts is what it does
+    CageClimber c = *climber;
+    CagePictureOut out{};
+    shaken(*numbers, c, out);
+    if (c.phase == CAGE_PHASE_LOSE_GRIP)
+        return 2;
+    if (c.phase == CAGE_PHASE_SLIP)
+        return 1;
+    // knocked during a step, getting on or going back down: the dangle at the hang, unless it is one too many
+    if (c.knocked && !climber->knocked)
+        return c.dangles + 1 >= std::max(1, numbers->danglesToFall) ? 2 : 1;
+    return 0;
+}
+
+void cage_rules_side(int32_t sides, float x, float z, float *nx, float *nz)
+{
+    using namespace cage_rules_inside;
+    float a = 0.0f, b = 1.0f;
+    sideNormal(sides, x, z, a, b);
+    if (nx)
+        *nx = a;
+    if (nz)
+        *nz = b;
 }
 
 float cage_rules_drop_at(const CageHeights *heights, float frame)
@@ -385,6 +562,7 @@ void cage_rules_start(const CageNumbers *numbers, int32_t sides, float x, float 
     c.out = x * c.nx + z * c.nz;
     c.along = std::clamp(x * c.tx + z * c.tz, -(c.halfSide - n.cornerRoom), c.halfSide - n.cornerRoom);
     c.y = c.fromY = y;
+    c.startOut = c.out;
     startPhase(c, o, CAGE_PHASE_ONTO, CAGE_CLIP_ONTO, 1); // blended in from the stance
     handOut(c, o);
     *climber = c;
@@ -410,7 +588,28 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         --c.settle;
     ++c.pictures;
     const bool started = c.pictures > 1; // the clip asked for last picture is playing
-    switch (c.phase)
+    // a picture of falling (one pose) back into the ring: down by gravity, back over the ropes to where the climb started
+    // as it goes; when the root is as low as landing starts with the anchor on the mat, the landing, there
+    auto fallStep = [&]()
+    {
+        const float landAt = kMat + h.landRootY - h.fallRootY;
+        c.fallSpeed += kGravity * in->step;
+        c.y -= c.fallSpeed * in->step;
+        const float t = c.fallFromY > landAt ? std::clamp((c.fallFromY - c.y) / (c.fallFromY - landAt), 0.0f, 1.0f) : 1.0f;
+        const float toOut = std::min(c.startOut, c.fallFromOut); // back into the ring, never out again
+        c.out = c.fallFromOut + (toOut - c.fallFromOut) * t;
+        if (c.y <= landAt)
+        {
+            c.y = kMat;
+            c.out = toOut;
+            startPhase(c, o, CAGE_PHASE_LAND, CAGE_CLIP_LAND, 0);
+        }
+    };
+    // a shaker's bar full on this side: that comes first, this picture's own step not taken
+    const bool knockedNow = in->shaken && canBeShaken(c.phase);
+    if (knockedNow)
+        shaken(n, c, o);
+    switch (knockedNow ? CAGE_PHASE_NONE : c.phase)
     {
     case CAGE_PHASE_ONTO:
         // up the ropes (the drop worked out from the clip and its rope bends; nothing before the clip plays: the stance's
@@ -434,6 +633,11 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
     case CAGE_PHASE_HANG:
         if (!started)
             break;
+        if (c.knocked)
+        {
+            slip(n, c, o, 1); // shaken on the way here
+            break;
+        }
         if (in->up)
         {
             if (c.hold >= n.steps)
@@ -445,7 +649,7 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
                 break;
             }
             if (!in->blazin && in->momentum < n.stepCost)
-                startPhase(c, o, CAGE_PHASE_SLIP, CAGE_CLIP_SLIP, 0);
+                slip(n, c, o, 0);
             else
                 step(n, c, *in, o, 1, 0);
         }
@@ -454,7 +658,10 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
             if (c.hold > 0)
                 step(n, c, *in, o, -1, 0);
             else
+            {
+                c.dangles = 0;
                 startPhase(c, o, CAGE_PHASE_LET_GO, CAGE_CLIP_LET_GO, 0);
+            }
         }
         else if (in->along != 0)
         {
@@ -482,7 +689,8 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
             startPhase(c, o, CAGE_PHASE_DANGLE, CAGE_CLIP_DANGLE, 0);
         break;
     case CAGE_PHASE_DANGLE:
-        if (c.pictures >= n.danglePictures)
+        // a shake's dangle its own length ("dangling after a shake, pictures"), a slip's "dangling, pictures"
+        if (c.pictures >= (c.shakeDangle ? n.shakeDanglePictures : n.danglePictures))
             startPhase(c, o, CAGE_PHASE_RECOVER, CAGE_CLIP_RECOVER, 0);
         break;
     case CAGE_PHASE_RECOVER:
@@ -537,8 +745,14 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         break;
     case CAGE_PHASE_PULL_BACK:
     case CAGE_PHASE_OFF_TOP:
+        // back to the hang (shaken: straight into the dangle there; the stages start again from the first)
         if (started && in->clipEnded)
-            startPhase(c, o, CAGE_PHASE_HANG, hangClip(c.hold), 0);
+        {
+            if (c.knocked)
+                slip(n, c, o, 1);
+            else
+                startPhase(c, o, CAGE_PHASE_HANG, hangClip(c.hold), 0);
+        }
         break;
     case CAGE_PHASE_ONTO_TOP:
     case CAGE_PHASE_CROUCH:
@@ -553,12 +767,42 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         else if (c.phase == CAGE_PHASE_ONTO_TOP && in->clipEnded)
         {
             if (!in->escape || c.taps >= n.tapsPart2)
-                startPhase(c, o, CAGE_PHASE_ON_TOP, CAGE_CLIP_ON_TOP, 0);
+                ontoTruss(c, o);
             else
                 startPhase(c, o, CAGE_PHASE_CROUCH, CAGE_CLIP_ON_TOP, 0);
         }
         else if (c.phase == CAGE_PHASE_CROUCH && c.taps >= n.tapsPart2)
-            startPhase(c, o, CAGE_PHASE_ON_TOP, 0, 0); // the same loop, now resting
+            ontoTruss(c, o);
+        break;
+    case CAGE_PHASE_ONTO_TRUSS:
+        // up onto the truss, turning to face the ring (the clip carries the body from the crouch's anchor); at its end
+        // the anchor moved onto the truss and turned, the resting clip played from there, a cut (it starts on the last
+        // frame's pose)
+        if (started && in->clipEnded)
+        {
+            c.onTruss = 1;
+            c.along += h.truss[0];
+            c.y += h.truss[1];
+            c.out += h.truss[2];
+            startPhase(c, o, CAGE_PHASE_ON_TRUSS, CAGE_CLIP_TRUSS_REST, 0);
+        }
+        break;
+    case CAGE_PHASE_ON_TRUSS:
+        // resting on the truss, facing the ring: cross the dive (the caller's), triangle over the top (ESCAPE on), a tap
+        // of down back off; getting up there was the pause, so the buttons count from its first picture
+        if (!started)
+            break;
+        if (in->cross)
+            o.dive = 1;
+        else if (in->triangle && in->mayGoOver)
+            offTruss(c, o, CAGE_PHASE_OVER_TRUSS, CAGE_CLIP_OVER_TRUSS);
+        else if (in->down)
+            offTruss(c, o, CAGE_PHASE_OFF_TRUSS, CAGE_CLIP_OFF_TRUSS);
+        break;
+    case CAGE_PHASE_OFF_TRUSS:
+        // back off the truss to the crouch, then down from the top to the hang
+        if (started && in->clipEnded)
+            startPhase(c, o, CAGE_PHASE_OFF_TOP, CAGE_CLIP_OFF_TOP, 1);
         break;
     case CAGE_PHASE_ON_TOP:
         // resting on top: cross the dive (the caller's); down with triangle over the top; down held on its own back down
@@ -585,12 +829,14 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         }
         break;
     case CAGE_PHASE_OVER:
+    case CAGE_PHASE_OVER_TRUSS:
+        // (over from the truss: its clip carries the anchor's slide itself, so nothing is slid)
         // the clip carries the body over the top and down the far side, ending in the hang turned round (made for a top no
         // deeper than a bar): across the middle of it the anchor slides out over the top's depth (and the wires' room on
         // both faces), the hands crossing the top, so the body comes down on the outer face. At its end the escape is
         // told, the last frame held a picture (the caller ends the match); then the climber turns to face the cage from
         // outside, the anchor put where the hang's hips meet the body's
-        if (started && !in->clipEnded)
+        if (started && !in->clipEnded && c.phase == CAGE_PHASE_OVER)
         {
             const float t = std::clamp((in->progress - 0.25f) / 0.6f, 0.0f, 1.0f);
             c.out = c.fromOut + (n.topDepth + 2.0f * (n.walls - n.wires)) * t * t * (3.0f - 2.0f * t);
@@ -613,6 +859,46 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
             c.settle = 1;
             c.stepsOutside = std::max(0, static_cast<int32_t>(std::lround((c.y - dropStart(n, h)) / n.stepUp)));
             nextOutside(n, h, c, o);
+        }
+        break;
+    case CAGE_PHASE_LOSE_GRIP:
+    {
+        // losing the grip where the climber was (the clip falls part of the way itself, faster and faster at its end);
+        // at its end falling, the anchor moved so falling's pose starts where losing the grip left the body, at the speed
+        // its hips were dropping (a fall from rest there made the body all but stop in the air for a moment). The speed
+        // each picture from the hips (their height in the world: the anchor last handed out and the body's up from it),
+        // the fastest once the blend into the clip is over (the clip drops faster and faster to its end; its last frame,
+        // held, would read slow)
+        const float hips = c.writtenY + body.hips.z;
+        if (c.pictures > 13)
+            c.fallSpeed = std::max(c.fallSpeed, (c.fallFromY - hips) / std::max(0.01f, in->step));
+        c.fallFromY = hips;
+        if (started && in->clipEnded)
+        {
+            c.along += h.grip[0];
+            c.y += h.grip[1];
+            c.out += h.grip[2];
+            c.fallFromOut = c.out;
+            c.fallFromY = c.y;
+            startPhase(c, o, CAGE_PHASE_FALLING, CAGE_CLIP_FALLING, 0);
+            // this picture already falls (a first picture of falling standing still showed as a stop in the air)
+            fallStep();
+        }
+        break;
+    }
+    case CAGE_PHASE_FALLING:
+        fallStep();
+        break;
+    case CAGE_PHASE_LAND:
+        // flat on the mat; at its end lying there, face up, facing as the climb did (the caller: the lying state)
+        if (started && in->clipEnded)
+        {
+            c.phase = CAGE_PHASE_NONE;
+            handOut(c, o);
+            o.landed = 1;
+            o.lying = 1;
+            *out = o;
+            return 1;
         }
         break;
     case CAGE_PHASE_DOWN_OUTSIDE:
@@ -642,7 +928,7 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
     default:
         break;
     }
-    if (c.phase != CAGE_PHASE_OVER)
+    if (!onTheTop(c.phase))
         againstCage(n, c, body, c.phase != CAGE_PHASE_ONTO && c.phase != CAGE_PHASE_LET_GO && c.phase != CAGE_PHASE_DROP);
     const bool part1 = c.phase == CAGE_PHASE_PULL_UP || c.phase == CAGE_PHASE_STRAIN;
     const bool part2 = c.phase == CAGE_PHASE_ONTO_TOP || c.phase == CAGE_PHASE_CROUCH;

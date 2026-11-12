@@ -25,7 +25,7 @@
 #define CAGE_RULES_API
 #endif
 
-#define CAGE_RULES_VERSION 2
+#define CAGE_RULES_VERSION 5
 
 /* The cage's clips by the numbers they had in the game they were converted from; the hang at the rope hold is the hang
  * a second time, with its own playback record (the top rope bent to the foot). */
@@ -52,6 +52,20 @@
 #define CAGE_CLIP_OFF_TOP 0x324B      /* from crouched on top back down to the hang */
 #define CAGE_CLIP_OVER 0x320B         /* from sitting on top over it, ending on the outside facing in: the escape */
 #define CAGE_CLIP_DROP 0x3206         /* outside: the drop to the floor */
+/* The top as a turnbuckle (version 3): the cage's own new clips, made where No Mercy has none */
+#define CAGE_CLIP_ONTO_TRUSS 0x3260   /* from crouched on top up onto the truss, turning to face the ring */
+#define CAGE_CLIP_TRUSS_REST 0x3261   /* crouched on the truss facing the ring (a loop): when the cage has no clip of
+                                         that number the caller plays the game's own turnbuckle crouch (H201) */
+#define CAGE_CLIP_OFF_TRUSS 0x3262    /* back off the truss to crouched on top (CAGE_CLIP_ONTO_TRUSS backwards) */
+#define CAGE_CLIP_OVER_TRUSS 0x3263   /* from the truss over to the outside, ending on the outside facing in: the escape */
+/* Shaken off (version 4): losing the grip, falling (one pose, held), landing flat on the mat, face up */
+#define CAGE_CLIP_LOSE_GRIP 0x3240
+#define CAGE_CLIP_FALLING 0x3241
+#define CAGE_CLIP_LAND 0x3242
+/* The shaker's (played by the caller, not the rules): grab the cage, shaking (a loop), let go */
+#define CAGE_CLIP_SHAKE_GRAB 0x3238
+#define CAGE_CLIP_SHAKE 0x3239
+#define CAGE_CLIP_SHAKE_LET_GO 0x323A
 
 /* The climber's phases */
 #define CAGE_PHASE_NONE 0
@@ -66,12 +80,20 @@
 #define CAGE_PHASE_STRAIN 9
 #define CAGE_PHASE_PULL_BACK 10
 #define CAGE_PHASE_ONTO_TOP 11   /* ESCAPE on: the second bar from here */
-#define CAGE_PHASE_ON_TOP 12     /* resting on top: over, the dive or back down */
+#define CAGE_PHASE_ON_TOP 12     /* version 2's resting on top (the crouch's loop): not entered since version 3 */
 #define CAGE_PHASE_OFF_TOP 13
 #define CAGE_PHASE_OVER 14
 #define CAGE_PHASE_DOWN_OUTSIDE 15 /* a step down the outside (the Blazin' step down, CAGE_CLIP_DOWN_BLAZIN) */
 #define CAGE_PHASE_DROP 16
 #define CAGE_PHASE_CROUCH 17     /* crouched on top, the second bar */
+#define CAGE_PHASE_ONTO_TRUSS 18 /* the second bar full (or ESCAPE off): up onto the truss, turning to the ring */
+#define CAGE_PHASE_ON_TRUSS 19   /* resting on the truss, facing the ring: triangle over (ESCAPE on), cross the dive, down
+                                    back off */
+#define CAGE_PHASE_OFF_TRUSS 20  /* back off the truss, then down from the top to the hang */
+#define CAGE_PHASE_OVER_TRUSS 21 /* over to the outside from the truss: the escape at its end */
+#define CAGE_PHASE_LOSE_GRIP 22  /* shaken off (or a dangle too many): losing the grip */
+#define CAGE_PHASE_FALLING 23    /* falling back into the ring */
+#define CAGE_PHASE_LAND 24       /* landing flat on the mat: at its end landed, lying */
 
 /* The body points the ten rooms belong to (the game's 20 body points, FUN_00131438): chest, head, left elbow, left
  * fist, right elbow, right fist, left knee, left ankle, right knee, right ankle */
@@ -105,13 +127,23 @@ typedef struct CageNumbers
     float room[CAGE_ROOMS]; /* "room, chest" .. "room, right ankle" (CAGE_ROOM_POINTS' order) */
     int32_t tapsPart1;      /* "taps, part 1 (pulling up)": the first bar, straining at the top hold (ESCAPE on) */
     int32_t tapsPart2;      /* "taps, part 2 (crouched on top)": the second bar, then resting on top */
-    int32_t downPictures;   /* "resting on top, down held to climb back down, pictures": down with triangle before then = over */
+    int32_t downPictures;   /* "resting on top, down held to climb back down, pictures": version 2's; unused since version
+                               3 (a tap of down climbs back off the truss) */
     float topDepth;         /* "the top's depth": the cage's top (its truss) out past the walls */
     float topHeight;        /* "the top's height": the cage's top down from the top */
-    float diveOut;          /* "the dive's take-off, out past the walls": where a dive from the top stands */
-    float diveFeet;         /* "the dive's take-off, feet over the top" */
-    int32_t restPictures;   /* "resting on top, pictures before cross or triangle count": the taps that filled the
-                               second bar (any button) don't dive or go over */
+    float diveOut;          /* "the dive's take-off, out past the walls": version 2's; since version 3 the dive takes off
+                               where resting on the truss has the climber */
+    float diveFeet;         /* "the dive's take-off, feet over the top": version 2's, as diveOut */
+    int32_t restPictures;   /* "resting on top, pictures before cross or triangle count": version 2's; since version 3
+                               getting onto the truss is the pause (buttons count once resting there) */
+    int32_t shakeDanglePictures; /* "dangling after a shake, pictures": a dangle a shake knocked the climber into (a
+                                    slip with too little momentum: "dangling, pictures") */
+    int32_t danglesToFall;  /* "dangles in a row before a fall": the one that would be this many is a fall instead */
+    float fallDamage;       /* "a fall off the cage, damage": the share of full health a fall takes, in 100ths (the
+                               caller's) */
+    float shakeDangleMomentum; /* "a shake into the dangle, momentum": what the shaker gains (the caller's, through the
+                                  game's own momentum gain) */
+    float shakeOffMomentum;    /* "a shake off the cage, momentum": the same for a shake that knocks the climber off */
 } CageNumbers;
 
 typedef struct CagePoint
@@ -145,6 +177,12 @@ typedef struct CageHeights
     float landingAnkle;            /* the lower ankle's height then */
     float hangHips[3];             /* the hang's first frame: the hips (clip space x, y, z): over the top's end turns there */
     float dropLanding;             /* the drop's last frame: the lower ankle's height (the drop starts this high over the floor) */
+    float truss[3];                /* onto the truss's last frame to the resting clip's first, played facing the ring: the
+                                      anchor moved along, up, out */
+    float fallRootY, landRootY;    /* falling's root height (its one pose) and landing's first frame's: the fall ends when
+                                      the root is as low as landing starts with the anchor on the mat */
+    float grip[3];                 /* losing the grip's last root to falling's: the anchor moved along, up, out at the
+                                      join, so falling carries on from where losing the grip left the body */
 } CageHeights;
 
 /* A climber, kept by the caller and handed back each picture */
@@ -170,6 +208,13 @@ typedef struct CageClimber
     int32_t escaped;      /* over the top's end reached: the escape told (once) */
     int32_t stepsOutside; /* steps down the outside still to go before the drop */
     float fromOut;        /* over the top: the anchor's out as it began */
+    int32_t onTruss;      /* resting on the truss: facing the ring, the anchor moved onto it */
+    float perchOut, perchAlong, perchY; /* the anchor crouched on top, where the truss's clips start */
+    int32_t dangles;      /* dangles in a row (from shakes and slips): reset by a fall, letting go, onto the truss */
+    int32_t shakeDangle;  /* this dangle came from a shake (its own length) */
+    int32_t knocked;      /* shaken while it can't dangle at once (getting on, a step, back down): it dangles at the hang */
+    float startOut;       /* where the climb started, out: a fall lands back there */
+    float fallSpeed, fallFromOut, fallFromY; /* falling: its speed (down), where it began */
 } CageClimber;
 
 /* The body this picture (the last pose, at the anchor last handed out), each as (out, along, up) from that anchor:
@@ -194,10 +239,12 @@ typedef struct CagePictureIn
     CageBody body;
     float step;        /* this picture's time step (1 at full speed) */
     int32_t pressed;   /* a button newly pressed this picture that counts as a tap */
-    int32_t triangle;  /* triangle newly pressed this picture */
-    int32_t cross;     /* cross newly pressed this picture */
+    int32_t triangle;  /* triangle newly pressed this picture: on the truss, over (with mayGoOver) */
+    int32_t cross;     /* cross newly pressed this picture: on the truss, the dive */
     int32_t escape;    /* ESCAPE on: the bar at the top hold; off: up there sits on top at once */
     int32_t mayGoOver; /* over the top may be climbed now (ESCAPE on, and the caller's own rules) */
+    int32_t shaken;    /* a shaker's bar on this climber's side filled this picture (the caller's: only while
+                          cage_rules_can_be_shaken) */
 } CagePictureIn;
 
 typedef struct CagePictureOut
@@ -213,9 +260,11 @@ typedef struct CagePictureOut
     int32_t bar;           /* show the climber's tapping bar: */
     float barNeeded, barLeft; /* taps needed, taps still to make (full when none left) */
     int32_t escaped;       /* the climber is over the top this picture: the escape (no clip started this picture) */
-    int32_t dive;          /* sitting on top, cross pressed: the caller starts the wrestler's own top-rope dive if one fits
-                              (then sets the climber's phase to none) */
+    int32_t dive;          /* resting on the truss, cross pressed: the caller starts the wrestler's own top-rope dive if
+                              one fits, from the anchor and facing handed out (then sets the climber's phase to none) */
     int32_t outside;       /* with landed: standing on the floor outside the cage */
+    int32_t lying;         /* with landed: fallen off the cage, lying face up on the mat (the caller: the game's lying
+                              state, the fall's damage) */
 } CagePictureOut;
 
 /* The number above: a program built for another version should not use these rules */
@@ -225,12 +274,27 @@ CAGE_RULES_API int32_t cage_rules_version(void);
 CAGE_RULES_API void cage_rules_standard_numbers(CageNumbers *numbers);
 
 /* A climber's heights from its clips: getting on's frames (onto, ontoFrames) and rope bends, the hang's first frame,
- * letting go's frames, the drop's last frame. 1 = worked out; 0 = a clip of no frames or more than CAGE_MOST_FRAMES. */
+ * letting go's frames, the drop's last frame, onto the truss's last frame and the resting clip's first (as posed, not
+ * turned), losing the grip's last frame, falling's pose and landing's first frame. 1 = worked out; 0 = a clip of no frames or more than
+ * CAGE_MOST_FRAMES. */
 CAGE_RULES_API int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFrame *onto, int32_t ontoFrames,
                                                    const CageRopeBend *bends, int32_t bendCount,
                                                    const CageClipFrame *hangFirst, const CageClipFrame *letGo,
                                                    int32_t letGoFrames, const CageClipFrame *dropLast,
-                                                   CageHeights *heights);
+                                                   const CageClipFrame *trussLast, const CageClipFrame *restFirst,
+                                                   const CageClipFrame *gripLast, const CageClipFrame *fallPose,
+                                                   const CageClipFrame *landFirst, CageHeights *heights);
+
+/* A climber can be shaken now (on the cage, before getting onto the truss: stage 1 and 2 included): 1 / 0 */
+CAGE_RULES_API int32_t cage_rules_can_be_shaken(const CageClimber *climber);
+
+/* What a shake (a shaker's bar full on the climber's side) does to a climber as it is now, worked out by the shake
+ * itself on a copy: 0 nothing, 1 the dangle (now, or when a step under way ends at the hang), 2 off the cage (shaken
+ * while dangling, or the dangle one too many). A climber already knocked by a shake: 0 (it is one dangle) */
+CAGE_RULES_API int32_t cage_rules_shake_result(const CageNumbers *numbers, const CageClimber *climber);
+
+/* The side of the ring (4 or 6 sides) a place (x, z) is nearest: its outward normal */
+CAGE_RULES_API void cage_rules_side(int32_t sides, float x, float z, float *nx, float *nz);
 
 /* Getting on its drop at a frame (between frames a straight line) and the rope hold it ends at */
 CAGE_RULES_API float cage_rules_drop_at(const CageHeights *heights, float frame);

@@ -76,7 +76,10 @@ namespace vendetta_cage_file
                                 {"the top's depth", &n.topDepth},
                                 {"the top's height", &n.topHeight},
                                 {"the dive's take-off, out past the walls", &n.diveOut},
-                                {"the dive's take-off, feet over the top", &n.diveFeet}};
+                                {"the dive's take-off, feet over the top", &n.diveFeet},
+                                {"a fall off the cage, damage", &n.fallDamage},
+                                {"a shake into the dangle, momentum", &n.shakeDangleMomentum},
+                                {"a shake off the cage, momentum", &n.shakeOffMomentum}};
         for (const auto &[key, value] : numbers.members)
         {
             double v = 0.0;
@@ -115,6 +118,16 @@ namespace vendetta_cage_file
             if (key == "resting on top, pictures before cross or triangle count" && number(value, v) && v >= 0.0)
             {
                 n.restPictures = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "dangling after a shake, pictures" && number(value, v) && v >= 1.0)
+            {
+                n.shakeDanglePictures = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "dangles in a row before a fall" && number(value, v) && v >= 1.0 && v <= 100.0)
+            {
+                n.danglesToFall = static_cast<int>(v);
                 used = true;
             }
             if (key == "getting on from") // a tool's own: where its wrestler stands; in a match, wherever they stood

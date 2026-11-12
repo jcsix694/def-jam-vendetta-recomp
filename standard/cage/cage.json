@@ -12,13 +12,6 @@
         "what": "top rope, right foot"
       }
     ],
-    "3204 at the rope hold": [
-      {
-        "from": 0,
-        "to": "end",
-        "what": "top rope, right foot"
-      }
-    ],
     "3205": [
       {
         "from": 0,
@@ -60,11 +53,24 @@
         "sound": "Grunt",
         "value": 1
       }
+    ],
+    "3242": [
+      {
+        "frame": 0,
+        "sound": "Impact on the floor",
+        "value": 1
+      },
+      {
+        "frame": 0,
+        "sound": "Grunt",
+        "value": 1
+      }
     ]
   },
   "speeds": {
     "3204": 120,
     "3205": 120,
+    "3206": 120,
     "3208": 120,
     "3209": 120,
     "320A": 120,
@@ -77,9 +83,24 @@
     "3214": 120,
     "3215": 120,
     "3216": 120,
+    "3238": 120,
+    "3239": 120,
+    "323A": 120,
     "323D": 120,
     "323E": 120,
-    "323F": 120
+    "323F": 120,
+    "3240": 120,
+    "3241": 120,
+    "3242": 120,
+    "3245": 120,
+    "3246": 120,
+    "3247": 120,
+    "3249": 120,
+    "324A": 120,
+    "324B": 120,
+    "3260": 120,
+    "3262": 120,
+    "3263": 120
   },
   "loops": [
     "3204",
@@ -120,6 +141,11 @@
     "the top's height": 4.7,
     "the dive's take-off, out past the walls": 2,
     "the dive's take-off, feet over the top": 1,
-    "resting on top, pictures before cross or triangle count": 30
+    "resting on top, pictures before cross or triangle count": 30,
+    "dangling after a shake, pictures": 300,
+    "dangles in a row before a fall": 3,
+    "a fall off the cage, damage": 10,
+    "a shake into the dangle, momentum": 10,
+    "a shake off the cage, momentum": 20
   }
 }

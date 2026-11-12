@@ -26,7 +26,9 @@
 // camera is the one in use: up on the pad is up on the screen. Fighters the computer plays skip the pad read (+0x5BC bit
 // 0), so they are never turned.
 //
-// "vendetta" (the default) keeps the game's own function. The other styles run this file's port of it with their own
+// "vendetta" (the default) keeps the game's own function, except in a cage match while a team member who has gone over
+// the top waits outside (out of play): then this file's port with the game's own settings, which leaves that one out
+// of the fighters followed (every style does). The other styles run this file's port of it with their own
 // settings: their own tilt and closeness, and which way the camera faces the ring - from the front as the game's own,
 // or from a corner (the ring a diamond). None of them goes round the fighters (only the scripted close-ups of moves
 // do, and those stay the game's): the camera slides with the action, facing the same way all match. The work is done
@@ -36,6 +38,7 @@
 // original's result). Scripted cameras (intros, DEMO scenes, camera modes 1-5 and 99) stay the game's.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
+#include "vendetta_cage.h"
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +100,7 @@ namespace vendetta_camera
     PS2Runtime::RecompiledFunction g_originalPadRead = nullptr;
     std::atomic<int64_t> g_fightCameraAt{0};       // when the fight camera last ran (steady clock, ms)
     bool g_verify = false;
+    bool g_ownCamera = false; // the default style: the game's own routine, except while a cage's team member waits outside
     PS2Runtime::RecompiledFunction g_original = nullptr;
 
     float readF(const uint8_t *rdram, uint32_t address)
@@ -137,19 +141,20 @@ namespace vendetta_camera
         const bool eased = (flags & 7u) == 0u;
         const uint8_t kind = Ps2FastRead8(rdram, kMatchKind);
 
-        // 1. the fighters followed
+        // 1. the fighters followed (a cage match's team member waiting outside, out of play, never)
         int stillIn = 0;
         for (uint32_t i = 0; i < 4u; ++i)
         {
             const uint32_t f = kFighters + i * kFighterStride;
-            if (static_cast<int32_t>(Ps2FastRead32(rdram, f + 0x30u)) != -1 && (Ps2FastRead8(rdram, f + 0x5BBu) & 0x10u) == 0u)
+            if (static_cast<int32_t>(Ps2FastRead32(rdram, f + 0x30u)) != -1 && (Ps2FastRead8(rdram, f + 0x5BBu) & 0x10u) == 0u &&
+                !vendetta_cage::waitingOutside(rdram, f))
                 ++stillIn;
         }
         bool followed[4] = {};
         for (uint32_t i = 0; i < 4u; ++i)
         {
             const uint32_t f = kFighters + i * kFighterStride;
-            if (static_cast<int32_t>(Ps2FastRead32(rdram, f + 0x30u)) == -1)
+            if (static_cast<int32_t>(Ps2FastRead32(rdram, f + 0x30u)) == -1 || vendetta_cage::waitingOutside(rdram, f))
                 continue;
             const bool out = (Ps2FastRead8(rdram, f + 0x5BBu) & 0x10u) != 0u;
             if ((kind & 0xCu) == 0u)
@@ -410,6 +415,13 @@ namespace vendetta_camera
             }
             return;
         }
+        // the default style: the game's own camera (its routine as the last call: it returns to the caller itself),
+        // unless a cage match's team member waits outside
+        if (g_ownCamera && !vendetta_cage::anyoneWaiting(rdram))
+        {
+            g_original(rdram, ctx, runtime);
+            return;
+        }
         fightCamera(rdram, g_rig);
         ctx->pc = getRegU32(ctx, 31);
     }
@@ -447,8 +459,8 @@ namespace vendetta_camera
         const char *verify = std::getenv("VENDETTA_CAMERA_VERIFY");
         g_verify = verify && *verify && verify[0] != '0';
         const std::string chosen = style && *style ? style : "vendetta";
-        if (chosen == "vendetta" && !g_verify)
-            return; // the game's own camera, untouched
+        // the default: the game's own camera, through our hook only to leave out a cage's team member waiting outside
+        g_ownCamera = chosen == "vendetta" && !g_verify;
         g_original = runtime.lookupFunction(kFightCamera);
         if (!g_original)
         {
@@ -463,6 +475,8 @@ namespace vendetta_camera
             if (g_originalPadRead)
                 runtime.replaceFunction(kPadRead, padRead);
         }
+        if (g_ownCamera)
+            return; // (nothing to say: the game's own)
         std::cerr << "[camera] " << (g_verify ? "verify: the port against the game's own camera" : "style: ")
                   << (g_verify ? "" : g_rig.name) << std::endl;
     }

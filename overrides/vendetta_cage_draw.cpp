@@ -56,6 +56,7 @@ namespace vendetta_cage_draw
     constexpr float kTileUnits = 8.0f;               // the mesh texture repeats every 8 units (8 diamonds across)
     constexpr float kDoorWidth = 12.0f, kDoorHeight = 26.0f, kDoorFromCorner = 4.0f;
     constexpr int kNearAlpha = 0x40, kSolid = 0x80;  // the sides facing the camera: half as strong
+    constexpr float kInsideNear = 8.0f;              // a wall fades as the camera comes this near it from inside
 
     // the host images (ids 0x52000000 on: free) at their GS addresses; GS size 64 x 64, larger images: the HD path
     constexpr uint32_t kMeshImage = 0x52000001u, kSteelImage = 0x52000002u;
@@ -86,6 +87,7 @@ namespace vendetta_cage_draw
     int g_builtSides = -1;
     int g_sides = 0;
     float g_normal[16][2] = {}, g_middle[16][2] = {};
+    float g_plane = kFrame; // the walls' plane from the middle: the model's wires at cage.json's walls, our own cage's at kFrame
     float g_matrix[16] = {};
     bool g_haveMatrix = false, g_imagesMade = false, g_toldMatch = false;
     // the last picture's camera, kept after the picture (g_matrix is let go once drawn) for the fight's own code, which
@@ -387,6 +389,7 @@ namespace vendetta_cage_draw
     void build()
     {
         g_pieces.clear();
+        g_plane = kFrame;
         const int ringSides = vendetta_ring::activeSides();
         g_sides = ringSides > 0 ? ringSides : 4;
         g_builtSides = ringSides;
@@ -427,6 +430,7 @@ namespace vendetta_cage_draw
                 p.side = best;
                 p.sideB = dots[best] - dots[second] < 2.0f ? second : -1;
             }
+            g_plane = vendetta_cage::cageFile().numbers.walls;
             std::cerr << "[cage] the cage drawn from its model: " << g_sides << " sides, " << g_pieces.size() << " pieces"
                       << std::endl;
             return;
@@ -604,11 +608,15 @@ namespace vendetta_cage_draw
             build();
         g_haveMatrix = false;
 
-        // which sides face the camera (across the floor)
+        // which sides face the camera (across the floor): the camera outside the walls' plane. off: how far outside it
         const float eyeX = readF(rdram, kCameraEye), eyeZ = readF(rdram, kCameraEye + 8u);
         bool facing[16] = {};
+        float off[16] = {};
         for (int k = 0; k < g_sides; ++k)
-            facing[k] = (eyeX - g_middle[k][0]) * g_normal[k][0] + (eyeZ - g_middle[k][1]) * g_normal[k][1] > 0.0f;
+        {
+            off[k] = eyeX * g_normal[k][0] + eyeZ * g_normal[k][1] - g_plane;
+            facing[k] = off[k] > 0.0f;
+        }
         auto alphaOf = [&](const Piece &p) {
             const bool towardCamera = p.sideB < 0 ? facing[p.side] : facing[p.side] && facing[p.sideB];
             int a = towardCamera ? kNearAlpha : kSolid;
@@ -618,14 +626,14 @@ namespace vendetta_cage_draw
                 if (d2 < 2500.0f)
                     a = static_cast<int>(a * (0.4f + 0.6f * d2 / 2500.0f));
             }
-            if (p.kind == Kind::Mesh && towardCamera)
-            {
+            if (p.kind == Kind::Mesh && towardCamera && off[p.side] < 30.0f)
                 // the mesh facing a camera close to it: its wires would fill the picture, so it fades away, to a tenth
                 // of its strength 4 units off it, all of it from 30 away
-                const float off = (eyeX - g_middle[p.side][0]) * g_normal[p.side][0] + (eyeZ - g_middle[p.side][1]) * g_normal[p.side][1];
-                if (off < 30.0f)
-                    a = static_cast<int>(a * std::clamp((off - 4.0f) / 26.0f, 0.1f, 1.0f));
-            }
+                a = static_cast<int>(a * std::clamp((off[p.side] - 4.0f) / 26.0f, 0.1f, 1.0f));
+            if (!facing[p.side] && off[p.side] > -kInsideNear)
+                // the close fight camera just inside a wall (a fight against that side): the wall beside it, wires and
+                // tubes, would fill the picture's edge, so it fades away, gone within 1.5 of it, all of it from 8 inside
+                a = static_cast<int>(a * std::clamp((-off[p.side] - 1.5f) / (kInsideNear - 1.5f), 0.0f, 1.0f));
             return a;
         };
         const float c[3] = {128.0f * readF(rdram, kArenaColour), 128.0f * readF(rdram, kArenaColour + 4u),

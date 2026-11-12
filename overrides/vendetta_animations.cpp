@@ -1438,4 +1438,20 @@ const std::vector<uint8_t> *vendetta_animations_cageClipBytes(uint32_t number)
     return found == vendetta_animations::g_cageBytes.end() ? nullptr : found->second;
 }
 
+// one of the game's own clips (id 10000 + i: PAK 2's, else PAK 3's), as the boot left it, copied out: false none
+bool vendetta_animations_gameClipBytes(uint32_t id, std::vector<uint8_t> &bytes)
+{
+    using namespace vendetta_animations;
+    const int bank = id >= 10000u ? 0 : 1;
+    const uint32_t index = bank == 0 ? id - 10000u : id;
+    if (index >= g_gameClips[bank].size() || !g_rdram)
+        return false;
+    const Clip &clip = g_gameClips[bank][index];
+    if (clip.size == 0u || clip.size > 0x100000u)
+        return false;
+    const uint8_t *p = guest(clip.address);
+    bytes.assign(p, p + clip.size);
+    return true;
+}
+
 void installVendettaAnimations(PS2Runtime &runtime) { vendetta_animations::install(runtime); }
