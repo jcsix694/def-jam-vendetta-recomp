@@ -109,6 +109,24 @@ namespace vendetta_cage
     // shut, over so many pictures (it moves as the cage is drawn, so through a match's ending too); doorOpen: how far
     // open it is now, 0 shut to 1 open (the leaf turned 90 degrees outward about its hinges).
     bool door(float &hingeX, float &hingeZ, float &latchX, float &latchZ);
+
+    // The computer in a cage match (vendetta_cage_cpu.cpp): each match's start; once a picture (the climb's clock);
+    // cpuMayClimb: a computer gets onto the cage only from its own climb (a player always may); cpuTap: a computer's
+    // tap this picture of a bar, at the game's kick-out pace for its skill; cpuRestPictures: how long a computer rests
+    // on the truss before its button.
+    void cpuMatchStarting();
+    void cpuEveryPicture(uint8_t *rdram);
+    bool cpuMayClimb(uint8_t *rdram, uint32_t fighter);
+    bool cpuTap(uint8_t *rdram, uint32_t fighter, int32_t pictures);
+    float cpuRestPictures(uint8_t *rdram, uint32_t fighter);
+    // (vendetta_cage_climb.cpp) a fighter on the cage that can be shaken now: the side it is on (its outward normal)
+    // and its place along it
+    bool climberToShake(uint8_t *rdram, uint32_t fighter, float &nx, float &nz, float &along);
+    // (vendetta_cage_climb.cpp) a computer that came down off the cage to shake a higher climber: true once, when it is
+    // off the cage
+    bool cpuDroppedToShake(uint8_t *rdram, uint32_t fighter);
+    // (vendetta_cage_climb.cpp) a fighter on the cage: the side it is on and its place along it
+    bool climberSide(uint8_t *rdram, uint32_t fighter, float &nx, float &nz, float &along);
     void doorTo(bool open, float pictures);
     float doorOpen();
 }

@@ -149,6 +149,19 @@
     "a shake off the cage, momentum": 20,
     "out by a knockout, pictures down before leaving": 600,
     "the door, pictures to swing open": 30,
-    "walking beside the cage, a picture": 0.25
+    "walking beside the cage, a picture": 0.25,
+    "taps with the momentum meter empty, times": 1.5,
+    "taps with the momentum meter full, times": 0.5,
+    "computer: a climb's chance a second": 0.02,
+    "computer: more chance a minute of the fight": 0.01,
+    "computer: a climb's chance a second, most": 0.08,
+    "computer: a climb's chance a second, every opponent down and hurt": 0.6,
+    "computer: an opponent hurt, health below": 0.6,
+    "computer: pictures before trying a climb again": 600,
+    "computer: pictures to reach the ropes to climb": 300,
+    "computer: a shake's chance": 0.35,
+    "computer: a dive's chance a second": 0.25,
+    "computer: momentum to climb to dive": 20,
+    "computer: pictures to reach a climber's side": 300
   }
 }

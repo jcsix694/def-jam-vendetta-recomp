@@ -74,6 +74,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <random>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -131,6 +132,9 @@ namespace vendetta_cage_climb
 
     // the rules' numbers, from the cage's cage.json (the standard cage's when it has none)
     const CageNumbers &num() { return vendetta_cage::cageFile().numbers; }
+    // the bars' taps for this fighter: the file's, times a factor by its momentum (more taps with an empty meter, fewer
+    // with a full one, a straight line between)
+    int32_t tapsFor(uint8_t *rdram, uint32_t fighter, int32_t taps);
 
     // ---- the cage's clips posed on the climber's own skeleton as the game poses them, for the rules' heights. The rig
     // 0x1E13980 + 0x34C x fighter: + 0x334 its model, a WRS (a part's data at the model + 0x10 + 4n + its word there): slot
@@ -434,6 +438,8 @@ namespace vendetta_cage_climb
         CageClimber c{};
         float screen = 0;    // +1 / -1: the side's way across the screen, as last seen
         uint32_t toRope = 0; // the stick held toward the rope to get on: nothing until let go
+        float cpuRest = 0;   // a computer resting on the truss: pictures so far
+        int cpuChoice = 0;   // a computer with an opponent higher on another side: 0 not yet, 1 race on, 2 come down
     };
     Climb g_climbs[4];
     // tag and handicap: a team member over the top while a team-mate is still in: out of play (+0x5BC bit 2 cleared, as
@@ -460,6 +466,8 @@ namespace vendetta_cage_climb
     // a climb straight up from inside (H101) under way, then the turn on top to face the ring (the user: on top facing
     // into the ring, down with H106): the facing it turns to
     bool g_climbedStraightUp[4] = {};
+    bool g_droppedToShake[4] = {}; // a computer that came down to shake a higher climber: the thinker shakes next
+    std::mt19937 g_cpuRandom{0x5CA1Eu};
     struct TopTurn
     {
         bool on = false;
@@ -822,6 +830,14 @@ namespace vendetta_cage_climb
         return true;
     }
 
+    int32_t tapsFor(uint8_t *rdram, uint32_t fighter, int32_t taps)
+    {
+        const vendetta_cage::LeaveNumbers &l = vendetta_cage::cageFile().leave;
+        const float m = std::clamp(readFloat(rdram, fighter + kMomentum) / 100.0f, 0.0f, 1.0f);
+        const float times = l.tapsEmpty + (l.tapsFull - l.tapsEmpty) * m;
+        return std::max(1, static_cast<int32_t>(std::lround(static_cast<float>(taps) * times)));
+    }
+
     // the wrestler's top-rope slot for its opponent, as FUN_0013A050 picks it (0: none fits): the opponent held for a
     // partner (state 0x3B, the shared 10004) and on the apron or the floor give none here
     uint32_t diveSlot(uint8_t *rdram, uint32_t fighter, uint32_t opponent)
@@ -1031,7 +1047,8 @@ namespace vendetta_cage_climb
             return letGo("backed away from the cage");
         // the taps, as the climber's bar counts them (at most two a window of 6.0 of the game's time); the computer's ours
         const bool computer = (Ps2FastRead8(rdram, fighter + kSide) & kComputer) != 0u;
-        const bool pressed = computer ? s.pictures % 6 == 0 : (Ps2FastRead32(rdram, fighter + kPressed) & kTapButtons) != 0u;
+        const bool pressed = computer ? vendetta_cage::cpuTap(rdram, fighter, s.pictures)
+                                      : (Ps2FastRead32(rdram, fighter + kPressed) & kTapButtons) != 0u;
         if (pressed && s.tapsInWindow < 2)
         {
             ++s.taps;
@@ -1040,7 +1057,7 @@ namespace vendetta_cage_climb
         s.window += readFloat(rdram, kMatchStep);
         if (s.window >= 6.0f)
             s.window = 0.0f, s.tapsInWindow = 0;
-        const int32_t needed = std::max(1, num().tapsPart1);
+        const int32_t needed = std::max(1, tapsFor(rdram, fighter, num().tapsPart1));
         Ps2FastWrite8(rdram, fighter + kBarBits, static_cast<uint8_t>(Ps2FastRead8(rdram, fighter + kBarBits) | kBar));
         writeFloat(rdram, fighter + kTapsNeeded, static_cast<float>(needed));
         writeFloat(rdram, fighter + kTapsLeft, static_cast<float>(std::max(0, needed - s.taps)));
@@ -1127,6 +1144,55 @@ namespace vendetta_cage_climb
                       << ", hips y " << readFloat(rdram, fighter + kHips + 4u) << ", anchor y " << c.y << " out " << c.out
                       << std::endl;
         uint32_t held = Ps2FastRead32(rdram, fighter + kHeld) & 0xFu;
+        uint32_t pressed = Ps2FastRead32(rdram, fighter + kPressed);
+        const bool computer = (Ps2FastRead8(rdram, fighter + kSide) & kComputer) != 0u;
+        if (computer)
+        {
+            // a computer on the cage: up, after a picture with the stick let go; on the truss, after a rest by its
+            // skill, triangle over (ESCAPE on) or cross the dive, and if neither starts, a tap of down back off
+            held = c.pictures < 2 && c.phase == CAGE_PHASE_ONTO ? 0u : kUp;
+            pressed = 0u;
+            // an opponent climbing higher on another side, while this one is still below the top hold: once, at
+            // random, race on or come down (down a hold at a time, letting go at the rope hold) and go and shake
+            if (cl.cpuChoice == 0 && (c.phase == CAGE_PHASE_HANG || c.phase == CAGE_PHASE_STEP))
+                for (uint32_t j = 0; j < 4u && cl.cpuChoice == 0; ++j)
+                {
+                    const uint32_t other = kFighters + kFighterBytes * j;
+                    if (other == fighter || !vendetta_cage::climbing(rdram, other) ||
+                        (teamMatch(rdram) && sameTeam(rdram, other, fighter)))
+                        continue;
+                    const CageClimber &o = g_climbs[j].c;
+                    if (o.nx * c.nx + o.nz * c.nz > 0.99f || o.y <= c.y + 1.0f)
+                        continue;
+                    cl.cpuChoice = std::uniform_int_distribution<int>(0, 1)(g_cpuRandom) ? 2 : 1;
+                    std::cerr << "[cage] cpu: player " << index << " sees player " << j
+                              << " higher on another side: " << (cl.cpuChoice == 2 ? "comes down to shake" : "races on")
+                              << std::endl;
+                }
+            // no momentum left for a step (and not Blazin'): down, letting go at the rope hold
+            if ((c.phase == CAGE_PHASE_HANG || c.phase == CAGE_PHASE_STEP) && c.hold < num().steps &&
+                readFloat(rdram, fighter + kMomentum) < num().stepCost && !(Ps2FastRead8(rdram, fighter + kBlazin) & 2u))
+                held = kDown;
+            if (cl.cpuChoice == 2)
+            {
+                held = kDown;
+                if (c.hold == 0)
+                    g_droppedToShake[index] = true;
+            }
+            if (c.phase == CAGE_PHASE_ON_TRUSS)
+            {
+                held = 0u;
+                cl.cpuRest += readFloat(rdram, kMatchStep);
+                const float rest = vendetta_cage::cpuRestPictures(rdram, fighter);
+                const bool escape = (Ps2FastRead16(rdram, vendetta_cage::kRuleWord) & vendetta_cage::kRuleEscape) != 0u;
+                if (cl.cpuRest >= rest && c.pictures % 10 == 0)
+                    pressed = escape ? kTriangle : kCross;
+                if (cl.cpuRest >= rest + 120.0f)
+                    held = kDown;
+            }
+            else
+                cl.cpuRest = 0.0f;
+        }
         if (!(held & cl.toRope))
             cl.toRope = 0;
         held &= ~cl.toRope;
@@ -1146,10 +1212,9 @@ namespace vendetta_cage_climb
         in.momentum = readFloat(rdram, fighter + kMomentum);
         in.blazin = (Ps2FastRead8(rdram, fighter + kBlazin) & 2u) ? 1 : 0;
         in.step = readFloat(rdram, kMatchStep);
-        const uint32_t pressed = Ps2FastRead32(rdram, fighter + kPressed);
-        // the computer's taps are ours (its own come only in a pin): one every 6 pictures, as its kick-out's
-        in.pressed = (Ps2FastRead8(rdram, fighter + kSide) & kComputer) ? (c.pictures % 6 == 0 ? 1 : 0)
-                                                                          : ((pressed & kTapButtons) ? 1 : 0);
+        // the computer's taps are ours (its own come only in a pin), at its kick-out's pace for its skill
+        in.pressed = computer ? (vendetta_cage::cpuTap(rdram, fighter, c.pictures) ? 1 : 0)
+                              : ((pressed & kTapButtons) ? 1 : 0);
         in.triangle = (pressed & kTriangle) ? 1 : 0;
         in.cross = (pressed & kCross) ? 1 : 0;
         in.escape = (Ps2FastRead16(rdram, vendetta_cage::kRuleWord) & vendetta_cage::kRuleEscape) ? 1 : 0;
@@ -1166,7 +1231,10 @@ namespace vendetta_cage_climb
 
         const CageClimber before = c;
         CagePictureOut out{};
-        cage_rules_picture(&num(), &g_heights[index].h, &c, &in, &out);
+        CageNumbers numbers = num(); // the bars' taps by this climber's momentum
+        numbers.tapsPart1 = tapsFor(rdram, fighter, numbers.tapsPart1);
+        numbers.tapsPart2 = tapsFor(rdram, fighter, numbers.tapsPart2);
+        cage_rules_picture(&numbers, &g_heights[index].h, &c, &in, &out);
         if (out.momentumCost > 0.0f)
             writeFloat(rdram, fighter + kMomentum, std::max(0.0f, in.momentum - out.momentumCost));
         sayStarted(rdram, fighter, cl, out);
@@ -1505,7 +1573,7 @@ namespace vendetta_cage_climb
         const int index = indexOf(fighter);
         const uint32_t wall = Ps2FastRead32(rdram, fighter + kTouched);
         if (g_active && index >= 0 && wall && vendetta_animations_cageClip(CAGE_CLIP_ONTO) != 0u &&
-            (Ps2FastRead32(rdram, fighter + kPressed) & kTriangle) &&
+            (Ps2FastRead32(rdram, fighter + kPressed) & kTriangle) && vendetta_cage::cpuMayClimb(rdram, fighter) &&
             (Ps2FastRead16(rdram, fighter + kPlace) & kInRing))
         {
             const uint16_t kind = Ps2FastRead16(rdram, wall + 0x42u);
@@ -1598,8 +1666,16 @@ void vendetta_cage::climbWatch(uint8_t *rdram, uint32_t fighter)
         {
             g_dives[index].on = false;
             if (logOn())
+            {
+                // +0x5CB: 8 a hit, 1 out of reach, 2 a downed target
                 std::cerr << "[cage] dive: player " << index << " lands (state " << state << ", anchor y "
-                          << readFloat(rdram, fighter + kY) << ")" << std::endl;
+                          << readFloat(rdram, fighter + kY) << ", flags 0x" << std::hex
+                          << static_cast<uint32_t>(Ps2FastRead8(rdram, fighter + 0x5CBu)) << std::dec;
+                if (const uint32_t o = Ps2FastRead32(rdram, fighter + 0x0u); indexOf(o) >= 0)
+                    std::cerr << "; the opponent's state " << Ps2FastRead32(rdram, o + kState) << ", health "
+                              << readFloat(rdram, o + 0x3A8u);
+                std::cerr << ")" << std::endl;
+            }
         }
     }
     // VENDETTA_CAGECLIMBLOG=2, a cage match: each grab button pressed, the fighter's state (and the one before) and the
@@ -1670,6 +1746,39 @@ void vendetta_cage::waitOutside(uint8_t *rdram, uint32_t fighter)
     setState(rdram, fighter, kClimbState);
 }
 
+bool vendetta_cage::climberSide(uint8_t *rdram, uint32_t fighter, float &nx, float &nz, float &along)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    if (!g_active || index < 0 || !vendetta_cage::climbing(rdram, fighter))
+        return false;
+    const CageClimber &c = g_climbs[index].c;
+    nx = c.nx, nz = c.nz, along = c.along;
+    return true;
+}
+
+bool vendetta_cage::cpuDroppedToShake(uint8_t *rdram, uint32_t fighter)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    if (index < 0 || !g_droppedToShake[index] || vendetta_cage::climbing(rdram, fighter))
+        return false;
+    g_droppedToShake[index] = false;
+    return true;
+}
+
+bool vendetta_cage::climberToShake(uint8_t *rdram, uint32_t fighter, float &nx, float &nz, float &along)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    if (!g_active || index < 0 || !vendetta_cage::climbing(rdram, fighter) || g_waiting[index] ||
+        !cage_rules_can_be_shaken(&g_climbs[index].c))
+        return false;
+    const CageClimber &c = g_climbs[index].c;
+    nx = c.nx, nz = c.nz, along = c.along;
+    return true;
+}
+
 void vendetta_cage::notTargeted(uint8_t *rdram, uint32_t fighter)
 {
     using namespace vendetta_cage_climb;
@@ -1711,6 +1820,8 @@ void vendetta_cage::climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime)
         k = false;
     for (bool &u : g_climbedStraightUp)
         u = false;
+    for (bool &d : g_droppedToShake)
+        d = false;
     for (TopTurn &t : g_topTurns)
         t = TopTurn();
     const uint32_t entry = kStateTable + 4u * kClimbState;

@@ -53,6 +53,24 @@ namespace vendetta_cage
         float knockoutWait = 600.0f; // "out by a knockout, pictures down before leaving"
         float doorPictures = 30.0f;  // "the door, pictures to swing open"
         float walkOutside = 0.25f;   // "walking beside the cage, a picture"
+        float tapsEmpty = 1.5f;      // "taps with the momentum meter empty, times": the bars' taps scaled by momentum
+        float tapsFull = 0.5f;       // "taps with the momentum meter full, times" (in between: in a straight line)
+    };
+
+    // The computer's numbers in a cage match ("numbers" too, the game's own; vendetta_cage_cpu.cpp)
+    struct CpuNumbers
+    {
+        float climb = 0.02f;        // "computer: a climb's chance a second": with ESCAPE on, standing in the ring
+        float climbMore = 0.01f;    // "computer: more chance a minute of the fight"
+        float climbMost = 0.08f;    // "computer: a climb's chance a second, most"
+        float climbDown = 0.6f;     // "computer: a climb's chance a second, every opponent down and hurt"
+        float downHurt = 0.6f;      // "computer: an opponent hurt, health below": a share of full health
+        float climbAgain = 600.0f;  // "computer: pictures before trying a climb again"
+        float climbGiveUp = 300.0f; // "computer: pictures to reach the ropes to climb"
+        float shake = 0.35f;        // "computer: a shake's chance": a second, times the game's own answer to a climber
+        float shakeGiveUp = 300.0f; // "computer: pictures to reach a climber's side"
+        float diveMomentum = 20.0f; // "computer: momentum to climb to dive" (Blazin' climbs with any)
+        float dive = 0.25f;         // "computer: a dive's chance a second": with ESCAPE off, an opponent down, the climb to dive
     };
 
     struct CageFile
@@ -64,6 +82,7 @@ namespace vendetta_cage
         std::set<std::string> loops;
         ClimbNumbers numbers;
         LeaveNumbers leave;
+        CpuNumbers cpu;
         std::string from; // the file read, or empty: the values built in
     };
 

@@ -155,7 +155,10 @@ namespace vendetta_cage_leave
     {
         g_bit = getRegU32(ctx, 4) & 0xFFu;
         if (g_bit == 1u && cageMatch(rdram))
+        {
             everyPicture(rdram);
+            vendetta_cage::cpuEveryPicture(rdram);
+        }
         g_report(rdram, ctx, runtime);
     }
 

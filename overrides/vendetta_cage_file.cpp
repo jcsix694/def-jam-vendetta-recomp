@@ -45,8 +45,24 @@ namespace vendetta_cage_file
     }
 
     void readNumbers(const Json &numbers, vendetta_cage::ClimbNumbers &n, vendetta_cage::LeaveNumbers &leave,
-                     std::vector<std::string> &skipped)
+                     vendetta_cage::CpuNumbers &cpu, std::vector<std::string> &skipped)
     {
+        struct CpuNamed
+        {
+            const char *name;
+            float *value;
+        };
+        const CpuNamed cpuNumbers[] = {{"computer: a climb's chance a second", &cpu.climb},
+                                       {"computer: more chance a minute of the fight", &cpu.climbMore},
+                                       {"computer: a climb's chance a second, most", &cpu.climbMost},
+                                       {"computer: a climb's chance a second, every opponent down and hurt", &cpu.climbDown},
+                                       {"computer: an opponent hurt, health below", &cpu.downHurt},
+                                       {"computer: pictures before trying a climb again", &cpu.climbAgain},
+                                       {"computer: pictures to reach the ropes to climb", &cpu.climbGiveUp},
+                                       {"computer: a shake's chance", &cpu.shake},
+                                       {"computer: pictures to reach a climber's side", &cpu.shakeGiveUp},
+                                       {"computer: a dive's chance a second", &cpu.dive},
+                                       {"computer: momentum to climb to dive", &cpu.diveMomentum}};
         struct Named
         {
             const char *name;
@@ -141,11 +157,27 @@ namespace vendetta_cage_file
                 leave.doorPictures = static_cast<float>(v);
                 used = true;
             }
+            if (key == "taps with the momentum meter empty, times" && number(value, v) && v > 0.0)
+            {
+                leave.tapsEmpty = static_cast<float>(v);
+                used = true;
+            }
+            if (key == "taps with the momentum meter full, times" && number(value, v) && v > 0.0)
+            {
+                leave.tapsFull = static_cast<float>(v);
+                used = true;
+            }
             if (key == "walking beside the cage, a picture" && number(value, v) && v > 0.0)
             {
                 leave.walkOutside = static_cast<float>(v);
                 used = true;
             }
+            for (const CpuNamed &f : cpuNumbers)
+                if (key == f.name && number(value, v) && v >= 0.0)
+                {
+                    *f.value = static_cast<float>(v);
+                    used = true;
+                }
             if (key == "getting on from") // a tool's own: where its wrestler stands; in a match, wherever they stood
                 used = true;
             if (!used)
@@ -233,7 +265,7 @@ void vendetta_cage::readCageFile()
                 g_file.loops.insert(key.text);
     }
     if (const Json *numbers = root.find("numbers"); numbers && numbers->isObject())
-        readNumbers(*numbers, g_file.numbers, g_file.leave, skipped);
+        readNumbers(*numbers, g_file.numbers, g_file.leave, g_file.cpu, skipped);
     if (const Json *custom = root.find("custom sounds"); custom && custom->isObject())
         for (const auto &[key, value] : custom->members)
         {
