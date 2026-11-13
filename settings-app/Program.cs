@@ -42,6 +42,14 @@ internal static class Program
             Shot.SelfTestProjects();
             return;
         }
+        // Dev: what this program itself finds wrong with a project (VENDETTA_ROOT a scratch folder): --problems <project>
+        if (args.Length >= 2 && args[0] == "--problems")
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            foreach (var problem in Services.ProjectCheck.Problems(Services.GameFolder.Find(), args[1]))
+                Console.WriteLine(problem.Text);
+            return;
+        }
         // Dev: sharing a project (export, import back, another version, refused zips) on a scratch folder (VENDETTA_ROOT):
         // --selftest-share <a project's name>
         if (args.Length >= 2 && args[0] == "--selftest-share")
