@@ -119,6 +119,13 @@ public static class ProjectCheck
                 usable.Add(mod);
         }
 
+        // what the recomp itself brings in a mod's form (game\standard\mod.json, read by the game before any mod, in every
+        // project): its wrestlers are replaced and named as the game's own, its moves and animations are there for every
+        // mod. Its own problems are never the project's.
+        var standardDir = Path.Combine(folder.Data, "game", "standard");
+        var standard = File.Exists(Path.Combine(standardDir, "mod.json")) ? ProjectMods.Read(standardDir, "standard") : null;
+        var named = standard == null ? usable : usable.Prepend(standard).ToList();
+
         // replacements: the game's wrestler, and one mod per attire (the first in the load order)
         var taken = new Dictionary<(string, int), string>();
         foreach (var mod in usable)
@@ -126,7 +133,7 @@ public static class ProjectCheck
             {
                 if (!Directory.Exists(Path.Combine(mod.Folder, w.Folder)))
                     continue; // the game leaves it out with a note
-                if (GameRoster.Find(w.Place) is not { } game)
+                if ((GameRoster.Find(w.Place) ?? StandardWrestler(standard, w.Place)) is not { } game)
                 {
                     Add(ProblemKind.NoSuchWrestler, $"{mod.Name} replaces {w.Place}, who isn't in the game.", mod.FolderName, w.Folder);
                     continue;
@@ -164,7 +171,7 @@ public static class ProjectCheck
 
         // the new moves by name (their name on screen and their folder's, each also as "<id>/<name>"); their animations
         var moves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var mod in usable)
+        foreach (var mod in named)
             foreach (var item in mod.Moves)
             {
                 var moveDir = Path.Combine(mod.Folder, item);
@@ -179,7 +186,7 @@ public static class ProjectCheck
                     moves.Add(key);
                     moves.Add(mod.Id + "/" + key);
                 }
-                if (move["animations"] is not JsonObject animations)
+                if (mod == standard || move["animations"] is not JsonObject animations)
                     continue;
                 foreach (var (_, value) in animations)
                 {
@@ -187,7 +194,7 @@ public static class ProjectCheck
                         continue;
                     var slash = file.IndexOf('/');
                     var prefix = slash > 0 ? file[..slash] : "";
-                    var other = prefix.Length > 0 ? usable.FirstOrDefault(u => u.Id.Equals(prefix, StringComparison.OrdinalIgnoreCase)) : null;
+                    var other = prefix.Length > 0 ? named.FirstOrDefault(u => u.Id.Equals(prefix, StringComparison.OrdinalIgnoreCase)) : null;
                     var path = other != null ? Path.Combine(other.Folder, file[(slash + 1)..]) : Path.Combine(moveDir, file);
                     if (File.Exists(path))
                         continue;
@@ -202,7 +209,7 @@ public static class ProjectCheck
             }
         // the new animations a slot may name (their file's name, plain and as "<id>/<name>")
         var animationNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var mod in usable)
+        foreach (var mod in named)
             foreach (var a in mod.Animations)
             {
                 var stem = Path.GetFileNameWithoutExtension(a);
@@ -239,7 +246,7 @@ public static class ProjectCheck
 
         // the wrestlers' own movesets (the "moveset" in the folder's wrestler.json and in each attire's)
         var newWrestlerNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var mod in usable)
+        foreach (var mod in named)
             foreach (var w in mod.Wrestlers)
             {
                 var dir = Path.Combine(mod.Folder, w.Folder);
@@ -248,6 +255,8 @@ public static class ProjectCheck
                     newWrestlerNames.Add(Path.GetFileName(w.Folder.TrimEnd('/', '\\')));
                     newWrestlerNames.Add(w.Name);
                 }
+                if (mod == standard)
+                    continue;
                 foreach (var file in new[] { Path.Combine(dir, "wrestler.json") }.Concat(Enumerable.Range(1, 3).Select(n => Path.Combine(dir, "attires", n.ToString(), "wrestler.json"))))
                     if (File.Exists(file) && HasKey(file, "moveset"))
                         CheckSlots(mod, w.Name, file, "moveset");
@@ -266,6 +275,31 @@ public static class ProjectCheck
                     CheckSlots(mod, wrestler, path);
             }
         return problems;
+    }
+
+    // One of the recomp's own wrestlers (the standard content's) by its folder's name, its name or its full name, any
+    // case, as a game wrestler: its attires are its attire folders (1 without any)
+    private static GameRoster.Wrestler? StandardWrestler(ModInfo? standard, string name)
+    {
+        var want = name.Trim();
+        foreach (var w in standard?.Wrestlers.Where(w => w.IsNew) ?? [])
+        {
+            var dir = Path.Combine(standard!.Folder, w.Folder);
+            var full = w.Name;
+            try
+            {
+                if (JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "wrestler.json")))?["profile"]?["full name"] is JsonValue v &&
+                    v.TryGetValue<string>(out var f) && f.Length > 0)
+                    full = f;
+            }
+            catch
+            {
+                // its name stands for its full name
+            }
+            if (new[] { w.Name, full, Path.GetFileName(w.Folder.TrimEnd('/', '\\')) }.Any(n => n.Equals(want, StringComparison.OrdinalIgnoreCase)))
+                return new GameRoster.Wrestler(w.Name, full.ToUpperInvariant(), w.Name.ToUpperInvariant(), AttireSpots(dir).Count);
+        }
+        return null;
     }
 
     // A JSON file whose top level has `key` (a file that can't be read: no)

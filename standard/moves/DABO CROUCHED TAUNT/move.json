@@ -1,0 +1,17 @@
+{
+  "type": "taunt",
+  "kind": "crouched",
+  "name": "DABO CROUCHED TAUNT",
+  "momentum": {
+    "gained": 17,
+    "opponent": 0
+  },
+  "points": 0,
+  "switches": {
+    "repeat penalty": true,
+    "counts for combos": true
+  },
+  "animations": {
+    "taunter": "Taunter.bin"
+  }
+}

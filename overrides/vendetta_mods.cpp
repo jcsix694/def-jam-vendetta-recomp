@@ -551,10 +551,61 @@ namespace vendetta_mods
         return project.get();
     }
 
+    namespace
+    {
+        std::string g_standardName;
+
+        // The recomp's own content in a mod's shape: game\standard\mod.json
+        bool readStandard(Mod &mod)
+        {
+            if (const char *v = std::getenv("VENDETTA_STANDARD"); v && *v == '0')
+                return false;
+            mod.folder = PS2Runtime::getIoPaths().elfDirectory / "standard";
+            mod.folderName = "standard";
+            std::ifstream file(mod.folder / "mod.json", std::ios::binary);
+            if (!file)
+                return false;
+            std::stringstream text;
+            text << file.rdbuf();
+            std::string error;
+            if (!parseJson(text.str(), mod.manifest, error) || !mod.manifest.isObject())
+            {
+                problem() << "[standard] " << (mod.folder / "mod.json").string() << " can't be read"
+                          << (error.empty() ? std::string() : ": " + error) << " - the recomp's own wrestlers and moves are left out"
+                          << std::endl;
+                return false;
+            }
+            const Json *name = mod.manifest.find("name");
+            mod.name = name && name->isString() && !name->text.empty() ? name->text : "The recomp's own";
+            mod.id = "standard";
+            mod.standard = true;
+            return true;
+        }
+    }
+
     const std::vector<Mod> &loadedMods()
     {
-        static const std::vector<Mod> mods = findMods();
+        static const std::vector<Mod> mods = []
+        {
+            std::vector<Mod> all = findMods();
+            Mod standard;
+            if (readStandard(standard))
+            {
+                std::cerr << "[standard] " << standard.name << " (" << standard.folder.string() << "), before any mod"
+                          << std::endl;
+                g_standardName = standard.name;
+                g_namesById.emplace(standard.id, standard.name);
+                all.insert(all.begin(), std::move(standard));
+            }
+            return all;
+        }();
         return mods;
+    }
+
+    bool isStandardName(const std::string &modName)
+    {
+        loadedMods();
+        return !g_standardName.empty() && modName == g_standardName;
     }
 
     namespace
@@ -816,6 +867,14 @@ namespace vendetta_mods
         std::lock_guard<std::mutex> hold(g_blockingLock);
         if (std::find(g_blocking.begin(), g_blocking.end(), text) == g_blocking.end())
             g_blocking.push_back(text);
+    }
+
+    void blocking(const Mod &mod, const std::string &text)
+    {
+        if (mod.standard)
+            problem() << "[standard] " << text << std::endl; // the install's to put right: never the project's
+        else
+            blocking(text);
     }
 
     std::vector<std::string> blockingProblems()

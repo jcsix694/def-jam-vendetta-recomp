@@ -1,0 +1,28 @@
+{
+  "speed": 100,
+  "loop": false,
+  "hit window": {
+    "from": 32,
+    "to": 34
+  },
+  "can't be grabbed": "never",
+  "impact": "none",
+  "ending": "standing",
+  "sounds": [
+    {
+      "frame": 22,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 30,
+      "sound": "Footstep",
+      "value": 200
+    },
+    {
+      "frame": 62,
+      "sound": "Footstep",
+      "value": 400
+    }
+  ]
+}

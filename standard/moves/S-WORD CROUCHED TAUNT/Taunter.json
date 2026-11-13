@@ -1,0 +1,8 @@
+{
+  "speed": 100,
+  "loop": false,
+  "can't be grabbed": "never",
+  "replay mark": "none",
+  "ending": "standing",
+  "sounds": []
+}

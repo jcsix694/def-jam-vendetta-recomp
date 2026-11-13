@@ -1,0 +1,24 @@
+{
+  "speed": 100,
+  "loop": false,
+  "can't be grabbed": "never",
+  "replay mark": "none",
+  "ending": "standing",
+  "sounds": [
+    {
+      "frame": 20,
+      "sound": "Body on the mat",
+      "value": 1
+    },
+    {
+      "frame": 28,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 90,
+      "sound": "Swing",
+      "value": 1
+    }
+  ]
+}

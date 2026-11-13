@@ -1,0 +1,39 @@
+{
+  "type": "hard strike",
+  "name": "CUTTING EDGE",
+  "damage": {
+    "hit": 12,
+    "lasting": 5,
+    "attacks with": "arms",
+    "hits": "body",
+    "areas": {
+      "head": 2,
+      "body": 2,
+      "arms": 0,
+      "legs": 0,
+      "whole body": 0
+    }
+  },
+  "momentum": {
+    "gained": 14,
+    "opponent": 0
+  },
+  "points": 20,
+  "contact points": [
+    "right elbow",
+    "right fist",
+    "right shoulder"
+  ],
+  "reaction": "head snap, second kind",
+  "parry": "shared, by limb",
+  "switches": {
+    "no damage": false,
+    "repeat penalty": true,
+    "counts for combos": true,
+    "also hits sitting or kneeling": true,
+    "also hits lying down": false
+  },
+  "animations": {
+    "striker": "Striker.bin"
+  }
+}

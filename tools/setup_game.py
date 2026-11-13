@@ -37,7 +37,7 @@ VS_COMPONENTS = ['Microsoft.VisualStudio.Workload.VCTools', 'Microsoft.VisualStu
 DEPS = {'ELFIO': 'elfio', 'TOML11': 'toml11', 'FMT': 'fmt', 'LIBDWARF': 'libdwarf', 'RABBITIZER': 'rabbitizer',
         'RAYLIB': 'raylib', 'IMGUI': 'imgui', 'RLIMGUI': 'rlimgui'}
 STEPS = ['Your disc', 'Build tools', 'The recompiler', 'Recompiling the game', 'Building the game',
-         'Preparing graphics', 'The new arenas', 'Finishing']
+         'Preparing graphics', 'The new arenas, wrestlers and songs', 'Finishing']
 
 
 def say(text):
@@ -540,7 +540,8 @@ def step_arenas(data):
     """The arenas the recomp brings for every player (standard\\arenas\\<name>\\: THE FACE CLUB SIX SIDES, The Face Club
     with a six-sided ring, finished, with its Choose Stage pictures) copied into the game's folder,
     game\\standard\\arenas\\, where the game finds them: on every install and update, each in place of the copy before;
-    and the standard cage (standard\\cage\\) into game\\standard\\cage\\. Never stops the setup."""
+    the standard cage (standard\\cage\\) into game\\standard\\cage\\; and the rest of standard\\ (mod.json, wrestlers\\,
+    moves\\, music\\: the two extra wrestlers with their moves and songs) into game\\standard\\. Never stops the setup."""
     step(7, STEPS[6])
     shipped = os.path.join(SRC, 'standard', 'arenas')
     target = os.path.join(data, 'game', 'standard', 'arenas')
@@ -564,6 +565,22 @@ def step_arenas(data):
             shutil.copytree(cage, folder)
         except OSError as error:
             say(f'the cage not copied ({error})')
+    # everything else the recomp brings (standard\mod.json and the folders it names: the two extra wrestlers, their
+    # moves, their songs) the same way into game\standard\, each folder in place of the copy before
+    standard = os.path.join(SRC, 'standard')
+    for name in sorted(os.listdir(standard)) if os.path.isdir(standard) else []:
+        if name in ('arenas', 'cage'):
+            continue
+        source, target = os.path.join(standard, name), os.path.join(data, 'game', 'standard', name)
+        try:
+            if os.path.isdir(source):
+                shutil.rmtree(target, ignore_errors=True)
+                shutil.copytree(source, target)
+            else:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copy2(source, target)
+        except OSError as error:
+            say(f'{name} not copied ({error})')
     progress(1.0)
 
 

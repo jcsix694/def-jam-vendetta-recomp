@@ -1177,13 +1177,13 @@ namespace vendetta_moves
                             std::string rest;
                             const size_t slash = value.text.find('/');
                             if (const vendetta_mods::Mod *other = vendetta_mods::splitId(value.text, rest); other && other != &mod)
-                                vendetta_mods::blocking(move + " needs an animation " + other->name + " no longer has.");
+                                vendetta_mods::blocking(mod, move + " needs an animation " + other->name + " no longer has.");
                             else if (const std::string prefix = slash == std::string::npos ? std::string() : value.text.substr(0, slash);
                                      !other && !prefix.empty() &&
                                      (vendetta_mods::nameOfId(prefix) != prefix || prefix.find('.') != std::string::npos))
-                                vendetta_mods::blocking(move + " needs " + vendetta_mods::nameOfId(prefix) + "."); // an id: another mod's
+                                vendetta_mods::blocking(mod, move + " needs " + vendetta_mods::nameOfId(prefix) + "."); // an id: another mod's
                             else
-                                vendetta_mods::blocking(move + " is missing one of its animations.");
+                                vendetta_mods::blocking(mod, move + " is missing one of its animations.");
                         }
                 }
             }

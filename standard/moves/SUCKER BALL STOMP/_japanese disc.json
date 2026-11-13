@@ -1,0 +1,8 @@
+{
+  "move number": 287,
+  "name": "SUCKER BALL STOMP",
+  "animations": {
+    "attacker": "N07G7_A",
+    "receiver": "N07G7_B"
+  }
+}

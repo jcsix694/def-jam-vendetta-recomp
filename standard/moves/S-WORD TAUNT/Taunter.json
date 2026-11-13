@@ -1,0 +1,49 @@
+{
+  "speed": 100,
+  "loop": false,
+  "can't be grabbed": "never",
+  "replay mark": "none",
+  "ending": "standing",
+  "sounds": [
+    {
+      "frame": 16,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 22,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 46,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 47,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 103,
+      "sound": "Footstep",
+      "value": 200
+    },
+    {
+      "frame": 119,
+      "sound": "Footstep",
+      "value": 200
+    },
+    {
+      "frame": 160,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 170,
+      "sound": "Footstep",
+      "value": 200
+    }
+  ]
+}

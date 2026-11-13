@@ -1,0 +1,229 @@
+{
+  "speed": 100,
+  "loop": false,
+  "can't be grabbed": "whole animation",
+  "pushed together until": 305,
+  "impact": 192,
+  "release": "none",
+  "damage frame": 196,
+  "leaves them": "where they are",
+  "ending": "lying face down (V218)",
+  "windows": [
+    {
+      "from": 252,
+      "to": 254,
+      "what": "ring shakes"
+    },
+    {
+      "from": 283,
+      "to": 285,
+      "what": "ring shakes"
+    },
+    {
+      "from": 84,
+      "to": 117,
+      "what": "extra hit"
+    },
+    {
+      "from": 269,
+      "to": 300,
+      "what": "extra hit"
+    }
+  ],
+  "sounds": [
+    {
+      "frame": 1,
+      "sound": "Quieten the game"
+    },
+    {
+      "frame": 1,
+      "sound": "Blazin' sound: start"
+    },
+    {
+      "frame": 2,
+      "sound": "Crowd bed: start"
+    },
+    {
+      "frame": 2,
+      "sound": "Music event",
+      "value": 8
+    },
+    {
+      "frame": 15,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 73,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 87,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 90,
+      "sound": "Grunt",
+      "value": 1
+    },
+    {
+      "frame": 90,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 97,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 112,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 112,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 113,
+      "sound": "Grunt",
+      "value": 1
+    },
+    {
+      "frame": 121,
+      "sound": "Grunt",
+      "value": 1
+    },
+    {
+      "frame": 122,
+      "sound": "Hit",
+      "value": 2
+    },
+    {
+      "frame": 124,
+      "sound": "Swing",
+      "value": 4
+    },
+    {
+      "frame": 130,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 176,
+      "sound": "Swing",
+      "value": 4
+    },
+    {
+      "frame": 189,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 200,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 201,
+      "sound": "Body hit",
+      "value": 3
+    },
+    {
+      "frame": 202,
+      "sound": "Grunt",
+      "value": 1
+    },
+    {
+      "frame": 228,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 262,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 263,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 264,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 268,
+      "sound": "Body on the mat",
+      "value": 1
+    },
+    {
+      "frame": 270,
+      "sound": "Impact on the floor",
+      "value": 2
+    },
+    {
+      "frame": 271,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 272,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 276,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 292,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 296,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 302,
+      "sound": "Impact on the floor",
+      "value": 3
+    },
+    {
+      "frame": 303,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 308,
+      "sound": "Body on the mat",
+      "value": 2
+    },
+    {
+      "frame": 308,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 311,
+      "sound": "Sound back to normal"
+    },
+    {
+      "frame": 311,
+      "sound": "Blazin' sound: stop"
+    },
+    {
+      "frame": 311,
+      "sound": "Crowd bed: stop"
+    }
+  ]
+}

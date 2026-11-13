@@ -1,0 +1,28 @@
+{
+  "speed": 100,
+  "loop": false,
+  "hit window": {
+    "from": 32,
+    "to": 36
+  },
+  "can't be grabbed": "whole animation",
+  "impact": "none",
+  "ending": "standing",
+  "sounds": [
+    {
+      "frame": 19,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 20,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 74,
+      "sound": "Footstep",
+      "value": 200
+    }
+  ]
+}

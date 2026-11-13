@@ -100,6 +100,11 @@ namespace vendetta_wrestlers
             std::vector<uint32_t> wpar;           // per attire: its fight values ("WPAR", size, 0xE0 bytes) in the store
             std::vector<uint32_t> wwaz;           // ... its moveset ("WWAZ", size, 128 u16 slots) in the store
             std::set<std::string> names;          // upper case: its folder's name, every attire's short and full name
+            // one of the recomp's own (game\standard\): a file names it as it names a game wrestler. Per attire, as its
+            // files made it, whatever a mod replaces later: its character record and its voice row
+            bool own = false;
+            std::vector<std::array<uint8_t, kRecordSize>> entries;
+            std::vector<uint32_t> voices;
         };
 
         uint8_t *g_rdram = nullptr;
@@ -199,8 +204,26 @@ namespace vendetta_wrestlers
             return address;
         }
 
+        // One of the recomp's own wrestlers by its folder's name or any attire's names (upper case), or by one of its
+        // records; null when it isn't one. They are read before any mod's, so they are there when a mod names one.
+        const Wrestler *ownWrestler(const std::string &upperName)
+        {
+            for (const Wrestler &w : g_wrestlers)
+                if (w.own && w.names.count(upperName))
+                    return &w;
+            return nullptr;
+        }
+        const Wrestler *ownWrestler(uint32_t record)
+        {
+            for (const Wrestler &w : g_wrestlers)
+                if (w.own && record >= w.records.front() && record <= w.records.back())
+                    return &w;
+            return nullptr;
+        }
+
         // A game wrestler by its full or short name (any case): its first record and how many attires it has (the
-        // records after it with the same full name).
+        // records after it with the same full name). One of the recomp's own wrestlers counts as one: its records (from
+        // 63), read through gameEntry / gameValue / gameVoice / gameRecordName below.
         bool gameWrestler(const std::string &name, uint32_t &base, uint32_t &attires)
         {
             const std::string want = upper(name);
@@ -217,7 +240,34 @@ namespace vendetta_wrestlers
                     ++attires;
                 return true;
             }
+            if (const Wrestler *own = ownWrestler(want))
+            {
+                base = own->records.front();
+                attires = static_cast<uint32_t>(own->records.size());
+                return true;
+            }
             return false;
+        }
+
+        // A game record as the game has it (one of the recomp's own wrestlers': as its files made it): its 0x20 bytes,
+        // its full name, the voice row it has
+        const uint8_t *gameEntry(uint32_t record)
+        {
+            if (const Wrestler *own = ownWrestler(record))
+                return own->entries[record - own->records.front()].data();
+            return guest(kGameCharacters + kRecordSize * record);
+        }
+        std::string gameRecordName(uint32_t record)
+        {
+            uint32_t address = 0;
+            std::memcpy(&address, gameEntry(record), 4);
+            return guestString(address);
+        }
+        uint32_t gameVoice(uint32_t record)
+        {
+            if (const Wrestler *own = ownWrestler(record))
+                return own->voices[record - own->records.front()];
+            return read32(kGameVoices + 4u * record);
         }
 
         std::string text(const vendetta_mods::Json &j, const char *key, const std::string &otherwise = {})
@@ -400,8 +450,10 @@ namespace vendetta_wrestlers
                     }
                 }
                 else if (gameWrestler(who, first, attires))
-                    std::memcpy(row.data() + at,
-                                guest(vendetta_store::kVoiceTable + kVoiceRowSize * read32(vendetta_store::kVoiceMap + 4u * first) + at), 10u);
+                {
+                    const uint32_t his = ownWrestler(first) ? gameVoice(first) : read32(vendetta_store::kVoiceMap + 4u * first);
+                    std::memcpy(row.data() + at, guest(vendetta_store::kVoiceTable + kVoiceRowSize * his + at), 10u);
+                }
                 else
                 {
                     vendetta_mods::problem() << label << ": \"" << key << "\" names a game wrestler or \"none\" (\"" << who
@@ -717,7 +769,12 @@ namespace vendetta_wrestlers
         // What a game record's part is: its render / icon number, its model's DATA.BIN entry, its logo (the logo
         // table's entry by its unlock index; 12 = none)
         constexpr uint32_t kLogoTable = 0x282580u, kLogoTableSize = 60u;
-        uint32_t gameValue(int32_t record, uint32_t field) { return read32(kGameCharacters + kRecordSize * static_cast<uint32_t>(record) + field); }
+        uint32_t gameValue(int32_t record, uint32_t field)
+        {
+            uint32_t value = 0;
+            std::memcpy(&value, gameEntry(static_cast<uint32_t>(record)) + field, 4);
+            return value;
+        }
         uint32_t gameLogo(int32_t record)
         {
             const uint32_t unlock = gameValue(record, 0x18u);
@@ -726,9 +783,44 @@ namespace vendetta_wrestlers
         std::string pickText(int32_t record)
         {
             uint32_t base = 0, count = 0;
-            const std::string name = guestString(read32(kGameCharacters + kRecordSize * static_cast<uint32_t>(record)));
+            const std::string name = gameRecordName(static_cast<uint32_t>(record));
             gameWrestler(name, base, count);
             return count > 1u ? name + "'s attire " + std::to_string(static_cast<uint32_t>(record) - base + 1u) : name + "'s";
+        }
+
+        // A picture number as the game can show it itself: one of ours (from kPictureBase: an attire's own pictures)
+        // gives the game picture kept for when its file can't be shown
+        uint32_t gameRenderOf(uint32_t number)
+        {
+            for (int i = 0; i < 4 && number >= kPictureBase && number - kPictureBase < g_attirePictures.size(); ++i)
+                number = g_attirePictures[number - kPictureBase].gameRender;
+            return number;
+        }
+        uint32_t gameIconOf(uint32_t number)
+        {
+            for (int i = 0; i < 4 && number >= kPictureBase && number - kPictureBase < g_attirePictures.size(); ++i)
+                number = g_attirePictures[number - kPictureBase].gameIcon;
+            return number;
+        }
+
+        // A grid icon's shade (the black and white copy a picked wrestler's tile shows): shade.png beside the icon when
+        // the folder has one, as it is (black, its alpha how dark); else made from the icon
+        uint32_t addShade(const std::filesystem::path &icon)
+        {
+            std::error_code ec;
+            const std::filesystem::path own = icon.parent_path() / "shade.png";
+            return std::filesystem::is_regular_file(own, ec)
+                       ? vendetta_pictures::add(own, 64u, 64u, 4u)
+                       : vendetta_pictures::add(icon, 64u, 64u, 4u, vendetta_pictures::Kind::Shadow);
+        }
+
+        // An own wrestler's attire as a file names it "from the game": its model file (null: none)
+        const ModelFile *ownModel(int32_t record)
+        {
+            const uint32_t r = static_cast<uint32_t>(record);
+            return record >= 0 && ownWrestler(r) && r - kFirstNewRecord < g_modelFiles.size() && !g_modelFiles[r - kFirstNewRecord].model.empty()
+                       ? &g_modelFiles[r - kFirstNewRecord]
+                       : nullptr;
         }
 
         // The mods' wrestlers: their records, character records, sizes and voices (the tables already copied).
@@ -856,7 +948,7 @@ namespace vendetta_wrestlers
                         info.ownModel = info.picks.model < 0 && (modelIn(item.text) || (!attireFolders[k].empty() && modelIn(attireFolders[k])));
                         const std::string named = text(j, "based on", "");
                         const std::string basedOn =
-                            info.picks.model >= 0 && named.empty() ? guestString(read32(kGameCharacters + kRecordSize * info.picks.model))
+                            info.picks.model >= 0 && named.empty() ? gameRecordName(static_cast<uint32_t>(info.picks.model))
                             : info.ownModel || (anyModel && named.empty() && info.picks.model < 0) ? std::string("Briggs")
                                                                                                     : named;
                         if (info.ownModel && !named.empty() && upper(named) != "BRIGGS" && told.insert(where + "#based").second)
@@ -960,7 +1052,7 @@ namespace vendetta_wrestlers
                         const uint32_t looks = picks.model >= 0 ? static_cast<uint32_t>(picks.model)
                                                                 : info.looksBase + std::min(k, info.looksCount - 1u);
                         const uint32_t entry = vendetta_store::kCharacterTable + kRecordSize * record;
-                        std::memcpy(guest(entry), guest(kGameCharacters + kRecordSize * looks), kRecordSize);
+                        std::memcpy(guest(entry), gameEntry(looks), kRecordSize);
                         write32(entry + 0x00u, guestText(info.full));
                         write32(entry + 0x04u, guestText(info.name));
                         write32(entry + 0x08u, guestText(info.height));
@@ -978,9 +1070,11 @@ namespace vendetta_wrestlers
                                           << " " << pickText(picked) << " (from the game)" << std::endl;
                         // its pictures: the attire's folder first, then the wrestler's
                         AttirePictures pictures;
-                        pictures.gameRender = read32(entry + 0x10u);
-                        pictures.gameIcon = read32(entry + 0x14u);
-                        if (picks.logo >= 0)
+                        pictures.gameRender = gameRenderOf(read32(entry + 0x10u));
+                        pictures.gameIcon = gameIconOf(read32(entry + 0x14u));
+                        if (picks.logo >= 0 && ownWrestler(static_cast<uint32_t>(picks.logo)))
+                            pictures.logo = g_attirePictures[static_cast<uint32_t>(picks.logo) - kFirstNewRecord].logo; // one of the recomp's own: its file
+                        else if (picks.logo >= 0)
                             pictures.gameLogo = static_cast<int32_t>(gameLogo(picks.logo));
                         const auto picture = [&](const char *fileName) -> std::filesystem::path
                         {
@@ -999,7 +1093,7 @@ namespace vendetta_wrestlers
                         if (const std::filesystem::path png = picks.icon >= 0 ? std::filesystem::path() : picture("icon.png"); !png.empty())
                         {
                             pictures.icon = vendetta_pictures::add(png, 64u, 64u, 4u);
-                            pictures.shade = vendetta_pictures::add(png, 64u, 64u, 4u, vendetta_pictures::Kind::Shadow);
+                            pictures.shade = addShade(png);
                             write32(entry + 0x14u, pictureNumber);
                             if (k == 0)
                             {
@@ -1030,7 +1124,16 @@ namespace vendetta_wrestlers
                                 if (model.textures.empty() && std::filesystem::is_directory(mod.folder / (folder + "/textures"), ec))
                                     model.textures = mod.folder / (folder + "/textures");
                             }
-                            if (!model.model.empty())
+                            // the record it looks like is one of the recomp's own wrestlers' (named as its model, or as
+                            // "based on"): that one's model file, read in place
+                            if (const ModelFile *his = model.model.empty() ? ownModel(static_cast<int32_t>(looks)) : nullptr)
+                            {
+                                model.model = his->model;
+                                model.textures = his->textures;
+                                std::cerr << "[wrestlers] " << mod.name << ": " << info.name << " (record " << record << "): "
+                                          << gameRecordName(looks) << "'s model " << his->model.filename().string() << std::endl;
+                            }
+                            else if (!model.model.empty())
                                 std::cerr << "[wrestlers] " << mod.name << ": " << info.name << " (record " << record << "): its own model "
                                           << model.model.filename().string() << std::endl;
                             else if (anyModel && picks.model < 0)
@@ -1042,8 +1145,15 @@ namespace vendetta_wrestlers
                         float sizeValue = info.size;
                         std::memcpy(guest(vendetta_store::kSizeClasses + 4u * record), &sizeValue, 4);
                         write32(vendetta_store::kVoiceMap + 4u * record,
-                                info.voiceRow >= 0 ? static_cast<uint32_t>(info.voiceRow) : read32(kGameVoices + 4u * info.voiceBase));
+                                info.voiceRow >= 0 ? static_cast<uint32_t>(info.voiceRow) : gameVoice(info.voiceBase));
                         w.records.push_back(record);
+                        if (mod.standard)
+                        {
+                            // kept as made here: what a file naming it as a game wrestler gets, whatever replaces it later
+                            w.own = true;
+                            std::memcpy(w.entries.emplace_back().data(), guest(entry), kRecordSize);
+                            w.voices.push_back(read32(vendetta_store::kVoiceMap + 4u * record));
+                        }
                         // the fight values and the moveset, each after the tag and size the game's own blocks have
                         const uint32_t wpar = vendetta_store::allocate(vendetta_store::Area::Boot, 8u + kWparSize, "new wrestlers' fight values");
                         const uint32_t wwaz = vendetta_store::allocate(vendetta_store::Area::Boot, kMovesetSize, "new wrestlers' movesets");
@@ -1067,9 +1177,9 @@ namespace vendetta_wrestlers
                     g_firstAttires.push_back(w.records.front() - kFirstNewRecord);
                     std::cerr << "[wrestlers] " << mod.name << ": " << full << " (" << name << "), records " << w.records.front()
                               << "-" << w.records.back() << " (" << attires << " attire" << (attires == 1 ? "" : "s")
-                              << "), looks like " << guestString(read32(kGameCharacters + kRecordSize * infos[0].looksBase))
+                              << "), looks like " << gameRecordName(infos[0].looksBase)
                               << (infos[0].voiceRow >= 0 ? ", his own voice (row " + std::to_string(infos[0].voiceRow) + ")"
-                                                         : ", sounds like " + guestString(read32(kGameCharacters + kRecordSize * infos[0].voiceBase)))
+                                                         : ", sounds like " + gameRecordName(infos[0].voiceBase))
                               << std::endl;
                     g_wrestlers.push_back(std::move(w));
                 }
@@ -1117,22 +1227,32 @@ namespace vendetta_wrestlers
                     }
                     const std::string folder = folderValue.text;
                     WrestlerFiles files(mod, label + ": ");
-                    // the game wrestler: his first record by the game's own names, his attires by his unlock row
+                    // the game wrestler: his first record by the game's own names, his attires by his unlock row; or one
+                    // of the recomp's own wrestlers (never by its own mod): its records, replaced by the same rules
                     const std::string want = upper(gameName);
                     uint32_t base = kMovesetRecords;
                     for (uint32_t r = 0; r < kMovesetRecords && base == kMovesetRecords; ++r)
                         if (g_gameNames[r].first == want || g_gameNames[r].second == want)
                             base = r;
-                    if (base == kMovesetRecords)
+                    const Wrestler *const ownBase = base == kMovesetRecords && !mod.standard ? ownWrestler(want) : nullptr;
+                    if (base == kMovesetRecords && !ownBase)
                     {
                         vendetta_mods::problem() << label << ": the game has no wrestler called that - skipped" << std::endl;
                         vendetta_mods::blocking(mod.name + " replaces " + gameName + ", who isn't in the game.");
                         continue;
                     }
                     uint32_t count = 0;
-                    while (count < 3u && static_cast<int32_t>(read32(kUnlockTable + 12u * base + 4u * count)) >= 0)
-                        ++count;
+                    if (ownBase)
+                    {
+                        base = ownBase->records.front();
+                        count = static_cast<uint32_t>(ownBase->records.size());
+                    }
+                    else
+                        while (count < 3u && static_cast<int32_t>(read32(kUnlockTable + 12u * base + 4u * count)) >= 0)
+                            ++count;
                     count = std::max(count, 1u);
+                    const std::string baseName = ownBase ? ownBase->name : g_gameNames[base].second;
+                    const size_t ownIndex = ownBase ? static_cast<size_t>(ownBase - g_wrestlers.data()) : 0u; // its place after the game's 44
                     std::vector<std::pair<uint32_t, std::string>> spots; // (attire 1-3, its folder; "" = the folder itself)
                     std::vector<std::pair<uint32_t, std::string>> added; // attires he doesn't have, after his own
                     bool anyAttireFolder = false;
@@ -1189,8 +1309,11 @@ namespace vendetta_wrestlers
                         const uint32_t row =
                             !isAdded && rep.unlockIndex < kStoryRowCount ? kStoryRows + kStoryRowSize * rep.unlockIndex : 0u;
                         std::vector<std::string> parts;
-                        std::string shown = g_gameNames[base].second;
+                        std::string shown = baseName;
                         bool identity = false;
+                        // an attire of one of the recomp's own wrestlers: what the mod doesn't bring stays that one's
+                        // files (its pictures by their ids, its model file, its moveset's file)
+                        const bool ownRecord = !isAdded && ownBase != nullptr;
                         // wrestler.json's three parts, each the attire folder's, else the folder's, else the game's
                         std::string where;
                         // "profile": names, height, weight, size, voice, the story's comment (a value it leaves out
@@ -1248,7 +1371,7 @@ namespace vendetta_wrestlers
                                 {
                                     uint32_t voiceBase = 0, voiceCount = 0;
                                     if (gameWrestler(soundsLike, voiceBase, voiceCount))
-                                        write32(vendetta_store::kVoiceMap + 4u * record, read32(kGameVoices + 4u * voiceBase));
+                                        write32(vendetta_store::kVoiceMap + 4u * record, gameVoice(voiceBase));
                                     else
                                         vendetta_mods::problem() << here << ": \"sounds like\" must name a game wrestler (\"" << soundsLike
                                                                  << "\" isn't one) - the game's voice stays" << std::endl;
@@ -1308,6 +1431,9 @@ namespace vendetta_wrestlers
                                 std::memcpy(guest(rep.wwaz), "WWAZ", 4);
                                 write32(rep.wwaz + 4u, 256u);
                                 std::memcpy(guest(rep.wwaz + 8u), moveset.data(), 256u);
+                                if (ownRecord) // its own moveset's file no longer fills this attire at a match
+                                    for (SlotFile &was : g_slotFiles)
+                                        std::erase(was.records, record);
                                 rep.slotFile = g_slotFiles.size();
                                 g_slotFiles.push_back({mod.name, shown, vendetta_mods::modFile(mod, where, "wrestler"), "moveset", {record}});
                                 parts.push_back("moves");
@@ -1332,25 +1458,58 @@ namespace vendetta_wrestlers
                         }
                         if (picks.logo >= 0)
                             parts.push_back("logo " + pickText(picks.logo));
-                        if (picks.model >= 0)
+                        // a model named: a game wrestler's is its DATA.BIN entry (the game loads and draws it); one of
+                        // the recomp's own wrestlers' is that one's model file, drawn by our code as a mod's own
+                        const ModelFile *const namedModel = ownModel(picks.model);
+                        if (picks.model >= 0 && !ownWrestler(static_cast<uint32_t>(picks.model)))
                         {
                             write32(entry + 0x1Cu, gameValue(picks.model, 0x1Cu));
                             rep.gameModel = true;
-                            parts.push_back("model " + pickText(picks.model));
                         }
+                        if (picks.model >= 0)
+                            parts.push_back("model " + pickText(picks.model));
                         // the pictures: drawn from the mod's files over the game's stand-ins, as a new wrestler's
                         const std::string render = picks.render >= 0 ? std::string() : find("render.png");
                         const std::string icon = picks.icon >= 0 ? std::string() : find("icon.png");
                         const std::string logo = picks.logo >= 0 ? std::string() : find("logo.png");
-                        if (!render.empty() || !icon.empty() || !logo.empty() || picks.logo >= 0 || (isAdded && (identity || picks.any())))
+                        const bool newIdentity = identity || !render.empty() || !icon.empty() || picks.render >= 0 || picks.icon >= 0;
+                        const bool ownLogoNamed = picks.logo >= 0 && ownWrestler(static_cast<uint32_t>(picks.logo));
+                        if (!render.empty() || !icon.empty() || !logo.empty() || picks.logo >= 0 || (isAdded && (identity || picks.any())) ||
+                            (ownRecord && newIdentity))
                         {
                             AttirePictures pictures;
-                            pictures.gameRender = read32(entry + 0x10u);
-                            pictures.gameIcon = read32(entry + 0x14u);
-                            if (picks.logo >= 0)
+                            if (ownRecord)
+                            {
+                                // one of the recomp's own: its pictures stay where the mod brings none (the logo as a
+                                // game wrestler's: gone with a new identity that has none)
+                                pictures = g_attirePictures[record - kFirstNewRecord];
+                                if (picks.logo >= 0 || (newIdentity && logo.empty()))
+                                    pictures.logo = 0u;
+                            }
+                            else
+                            {
+                                pictures.gameRender = gameRenderOf(read32(entry + 0x10u));
+                                pictures.gameIcon = gameIconOf(read32(entry + 0x14u));
+                            }
+                            if (ownLogoNamed)
+                                pictures.logo = g_attirePictures[static_cast<uint32_t>(picks.logo) - kFirstNewRecord].logo;
+                            else if (picks.logo >= 0)
                                 pictures.gameLogo = static_cast<int32_t>(gameLogo(picks.logo));
                             rep.pictures = static_cast<uint32_t>(g_attirePictures.size());
                             const uint32_t number = kPictureBase + rep.pictures;
+                            if (ownRecord)
+                            {
+                                // its record shows this set from now on (a part named from a game wrestler keeps the
+                                // number written above); its logo goes by this set's index
+                                if (picks.render < 0)
+                                    write32(entry + 0x10u, number);
+                                if (picks.icon < 0)
+                                    write32(entry + 0x14u, number);
+                                rep.unlockIndex = kFirstLogoIndex + rep.pictures;
+                                write32(entry + 0x18u, rep.unlockIndex);
+                                if (n == 1u)
+                                    std::replace(g_firstAttires.begin(), g_firstAttires.end(), record - kFirstNewRecord, rep.pictures);
+                            }
                             if (!render.empty())
                             {
                                 pictures.render = vendetta_pictures::add(vendetta_mods::modFile(mod, render, "picture"), 128u, 256u, 4u);
@@ -1362,7 +1521,7 @@ namespace vendetta_wrestlers
                             {
                                 const std::filesystem::path png = vendetta_mods::modFile(mod, icon, "picture");
                                 pictures.icon = vendetta_pictures::add(png, 64u, 64u, 4u);
-                                pictures.shade = vendetta_pictures::add(png, 64u, 64u, 4u, vendetta_pictures::Kind::Shadow);
+                                pictures.shade = addShade(png);
                                 write32(entry + 0x14u, number);
                                 if (row)
                                     write32(row + 0x34u, number);
@@ -1409,7 +1568,12 @@ namespace vendetta_wrestlers
                             if (rep.model.textures.empty() && std::filesystem::is_directory(mod.folder / (f + "/textures"), ec))
                                 rep.model.textures = mod.folder / (f + "/textures");
                         }
-                        if (!rep.model.model.empty())
+                        if (rep.model.model.empty() && namedModel)
+                        {
+                            rep.model.model = namedModel->model;
+                            rep.model.textures = namedModel->textures;
+                        }
+                        else if (!rep.model.model.empty())
                             parts.push_back("model " + rep.model.model.filename().string());
                         if (parts.empty() && !isAdded)
                         {
@@ -1428,15 +1592,19 @@ namespace vendetta_wrestlers
                         fill(n, attireFolder, base + n - 1u, false);
                     if (added.empty())
                         continue;
-                    // attires he doesn't have: his slot moves to new records, his own attires copied first
+                    // attires he doesn't have: his slot moves to new records, his own attires copied first (one of the
+                    // recomp's own wrestlers: its slot after the game's 44, written when the grid is built)
                     uint32_t slot = kGameSlots;
-                    for (uint32_t s = 0; s < kGameSlots && slot == kGameSlots; ++s)
+                    for (uint32_t s = 0; s < kGameSlots && slot == kGameSlots && !ownBase; ++s)
                         if (read32(vendetta_store::kSelectGrid + 8u * s) == base)
                             slot = s;
-                    if (slot == kGameSlots || std::any_of(g_moved.begin(), g_moved.end(), [&](const Moved &m) { return m.base == base; }))
+                    const bool noSlot = slot == kGameSlots && !ownBase;
+                    if (ownBase)
+                        slot = kGameSlots + static_cast<uint32_t>(ownIndex);
+                    if (noSlot || std::any_of(g_moved.begin(), g_moved.end(), [&](const Moved &m) { return m.base == base; }))
                     {
                         vendetta_mods::problem() << label << ": the added attires are skipped ("
-                                                 << (slot == kGameSlots ? "he has no Choose Fighter slot" : "another mod already adds his")
+                                                 << (noSlot ? "he has no Choose Fighter slot" : "another mod already adds his")
                                                  << ")" << std::endl;
                         continue;
                     }
@@ -1453,12 +1621,25 @@ namespace vendetta_wrestlers
                         write32(vendetta_store::kSizeClasses + 4u * record, read32(vendetta_store::kSizeClasses + 4u * from));
                         write32(vendetta_store::kVoiceMap + 4u * record, read32(vendetta_store::kVoiceMap + 4u * from));
                         ModelFile model; // g_modelFiles stays one entry per record from 63
-                        if (const auto rep = g_replaced.find(from); rep != g_replaced.end())
-                        {
+                        const auto rep = g_replaced.find(from);
+                        if (rep != g_replaced.end())
                             model = rep->second.model;
-                            if (rep->second.slotFile != SIZE_MAX)
-                                g_slotFiles[rep->second.slotFile].records.push_back(record);
+                        if (rep != g_replaced.end() && rep->second.slotFile != SIZE_MAX)
+                            g_slotFiles[rep->second.slotFile].records.push_back(record);
+                        else if (ownWrestler(from))
+                        {
+                            // one of the recomp's own attires with its own moveset still: that moveset's file fills the copy too
+                            for (SlotFile &file : g_slotFiles)
+                                if (std::find(file.records.begin(), file.records.end(), from) != file.records.end())
+                                {
+                                    file.records.push_back(record);
+                                    break;
+                                }
                         }
+                        // ... and its own model file where the replacement brings none
+                        if (model.model.empty() && !(rep != g_replaced.end() && rep->second.gameModel))
+                            if (const ModelFile *his = ownModel(static_cast<int32_t>(from)))
+                                model = *his;
                         g_modelFiles.push_back(model);
                         return record;
                     };
@@ -1483,11 +1664,24 @@ namespace vendetta_wrestlers
                             if (!own->second.wwaz && first->second.slotFile != SIZE_MAX)
                                 g_slotFiles[first->second.slotFile].records.push_back(record);
                         }
+                        if (const auto own = g_replaced.find(record); own != g_replaced.end() && ownBase)
+                        {
+                            // one of the recomp's own wrestlers: what neither brings is its attire 1's own file (the
+                            // copy of attire 1, m.first, has them)
+                            if (own->second.model.model.empty() && !own->second.gameModel &&
+                                !g_modelFiles[m.first - kFirstNewRecord].model.empty())
+                                own->second.model = g_modelFiles[m.first - kFirstNewRecord];
+                            if (!own->second.wwaz)
+                                for (SlotFile &file : g_slotFiles)
+                                    if (std::find(file.records.begin(), file.records.end(), m.first) != file.records.end() &&
+                                        std::find(file.records.begin(), file.records.end(), record) == file.records.end())
+                                        file.records.push_back(record);
+                        }
                     }
                     m.count = g_endRecord - m.first;
                     write32(vendetta_store::kSelectGrid + 8u * slot, m.first);
-                    std::cerr << label << ": " << m.count << " attires on Choose Fighter (records " << m.first << "-"
-                              << g_endRecord - 1u << "; Story and Survival keep his own)" << std::endl;
+                    std::cerr << label << ": " << m.count << " attires on Choose Fighter (records " << m.first << "-" << g_endRecord - 1u
+                              << (ownBase ? ")" : "; Story and Survival keep his own)") << std::endl;
                     g_moved.push_back(std::move(m));
                 }
             }
@@ -1515,8 +1709,12 @@ namespace vendetta_wrestlers
             uint32_t slot = kGameSlots;
             for (const Wrestler &w : g_wrestlers)
             {
-                write32(vendetta_store::kSelectGrid + 8u * slot, w.records.front());
-                write32(vendetta_store::kSelectGrid + 8u * slot + 4u, static_cast<uint32_t>(w.records.size()));
+                // (one of the recomp's own given attires by a mod: its slot shows the records that hold them all)
+                const auto moved = std::find_if(g_moved.begin(), g_moved.end(), [&](const Moved &m) { return m.base == w.records.front(); });
+                const uint32_t attires = moved != g_moved.end() ? moved->count : static_cast<uint32_t>(w.records.size());
+                write32(vendetta_store::kSelectGrid + 8u * slot, moved != g_moved.end() ? moved->first : w.records.front());
+                write32(vendetta_store::kSelectGrid + 8u * slot + 4u, attires);
+                g_newAttires[slot - kGameSlots] = attires;
                 ++slot;
             }
             if (slot % 2u)
@@ -1575,11 +1773,13 @@ namespace vendetta_wrestlers
                     if (w.wwaz[k])
                         write32(pair + 0xCu, w.wwaz[k] + (wwazTagged ? 0u : 8u));
                 }
+            // (a replaced attire is a game wrestler's or one of the recomp's own wrestlers', before g_newEnd; an added
+            // one comes after it and starts from a copy)
             const auto replacedPairs = [&](bool added)
             {
                 for (const auto &[record, rep] : g_replaced)
                 {
-                    if ((record >= kFirstNewRecord) != added)
+                    if ((record >= g_newEnd) != added)
                         continue;
                     const uint32_t pair = md + kPairs + 16u * record;
                     if (rep.wpar)
@@ -1628,7 +1828,8 @@ namespace vendetta_wrestlers
                 for (const Moved &m : g_moved)
                     if (m.slot == slot)
                     {
-                        const uint32_t unlocked = read32(counts + 4u * m.base);
+                        // (the counts are the game's 63 records': one of the recomp's own wrestlers is never locked)
+                        const uint32_t unlocked = m.base < kGameRecords ? read32(counts + 4u * m.base) : m.gameCount;
                         attires = unlocked >= m.gameCount ? m.count : unlocked;
                     }
                 write32(vendetta_store::kSelectGrid + 8u * slot + 4u, attires);
@@ -1713,16 +1914,16 @@ namespace vendetta_wrestlers
         {
             uint32_t index = getRegU32(ctx, 4);
             bool byRecord = getRegU32(ctx, 31) == kLogoByRecordCall;
-            if (byRecord && index >= g_newEnd && index < g_endRecord)
+            if (byRecord && index >= kFirstNewRecord && index < g_endRecord)
             {
-                // a moved slot's record: by its unlock index (the game's, or an added attire's own)
+                // a record of ours: by its unlock index (a new attire's own; a moved slot's record's: the game's, or an
+                // added attire's own; one of the recomp's own attires a mod gave pictures: that set's)
                 index = read32(vendetta_store::kCharacterTable + kRecordSize * index + 0x18u);
                 byRecord = false;
             }
-            if ((byRecord && index >= kFirstNewRecord && index < g_newEnd) ||
-                (!byRecord && index >= kFirstLogoIndex && index < kFirstLogoIndex + g_attirePictures.size()))
+            if (!byRecord && index >= kFirstLogoIndex && index < kFirstLogoIndex + g_attirePictures.size())
             {
-                const uint32_t attire = index - (byRecord ? kFirstNewRecord : kFirstLogoIndex);
+                const uint32_t attire = index - kFirstLogoIndex;
                 const AttirePictures &pictures = g_attirePictures[attire];
                 const bool own = pictures.logo && vendetta_pictures::available();
                 setReturnU32(ctx, own ? kPictureBase + attire : pictures.gameLogo >= 0 ? static_cast<uint32_t>(pictures.gameLogo) : kNoLogo);
@@ -2063,7 +2264,12 @@ namespace vendetta_wrestlers
     const ModelFile *modelFile(uint32_t record)
     {
         if (const auto rep = g_replaced.find(record); rep != g_replaced.end())
-            return rep->second.model.model.empty() ? nullptr : &rep->second.model;
+        {
+            if (!rep->second.model.model.empty())
+                return &rep->second.model;
+            if (rep->second.gameModel || !ownWrestler(record))
+                return nullptr; // (one of the recomp's own attires replaced without a model: its own model file stays)
+        }
         if (record < kFirstNewRecord || record - kFirstNewRecord >= g_modelFiles.size())
             return nullptr;
         const ModelFile &model = g_modelFiles[record - kFirstNewRecord];

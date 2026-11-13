@@ -1,0 +1,7 @@
+{
+  "type": "intro",
+  "name": "S-WORD INTRO",
+  "animations": {
+    "wrestler": "Wrestler.bin"
+  }
+}

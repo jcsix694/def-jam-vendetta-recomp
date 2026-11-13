@@ -47,6 +47,7 @@ void installVendettaWrestlerDraw(PS2Runtime &runtime); // vendetta_wrestlerdraw.
 void installVendettaVoiceLines(PS2Runtime &runtime); // vendetta_voicelines.cpp: a mod wrestler's own intro / win lines, from PC memory
 void installVendettaMenus(PS2Runtime &runtime);      // vendetta_menus.cpp: menu themes (the menus' pictures from mods)
 void installVendettaMusic(PS2Runtime &runtime);      // vendetta_music.cpp: music themes
+void installVendettaDiscFiles(PS2Runtime &runtime);  // vendetta_discfiles.cpp: the standard songs' files answered as the disc's own
 void installVendettaVideos(PS2Runtime &runtime);     // vendetta_videos.cpp: video themes (a movie played from a mod's file)
 bool vendettaVideoPlaying();                          // vendetta_videos.cpp: one of its videos is on screen
 
@@ -603,6 +604,7 @@ namespace
         installVendettaVoiceLines(runtime);
         installVendettaMenus(runtime); // after the wrestlers' and arenas' picture hooks: it wraps them
         installVendettaVideos(runtime);
+        installVendettaDiscFiles(runtime); // before the music: it lists the standard songs
         installVendettaMusic(runtime);
         installVendettaModCheck(runtime); // last: after every mod reader has marked its problems (the arenas' too)
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();

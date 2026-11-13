@@ -20,7 +20,19 @@
 // A song's three names all empty: no song box for it. "3-on-1": "random": the story's 3-on-1 fight asks FUN_001c1e68 for 99, a random
 // song of the 18 is loaded instead. Every problem is a line in mods.log and the game's song plays: a newer format (the whole theme
 // skipped), a name that isn't a song, a file missing, outside the mod's folder or that FFmpeg can't read (each file is opened at start).
-// With no theme replacing anything nothing is hooked.
+// With no theme replacing anything and no standard song nothing is hooked.
+//
+// The standard songs (vendetta_discfiles.h: the recomp's own, in game\standard\music\) are songs 18 on here, named by their
+// keys in a theme's list like the game's 18. The game's tables hold 18 and cannot grow, so one plays in the place of a
+// game song the game has just picked: the pick stays 18 times in 18 + n, else a standard song takes it (never the same one
+// twice running in the menus), and that game song's box record holds the standard song's three lines until the next pick.
+// - A match outside Story (the picker FUN_001c1d70's call of the loader FUN_001c1e68, the story step at 0x29AC20 0): the
+//   picked song's three file names are answered with the standard song's (vendetta_discfiles), so the game's own music
+//   player plays it, with its Blazin' music and stingers. A theme replacing it plays over it as over any song.
+// - The menus (a menu song's event sent by FUN_001c2250; the first after start stays the game's): the game's menu song
+//   runs silent and ours plays the standard song's menu.mus (the menu file's pieces of it, EA's own sound format, decoded
+//   here as the game's sound driver does), or a theme's file for it.
+// VENDETTA_SONGTRY=<key or code>: that standard song at every such pick (tests).
 //
 // Tests: VENDETTA_MUSICTRY=<k or *>=<file>[@from,to][|artist|song|album][;...] names files without a mod (they win over the themes);
 // VENDETTA_MUSICLOG=1; VENDETTA_MUSIC=0 = off; VENDETTA_MUSICTRY_HIDEBOX=1 (no song box); VENDETTA_MUSICTRY_RANDOM=1 (song 99
@@ -29,6 +41,7 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "runtime/ps2_audio.h"
+#include "vendetta_discfiles.h"
 #include "vendetta_mixer.h"
 #include "vendetta_mods.h"
 
@@ -42,6 +55,7 @@ extern "C"
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -71,6 +85,8 @@ namespace vendetta_music
     constexpr uint32_t kMatchSound = 0x1C0908u; // FUN_001c0908(story step or 0, ...)
     constexpr uint32_t kAskSongBox = 0x1B1218u; // FUN_001b1218: the song box asked for
     constexpr uint32_t kMenuSong = 0x29ABCCu, kMatchSong = 0x29ABFCu, kWhere = 0x29AA78u, kRecords = 0x2613A0u;
+    constexpr uint32_t kPicker = 0x1C1D70u, kCodes = 0x261260u, kRecordSize = 0x84u, kStoryStep = 0x29AC20u;
+    constexpr int kGameSongs = 18;
     constexpr uint32_t kRate = 48000u;
 
     struct Song
@@ -101,6 +117,13 @@ namespace vendetta_music
     std::atomic<uint32_t> g_broken{0}; // bit k: song k's file wouldn't decode when it came to play
     Fn g_setVolume, g_sendEvent, g_freeSong, g_isPlaying, g_loadSong, g_matchSound, g_askSongBox;
 
+    // the standard songs (18 on) and the one playing in a game song's place now
+    std::vector<vendetta_discfiles::Song> g_standard;
+    int g_inPlace = -1, g_placeOf = -1;   // song 18 + i; the game song (its number) it stands in for
+    uint8_t g_keptRecord[kRecordSize] = {}; // that game song's box record as the game has it
+    int g_forced = -1, g_lastMenu = -1;   // a test's standard song; the last one a menu pick gave
+    bool g_firstMenu = true;
+
     // the player: everything under g_lock, the mixer holds it only for a chunk
     std::mutex g_lock;
     std::shared_ptr<Pcm> g_pcm, g_cache;
@@ -123,7 +146,7 @@ namespace vendetta_music
 
     const Song *find(int k)
     {
-        if (k < 0 || k > 17 || (g_broken.load() >> k & 1u))
+        if (k < 0 || k >= kGameSongs + int(g_standard.size()) || k > 31 || (g_broken.load() >> k & 1u))
             return nullptr;
         if (const auto it = g_songs.find(k); it != g_songs.end())
             return &it->second;
@@ -132,14 +155,159 @@ namespace vendetta_music
 
     int read32(const uint8_t *rdram, uint32_t address) { return *reinterpret_cast<const int32_t *>(rdram + address); }
 
+    // the song now: the game's number, or the standard song (18 on) playing in that game song's place
     int currentSong(const uint8_t *rdram)
     {
         const int match = read32(rdram, kMatchSong);
-        return match == -1 ? read32(rdram, kMenuSong) : match;
+        const int game = match == -1 ? read32(rdram, kMenuSong) : match;
+        return g_inPlace >= 0 && game == g_placeOf ? g_inPlace : game;
+    }
+
+    // a standard song's menu version, when the menus play it (no theme's file for it): what our player plays
+    bool menuVersion(const uint8_t *rdram, int k, Song &out)
+    {
+        if (k < kGameSongs || k >= kGameSongs + int(g_standard.size()) || read32(rdram, kMatchSong) != -1 || (g_broken.load() >> k & 1u))
+            return false;
+        const vendetta_discfiles::Song &song = g_standard[size_t(k - kGameSongs)];
+        if (song.menu.empty())
+            return false;
+        out = Song{};
+        out.file = song.menu;
+        out.theme = "the recomp's own";
+        return true;
+    }
+
+    // whether ours plays for the song now (the game's own runs silent then)
+    bool replaced(const uint8_t *rdram)
+    {
+        const int k = currentSong(rdram);
+        Song menu;
+        return find(k) || menuVersion(rdram, k, menu);
+    }
+
+    // The game song's box record its own again, and its files' names
+    void restorePlace(uint8_t *rdram)
+    {
+        if (g_inPlace >= 0 && g_placeOf >= 0 && g_placeOf < kGameSongs)
+            std::memcpy(rdram + kRecords + kRecordSize * uint32_t(g_placeOf), g_keptRecord, kRecordSize);
+        g_inPlace = g_placeOf = -1;
+        vendetta_discfiles::answerOwn();
+    }
+
+    // A standard song's menu.mus: EA's "SCHl" streams one after another (each: a header chunk with the channels (tag 0x82) and
+    // the rate (0x84), then "SCDl" blocks { u32 samples, a u32 offset per channel, then per channel two s16 and 15-byte
+    // frames of 28 samples: a byte = the filter (high nibble, the pairs below) and the shift (low nibble + 8), then 28
+    // nibbles }, "SCEl" the end). Decoded with the sound driver's own arithmetic (the filter's history starts at 0 and
+    // runs on across a stream's blocks; no rounding), then brought to 48 kHz stereo.
+    std::shared_ptr<Pcm> decodeEa(const std::filesystem::path &file)
+    {
+        std::ifstream in(file, std::ios::binary);
+        const std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const auto u32 = [&](size_t at) { uint32_t v = 0; std::memcpy(&v, d.data() + at, 4); return v; };
+        static const int kPairs[4][2] = {{0, 0}, {240, 0}, {460, -208}, {392, -220}};
+        std::vector<int16_t> pcm; // interleaved, `channels` wide
+        int channels = 0, rate = 0;
+        size_t at = 0;
+        while (at + 8u <= d.size() && std::memcmp(d.data() + at, "SCHl", 4) == 0)
+        {
+            int nch = 1, r = 36000;
+            const size_t headEnd = at + u32(at + 4u);
+            for (size_t p = at + 12u; p < headEnd && p < d.size();) // "PT", two bytes, then tags
+            {
+                const uint8_t tag = d[p++];
+                if (tag == 0xFFu)
+                    break;
+                if (tag == 0xFCu || tag == 0xFDu || tag == 0xFEu)
+                    continue;
+                const size_t n = d[p++];
+                uint32_t value = 0;
+                for (size_t i = 0; i < n && p + i < d.size(); ++i)
+                    value = value << 8 | d[p + i];
+                p += n;
+                if (tag == 0x82u)
+                    nch = int(value);
+                else if (tag == 0x84u)
+                    r = int(value);
+            }
+            if (nch < 1 || nch > 2 || (channels && (nch != channels || r != rate)))
+                return nullptr;
+            channels = nch, rate = r;
+            int h1[2] = {0, 0}, h2[2] = {0, 0};
+            size_t p = at;
+            for (;;)
+            {
+                if (p + 8u > d.size())
+                    return nullptr;
+                const uint32_t size = u32(p + 4u);
+                const bool data = std::memcmp(d.data() + p, "SCDl", 4) == 0, end = std::memcmp(d.data() + p, "SCEl", 4) == 0;
+                if (size < 8u || p + size > d.size())
+                    return nullptr;
+                if (data)
+                {
+                    const size_t count = u32(p + 8u), base = p + 12u + 4u * size_t(nch), had = pcm.size();
+                    pcm.resize(had + count * size_t(nch));
+                    for (int c = 0; c < nch; ++c)
+                    {
+                        size_t q = base + u32(p + 12u + 4u * size_t(c)) + 4u; // (after the block's own two history words)
+                        size_t done = 0;
+                        while (done < count && q + 15u <= p + size)
+                        {
+                            const uint8_t head = d[q];
+                            if ((head >> 4) > 3)
+                                return nullptr;
+                            const int c1 = kPairs[head >> 4][0], c2 = kPairs[head >> 4][1], shift = (head & 15) + 8;
+                            for (int i = 0; i < 28 && done < count; ++i, ++done)
+                            {
+                                const uint8_t byte = d[q + 1u + size_t(i / 2)];
+                                const int32_t nibble = int32_t(uint32_t((i & 1) ? byte & 15u : byte >> 4) << 28);
+                                const int s = ((nibble >> shift) + h1[c] * c1 + h2[c] * c2) >> 8;
+                                h2[c] = h1[c], h1[c] = s;
+                                pcm[had + done * size_t(nch) + size_t(c)] = int16_t(std::clamp(s, -32768, 32767));
+                            }
+                            q += 15u;
+                        }
+                    }
+                }
+                p += size;
+                if (end)
+                    break;
+            }
+            at = p;
+        }
+        if (pcm.empty() || !channels)
+            return nullptr;
+        auto out = std::make_shared<Pcm>();
+        out->file = file;
+        SwrContext *swr = nullptr;
+        AVChannelLayout from{}, to{};
+        av_channel_layout_default(&from, channels);
+        av_channel_layout_default(&to, 2);
+        const size_t frames = pcm.size() / size_t(channels);
+        if (swr_alloc_set_opts2(&swr, &to, AV_SAMPLE_FMT_S16, int(kRate), &from, AV_SAMPLE_FMT_S16, rate, 0, nullptr) >= 0 && swr_init(swr) >= 0)
+        {
+            const int room = swr_get_out_samples(swr, int(frames)) + 4096;
+            out->samples.resize(size_t(room) * 2u);
+            uint8_t *dst[1] = {reinterpret_cast<uint8_t *>(out->samples.data())};
+            const uint8_t *src[1] = {reinterpret_cast<const uint8_t *>(pcm.data())};
+            int got = swr_convert(swr, dst, room, src, int(frames));
+            if (got >= 0)
+            {
+                uint8_t *rest[1] = {reinterpret_cast<uint8_t *>(out->samples.data() + size_t(got) * 2u)};
+                const int more = swr_convert(swr, rest, room - got, nullptr, 0);
+                got += std::max(more, 0);
+            }
+            out->samples.resize(size_t(std::max(got, 0)) * 2u);
+        }
+        swr_free(&swr);
+        av_channel_layout_uninit(&from);
+        av_channel_layout_uninit(&to);
+        return out->samples.size() >= 2u ? out : nullptr;
     }
 
     std::shared_ptr<Pcm> decode(const std::filesystem::path &file)
     {
+        if (file.extension() == ".mus" || file.extension() == ".MUS")
+            return decodeEa(file);
         AVFormatContext *format = nullptr;
         AVCodecContext *codec = nullptr;
         SwrContext *swr = nullptr;
@@ -225,6 +393,9 @@ namespace vendetta_music
     void start(uint8_t *rdram, int k, bool match)
     {
         const Song *song = find(k);
+        Song menu;
+        if (!song && !match && menuVersion(rdram, k, menu))
+            song = &menu;
         if (!song)
         {
             stop("a song not replaced");
@@ -232,7 +403,8 @@ namespace vendetta_music
         }
         if (song->named)
         {
-            const uint32_t record = kRecords + uint32_t(k) * 0x84u;
+            // (a standard song's words go in the record of the game song it plays in the place of)
+            const uint32_t record = kRecords + uint32_t(k >= kGameSongs ? g_placeOf : k) * 0x84u;
             writeField(rdram, record + 0x04u, 40u, song->artist);
             writeField(rdram, record + 0x2Cu, 30u, song->song);
             writeField(rdram, record + 0x4Au, 58u, song->album);
@@ -355,18 +527,60 @@ namespace vendetta_music
         if (g_log && volume != g_want.load())
             std::cerr << "[music] volume " << volume << std::endl;
         g_want = volume;
-        if (find(currentSong(rdram)))
+        if (replaced(rdram))
             SET_GPR_U32(ctx, 5, 0u);
         g_setVolume(rdram, ctx, runtime);
+    }
+
+    // A standard song in the place of game song `game` from now: its three lines in that song's box record
+    void place(uint8_t *rdram, int standard, int game)
+    {
+        const vendetta_discfiles::Song &song = g_standard[size_t(standard)];
+        const uint32_t record = kRecords + kRecordSize * uint32_t(game);
+        std::memcpy(g_keptRecord, rdram + record, kRecordSize);
+        g_inPlace = kGameSongs + standard;
+        g_placeOf = game;
+        writeField(rdram, record + 0x04u, 40u, song.artist);
+        writeField(rdram, record + 0x2Cu, 30u, song.title);
+        writeField(rdram, record + 0x4Au, 58u, song.album);
+    }
+
+    // The game has picked one of its 18: kept 18 times in 18 + n, else a standard song (its index); -1 = kept
+    int rollStandard(int notThis)
+    {
+        static std::mt19937 rng{std::random_device{}()};
+        const size_t n = g_standard.size();
+        if (n == 0)
+            return -1;
+        if (g_forced >= 0)
+            return g_forced;
+        if (std::uniform_int_distribution<size_t>(0, size_t(kGameSongs) - 1u + n)(rng) < size_t(kGameSongs))
+            return -1;
+        const int pick = int(std::uniform_int_distribution<size_t>(0, n - 1u)(rng));
+        return pick == notThis ? (n > 1u ? int((size_t(pick) + 1u) % n) : -1) : pick;
     }
 
     void sendEvent(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         const uint32_t ra = getRegU32(ctx, 31);
         if (ra >= 0x1C2250u && ra < 0x1C2378u)
-            start(rdram, read32(rdram, kMenuSong), false);
+        {
+            // a menu song starts: the first after the game's start stays the game's own
+            restorePlace(rdram);
+            const int game = read32(rdram, kMenuSong);
+            const int standard = g_firstMenu || game < 0 || game >= kGameSongs ? -1 : rollStandard(g_lastMenu);
+            g_firstMenu = false;
+            g_lastMenu = standard;
+            if (standard >= 0 && (find(kGameSongs + standard) || !g_standard[size_t(standard)].menu.empty()))
+            {
+                place(rdram, standard, game);
+                std::cerr << "[music] the menus play " << g_standard[size_t(standard)].artist << ", " << g_standard[size_t(standard)].title
+                          << " (in song " << game << "'s place)" << std::endl;
+            }
+            start(rdram, currentSong(rdram), false);
+        }
         else if (ra >= 0x1C21C8u && ra < 0x1C2250u)
-            start(rdram, read32(rdram, kMatchSong), true);
+            start(rdram, currentSong(rdram), true);
         else if (ra >= 0x1C5CA8u && ra < 0x1C5D18u)
             ending();
         g_sendEvent(rdram, ctx, runtime);
@@ -375,6 +589,9 @@ namespace vendetta_music
     void freeSong(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         stop("the song freed");
+        // (freed outside the loader: the match is over, its song's place the game's own again)
+        if (const uint32_t ra = getRegU32(ctx, 31); !(ra >= kLoadSong && ra < kFreeSong))
+            restorePlace(rdram);
         g_freeSong(rdram, ctx, runtime);
     }
 
@@ -399,6 +616,22 @@ namespace vendetta_music
                 std::cerr << "[music] the 3-on-1 fight plays song " << k << std::endl;
             SET_GPR_U32(ctx, 4, k);
         }
+        // the picker's pick for a match outside Story: a standard song may take its place, its files answered for the
+        // picked song's names so the game's own player plays it
+        restorePlace(rdram);
+        const int song = int(getRegU32(ctx, 4));
+        const uint32_t ra = getRegU32(ctx, 31);
+        if (song >= 0 && song < kGameSongs && ra >= kPicker && ra < kLoadSong && read32(rdram, kStoryStep) <= 0)
+            if (const int standard = rollStandard(-1); standard >= 0)
+            {
+                std::string code;
+                for (uint32_t i = 0; i < 15u && rdram[kCodes + 16u * uint32_t(song + 1) + i]; ++i)
+                    code.push_back(char(rdram[kCodes + 16u * uint32_t(song + 1) + i]));
+                place(rdram, standard, song);
+                vendetta_discfiles::answerAs(code, g_standard[size_t(standard)].code);
+                std::cerr << "[music] this match's song: " << g_standard[size_t(standard)].artist << ", " << g_standard[size_t(standard)].title
+                          << " (" << g_standard[size_t(standard)].key << "; in song " << song << "'s place, " << code << ")" << std::endl;
+            }
         g_loadSong(rdram, ctx, runtime);
     }
 
@@ -411,8 +644,10 @@ namespace vendetta_music
 
     void askSongBox(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        const Song *song = find(currentSong(rdram));
-        if (g_hideBox || (song && song->noBox))
+        const int now = currentSong(rdram);
+        const Song *song = find(now);
+        // (a theme's file for a standard song without names of its own: the standard song's lines stay in the box)
+        if (g_hideBox || (song && song->noBox && now < kGameSongs))
         {
             ctx->pc = getRegU32(ctx, 31);
             return;
@@ -451,6 +686,9 @@ namespace vendetta_music
         for (int k = 0; k < 18; ++k)
             if (name == kSongNames[k])
                 return k;
+        for (size_t i = 0; i < g_standard.size(); ++i)
+            if (name == g_standard[i].key)
+                return kGameSongs + int(i);
         return -1;
     }
 
@@ -612,6 +850,16 @@ namespace vendetta_music
         if (const char *off = std::getenv("VENDETTA_MUSIC"); off && off[0] == '0')
             return;
         g_log = on("VENDETTA_MUSICLOG");
+        g_standard = vendetta_discfiles::songs();
+        if (const char *want = std::getenv("VENDETTA_SONGTRY"); want && *want)
+            for (size_t i = 0; i < g_standard.size(); ++i)
+            {
+                std::string code = want;
+                for (char &c : code)
+                    c = char(std::toupper(static_cast<unsigned char>(c)));
+                if (g_standard[i].key == want || g_standard[i].code == code)
+                    g_forced = int(i);
+            }
         int fight = 0; // 0 no theme, 1 random, 2 its own song
         readThemes(fight);
         g_random = fight == 1;
@@ -626,7 +874,7 @@ namespace vendetta_music
             g_scale = float(std::atof(scale));
         for (const auto &[k, song] : g_songs)
             g_anyNoBox = g_anyNoBox || song.noBox;
-        if (g_songs.empty() && !g_hasEvery && !g_random && !g_step && !g_hideBox)
+        if (g_songs.empty() && !g_hasEvery && !g_random && !g_step && !g_hideBox && g_standard.empty())
             return;
         const bool ok = hook(runtime, kSetVolume, g_setVolume, setVolume) && hook(runtime, kSendEvent, g_sendEvent, sendEvent) &&
                         hook(runtime, kFreeSong, g_freeSong, freeSong) && hook(runtime, kIsPlaying, g_isPlaying, isPlaying) &&
@@ -642,6 +890,8 @@ namespace vendetta_music
             hook(runtime, kAskSongBox, g_askSongBox, askSongBox);
         vendetta_mixer::add(mix);
         std::cerr << "[music] " << (g_hasEvery ? 18u : g_songs.size()) << " songs replaced" << std::endl;
+        if (!g_standard.empty())
+            std::cerr << "[music] " << g_standard.size() << " standard song(s) with the game's 18 (" << kGameSongs + g_standard.size() << " in all)" << std::endl;
     }
 }
 

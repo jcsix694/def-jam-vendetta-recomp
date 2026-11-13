@@ -1,0 +1,456 @@
+{
+  "speed": 100,
+  "loop": false,
+  "can't be grabbed": "whole animation",
+  "pushed together until": 281,
+  "replay mark": 260,
+  "leaves them": "where they are",
+  "ending": "standing",
+  "windows": [
+    {
+      "from": 19,
+      "to": 74,
+      "what": "screen shake"
+    },
+    {
+      "from": 111,
+      "to": 126,
+      "what": "screen shake"
+    },
+    {
+      "from": 143,
+      "to": 158,
+      "what": "screen shake"
+    },
+    {
+      "from": 174,
+      "to": 195,
+      "what": "screen shake"
+    }
+  ],
+  "sounds": [
+    {
+      "frame": 1,
+      "sound": "Quieten the game"
+    },
+    {
+      "frame": 1,
+      "sound": "Blazin' sound: start"
+    },
+    {
+      "frame": 2,
+      "sound": "Crowd bed: start"
+    },
+    {
+      "frame": 2,
+      "sound": "Music event",
+      "value": 8
+    },
+    {
+      "frame": 22,
+      "sound": "Footstep",
+      "value": 200
+    },
+    {
+      "frame": 22,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 23,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 25,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 35,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 47,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 72,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 73,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 76,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 95,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 110,
+      "sound": "Footstep",
+      "value": 200
+    },
+    {
+      "frame": 111,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 112,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 115,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 116,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 118,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 119,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 122,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 123,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 126,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 127,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 128,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 129,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 132,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 134,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 135,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 138,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 139,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 140,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 144,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 144,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 147,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 148,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 149,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 151,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 152,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 154,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 155,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 156,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 159,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 160,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 163,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 164,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 164,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 167,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 168,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 171,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 172,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 175,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 178,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 179,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 179,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 182,
+      "sound": "Swing",
+      "value": 4
+    },
+    {
+      "frame": 183,
+      "sound": "Hit",
+      "value": 1
+    },
+    {
+      "frame": 185,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 192,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 194,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 200,
+      "sound": "Special punch"
+    },
+    {
+      "frame": 220,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 224,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 230,
+      "sound": "Swing",
+      "value": 3
+    },
+    {
+      "frame": 241,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 244,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 245,
+      "sound": "Grab",
+      "value": 4
+    },
+    {
+      "frame": 246,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 250,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 255,
+      "sound": "Grab",
+      "value": 4
+    },
+    {
+      "frame": 268,
+      "sound": "Swing",
+      "value": 3
+    },
+    {
+      "frame": 278,
+      "sound": "Grab",
+      "value": 4
+    },
+    {
+      "frame": 278,
+      "sound": "Controller vibration",
+      "value": 3
+    },
+    {
+      "frame": 279,
+      "sound": "Grunt",
+      "value": 2
+    },
+    {
+      "frame": 280,
+      "sound": "Swing",
+      "value": 2
+    },
+    {
+      "frame": 294,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 306,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 312,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 322,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 322,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 334,
+      "sound": "Controller vibration",
+      "value": 2
+    },
+    {
+      "frame": 354,
+      "sound": "Controller vibration",
+      "value": 0
+    },
+    {
+      "frame": 369,
+      "sound": "Sound back to normal"
+    },
+    {
+      "frame": 369,
+      "sound": "Blazin' sound: stop"
+    },
+    {
+      "frame": 369,
+      "sound": "Crowd bed: stop"
+    }
+  ]
+}

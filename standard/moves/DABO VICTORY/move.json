@@ -1,0 +1,7 @@
+{
+  "type": "victory",
+  "name": "DABO VICTORY",
+  "animations": {
+    "wrestler": "Wrestler.bin"
+  }
+}

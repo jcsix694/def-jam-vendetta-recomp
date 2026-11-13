@@ -80,6 +80,15 @@ namespace vendetta_modcheck
             return names;
         }
 
+        // a problem that stops the project, unless it is in the recomp's own content (then only written down)
+        void stop(const std::string &modName, const std::string &text)
+        {
+            if (vendetta_mods::isStandardName(modName))
+                vendetta_mods::problem() << "[standard] " << text << std::endl;
+            else
+                vendetta_mods::blocking(text);
+        }
+
         // every slot of one moveset (a whole file, or its member `key`) names something the project has
         void checkSlots(const std::string &modName, const std::string &wrestler, const std::filesystem::path &file,
                         const std::string &key, const std::set<std::string> &animations)
@@ -93,7 +102,7 @@ namespace vendetta_modcheck
                 moveset = key.empty() ? &whole : whole.find(key);
             if (!moveset || !moveset->isObject())
             {
-                vendetta_mods::blocking(wrestler + "'s moveset in " + modName + " can't be read.");
+                stop(modName, wrestler + "'s moveset in " + modName + " can't be read.");
                 return;
             }
             for (const auto &[slot, value] : moveset->members)
@@ -107,7 +116,7 @@ namespace vendetta_modcheck
                 // the move's name without the id in front of it (players don't see ids)
                 const size_t slash = name.find('/');
                 const std::string shown = slash == std::string::npos ? name : name.substr(slash + 1);
-                vendetta_mods::blocking(modName + " gives " + wrestler + " the move " + shown + ", which isn't in this project.");
+                stop(modName, modName + " gives " + wrestler + " the move " + shown + ", which isn't in this project.");
             }
         }
 

@@ -1,0 +1,31 @@
+{
+  "name": "The recomp's own",
+  "description": "S-WORD and DABO, the two wrestlers of the Japanese release, with their moves.",
+  "version": 1,
+  "new": {
+    "wrestlers": [
+      "wrestlers/S-WORD",
+      "wrestlers/DABO"
+    ],
+    "moves": [
+      "moves/KROSS' OVA ZAN",
+      "moves/BIG BANG",
+      "moves/DEVIL MAY KRY",
+      "moves/CUTTING EDGE",
+      "moves/S-WORD INTRO",
+      "moves/S-WORD TAUNT",
+      "moves/S-WORD BLAZIN' TAUNT",
+      "moves/S-WORD CROUCHED TAUNT",
+      "moves/S-WORD VICTORY",
+      "moves/FLYING ZERO",
+      "moves/SUCKER BALL STOMP",
+      "moves/HITMAN'S LICENSE",
+      "moves/BIG HOMER",
+      "moves/DABO INTRO",
+      "moves/DABO TAUNT",
+      "moves/DABO BLAZIN' TAUNT",
+      "moves/DABO CROUCHED TAUNT",
+      "moves/DABO VICTORY"
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "type": "Blazin' from the front",
+  "name": "FLYING ZERO",
+  "damage": {
+    "hit": 80,
+    "lasting": 24,
+    "attacks with": "legs",
+    "hits": "none",
+    "areas": {
+      "head": 0,
+      "body": 0,
+      "arms": 0,
+      "legs": 0,
+      "whole body": 5
+    }
+  },
+  "momentum": {
+    "gained": 0,
+    "opponent": 0
+  },
+  "points": 500,
+  "Blazin' KO": true,
+  "switches": {
+    "no damage": false,
+    "repeat penalty": true,
+    "counts for combos": true,
+    "receiver counts as standing": false
+  },
+  "then": "nothing",
+  "animations": {
+    "attacker": "Attacker.bin",
+    "receiver": "Receiver.bin"
+  }
+}

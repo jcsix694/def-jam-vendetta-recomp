@@ -31,6 +31,8 @@
 //     "moveset": { all 128 slots: "none", "game move <number> <name>", a mod's move by its name, or
 //                  { "move": ..., "flags": 0-15 } } }
 //   render.png, icon.png, logo.png      the select pictures (the big render, the grid icon, the name logo)
+//   shade.png       optional, beside icon.png: the grid icon's black and white copy (shown on a picked wrestler's
+//                   tile), used as it is: black, its alpha how dark. Without one it is made from the icon.
 //   attire.json     a game wrestler's model, render, icon or logo in place of a file of its own, each named:
 //                   { "model": { "game wrestler": "Spider", "attire": 2 }, "render": { ... }, "icon": { ... },
 //                     "logo": { "game wrestler": "Method Man" } } ("attire" 1 when left out). Only the name is in the
@@ -56,6 +58,13 @@
 // own; the locks stay the game's. One mod per attire (the first in the load order). Attires he doesn't have follow on
 // from his own (DMX's attires\2, then 3): his Choose Fighter slot then points at new records (copies of his own attires,
 // then the added ones; Story and Survival keep his own records), the added ones offered once his own are all unlocked.
+//
+// The recomp's own wrestlers (game\standard\mod.json's, read before any mod's: the first new records, the first slots
+// after the game's 44) count as game wrestlers wherever a file names one: "based on" (its model file and pictures),
+// "sounds like", a voice line by name, attire.json's "game wrestler" (its model file, its pictures' files), and
+// "replace": { "wrestlers": { "<its name>": ... } }, by the rules above: what the mod doesn't bring stays its own
+// files, attires it doesn't have follow on in its slot. Such a name gives the wrestler as its own files made it,
+// whatever a mod replaces.
 //
 // The three parts were once three files (fight.json and moveset.json beside wrestler.json, its names at the top level);
 // those aren't read, and each one found is named in mods.log with where its contents go.

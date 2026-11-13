@@ -829,6 +829,15 @@ song-box.text-261c2a,words,menu,girlfriend story-loading,1857E0,185EA4 185F00,te
 song-box.text-261c68,words,menu,home-message,1857E0,185D10 185D74,text,261C68,,,,x 25817-29120 y 33492-33492,,,,live,,,,,song-box
 song-box.text-261c90,words,menu,home-message,1857E0,185DEC 185E48,text,261C90,,,,x 25817-29120 y 33656-33656,,,,live,,,,,song-box
 song-box.text-261cae,words,menu,home-message,1857E0,185EA4 185F00,text,261CAE,,,,x 25817-29120 y 33790-33790,,,,live,,,,,song-box
+song-box.text-2614ac,words,menu,hud,1857E0,185D10 185D74,text,2614AC,,,,x 25817-29120 y 33268-33268,,,,live,,,,,song-box
+song-box.text-2614d4,words,menu,hud,1857E0,185DEC 185E48,text,2614D4,,,,x 25817-29120 y 33432-33432,,,,live,,,,,song-box
+song-box.text-2614f2,words,menu,hud,1857E0,185EA4 185F00,text,2614F2,,,,x 25817-29120 y 33566-33566,,,,live,,,,,song-box
+song-box.text-261848,words,menu,hud,1857E0,185D10 185D74,text,261848,,,,x 25817-29120 y 33268-33268,,,,live,,,,,song-box
+song-box.text-261870,words,menu,hud,1857E0,185DEC 185E48,text,261870,,,,x 25817-29120 y 33432-33432,,,,live,,,,,song-box
+song-box.text-26188e,words,menu,hud,1857E0,185EA4 185F00,text,26188E,,,,x 25817-29120 y 33566-33566,,,,live,,,,,song-box
+song-box.text-261a58,words,menu,hud,1857E0,185D10 185D74,text,261A58,,,,x 25817-29120 y 33268-33268,,,,live,,,,,song-box
+song-box.text-261a80,words,menu,hud,1857E0,185DEC 185E48,text,261A80,,,,x 25817-29120 y 33432-33432,,,,live,,,,,song-box
+song-box.text-261a9e,words,menu,hud,1857E0,185EA4 185F00,text,261A9E,,,,x 25817-29120 y 33566-33566,,,,live,,,,,song-box
 develop.panel,picture,menu,develop,1751B8,,,,,,,"25,85,221,388",,Hero panel,panel,not yet,,,,,
 develop.develop-panel,picture,menu,develop,1751B8 185FD8,,,,,,,"251,137,368,300",,"Develop panel: box, names, bars, COST TO INCREASE, cost, FUNDS:, funds",develop-panel,not yet,,,,,
 story-next.panel,picture,menu,story-next,176D50,,,,,,,"25,100,221,373",,Opponent's panel,panel,not yet,,,,,

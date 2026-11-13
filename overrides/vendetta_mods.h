@@ -72,7 +72,15 @@ namespace vendetta_mods
         std::string id;                    // mod.json's "id" (else made from the folder's name: lower case, '-' between words)
         std::filesystem::path folder;
         Json manifest;
+        bool standard = false;             // the recomp's own content (below), not a player's mod
     };
+
+    // The recomp's own content that has a mod's shape: game\standard\mod.json and the folders it names (wrestlers\,
+    // moves\), copied there by the setup from the recomp's standard\ folder on every install and update. It is read as
+    // the first mod of all, in every project and in the original game, with the players' mods on or off, so what it
+    // adds comes before anything a mod adds (its wrestlers are the first after the game's own). Its id is "standard"
+    // ("standard/<name>" names one of its things). VENDETTA_STANDARD=0: none (tests: the game as the disc has it).
+    // The standard arenas and the cage sit beside it in game\standard\ and are found by their own code.
 
     // Ids: a mod names another mod's thing as "<id>/<name>" (a moveset slot: "jcsix.hbk-moves/Sweet Chin Music"; a move's
     // animation: "mocap.kicks/animations/Spin Kick.bin", a path inside that mod); a plain name is the mod's own (or, as
@@ -150,4 +158,9 @@ namespace vendetta_mods
     // project; the settings program shows the same list on the project and holds PLAY until they are fixed.
     void blocking(const std::string &text);
     std::vector<std::string> blockingProblems();
+    // The same for a problem found in one mod's files. The recomp's own content never stops a project: a problem in it
+    // is only written down (it is the install's, not the project's, to put right).
+    void blocking(const Mod &mod, const std::string &text);
+    // True for the name of the recomp's own content (where only a mod's name was kept).
+    bool isStandardName(const std::string &modName);
 }

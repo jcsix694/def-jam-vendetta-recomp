@@ -115,7 +115,7 @@ public partial class SetupViewModel : ObservableObject
             new("Turning the game's code into C++", 0.09, "under a minute"),
             new("Building the game", 0.55, "about 10 min"),
             new("Preparing graphics for your PC", 0.12, "about 2 min"),
-            new("Adding the new arenas", 0.01, ""),
+            new("Adding the new arenas, wrestlers and songs", 0.01, ""),
             new("Finishing", 0.02, ""),
         };
     }

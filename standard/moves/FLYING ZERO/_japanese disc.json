@@ -1,0 +1,8 @@
+{
+  "move number": 222,
+  "name": "FLYING ZERO",
+  "animations": {
+    "attacker": "N06I7_A",
+    "receiver": "N06I7_B"
+  }
+}

@@ -7,6 +7,8 @@
 *.bin
 # ...except the standard cage's climbing animations (the cage match: standard/cage/, shipped)
 !/standard/cage/animations/*.bin
+# ...and the standard wrestlers' moves (standard/moves/, shipped: their animations and eye tracks)
+!/standard/moves/**/*.bin
 *.elf
 SLUS_*
 *.p2s

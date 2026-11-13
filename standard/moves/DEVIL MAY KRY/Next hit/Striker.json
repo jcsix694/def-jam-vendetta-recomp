@@ -1,0 +1,12 @@
+{
+  "speed": 100,
+  "loop": false,
+  "hit window": {
+    "from": 16,
+    "to": 18
+  },
+  "can't be grabbed": "never",
+  "impact": "none",
+  "ending": "standing",
+  "sounds": []
+}

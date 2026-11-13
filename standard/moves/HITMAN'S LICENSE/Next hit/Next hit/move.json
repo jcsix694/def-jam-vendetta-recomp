@@ -1,0 +1,40 @@
+{
+  "type": "combo follow-up",
+  "name": "HITMAN'S LICENSE",
+  "damage": {
+    "hit": 8,
+    "lasting": 3,
+    "attacks with": "legs",
+    "hits": "head",
+    "areas": {
+      "head": 0,
+      "body": 0,
+      "arms": 0,
+      "legs": 0,
+      "whole body": 0
+    }
+  },
+  "momentum": {
+    "gained": 3,
+    "opponent": 0
+  },
+  "points": 5,
+  "contact points": [
+    "left knee",
+    "left ankle",
+    "left hip"
+  ],
+  "reaction": "head snap",
+  "combo window": 0,
+  "next hit": "none",
+  "switches": {
+    "no damage": false,
+    "repeat penalty": true,
+    "counts for combos": true,
+    "also hits sitting or kneeling": false,
+    "also hits lying down": false
+  },
+  "animations": {
+    "striker": "Striker.bin"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "type": "victory",
+  "name": "S-WORD VICTORY",
+  "animations": {
+    "wrestler": "Wrestler.bin"
+  }
+}

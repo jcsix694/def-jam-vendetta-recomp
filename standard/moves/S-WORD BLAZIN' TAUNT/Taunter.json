@@ -1,0 +1,34 @@
+{
+  "speed": 100,
+  "loop": false,
+  "can't be grabbed": "never",
+  "replay mark": "none",
+  "ending": "standing",
+  "sounds": [
+    {
+      "frame": 32,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 39,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 109,
+      "sound": "Footstep",
+      "value": 400
+    },
+    {
+      "frame": 116,
+      "sound": "Swing",
+      "value": 1
+    },
+    {
+      "frame": 133,
+      "sound": "Footstep",
+      "value": 400
+    }
+  ]
+}
