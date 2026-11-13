@@ -126,9 +126,13 @@ public static class ProjectCheck
         var standard = File.Exists(Path.Combine(standardDir, "mod.json")) ? ProjectMods.Read(standardDir, "standard") : null;
         var named = standard == null ? usable : usable.Prepend(standard).ToList();
 
+        // a project with its own list (project.json "roster" / "new slots", "stages" / "new places"): the list says who
+        // is where, and the game checks it at start; the mods' own places are only where each was made to go
+        var (rosterListed, stagesListed) = OwnLists(Path.Combine(Path.GetDirectoryName(root) ?? "", "project.json"));
+
         // replacements: the game's wrestler, and one mod per attire (the first in the load order)
         var taken = new Dictionary<(string, int), string>();
-        foreach (var mod in usable)
+        foreach (var mod in usable.Where(_ => !rosterListed))
             foreach (var w in mod.Wrestlers.Where(w => !w.IsNew))
             {
                 if (!Directory.Exists(Path.Combine(mod.Folder, w.Folder)))
@@ -150,7 +154,7 @@ public static class ProjectCheck
         // the arenas: each one replaced is one of the game's 12, by one mod (in the game's order: the name, then a mod
         // earlier in the load order whose arena the game took, then this mod's own arena)
         var arenaTaken = new Dictionary<int, string>();
-        foreach (var mod in usable)
+        foreach (var mod in usable.Where(_ => !stagesListed))
             foreach (var (arena, arenaFolder) in mod.ArenaReplacements)
             {
                 var venue = GameArenas.Find(arena);
@@ -338,5 +342,24 @@ public static class ProjectCheck
         if (!any)
             spots.Add(1);
         return spots;
+    }
+
+    /// <summary>Whether a project's own file lists its Choose Fighter slots, and its stages.</summary>
+    private static (bool Roster, bool Stages) OwnLists(string projectJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(projectJson),
+                new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            var top = doc.RootElement;
+            if (top.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return (false, false);
+            return (top.TryGetProperty("roster", out _) || top.TryGetProperty("new slots", out _),
+                    top.TryGetProperty("stages", out _) || top.TryGetProperty("new places", out _));
+        }
+        catch (Exception)
+        {
+            return (false, false);
+        }
     }
 }

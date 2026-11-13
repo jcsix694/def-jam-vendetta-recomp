@@ -42,13 +42,6 @@ internal static class Program
             Shot.SelfTestProjects();
             return;
         }
-        // Dev: the Mods page (ticks, needs, order, search, install a zip, remove) on a scratch folder (VENDETTA_ROOT):
-        // --selftest-mods <a mod's zip or folder> [<another> ...]
-        if (args.Length >= 2 && args[0] == "--selftest-mods")
-        {
-            Shot.SelfTestMods(args[1..]);
-            return;
-        }
         // Dev: sharing a project (export, import back, another version, refused zips) on a scratch folder (VENDETTA_ROOT):
         // --selftest-share <a project's name>
         if (args.Length >= 2 && args[0] == "--selftest-share")

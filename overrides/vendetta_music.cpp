@@ -712,6 +712,8 @@ namespace vendetta_music
             const Json *music = mod.manifest.find("music");
             if (!music || !music->isObject())
                 continue;
+            if (!vendetta_mods::themeOn(mod, "music"))
+                continue; // the project chose another music theme, or the game's
             const Json *format = music->find("format");
             if (format && format->number > kFormat)
             {

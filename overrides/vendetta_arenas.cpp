@@ -4289,8 +4289,53 @@ namespace vendetta_arenas
             std::vector<ArenaEntry> list;
             for (const std::filesystem::path &folder : standardFolders())
                 list.push_back({"the recomp", "", folder.filename().string(), folder, true});
+            // A project with its own list of stages says which arena is where (project.json):
+            //   "stages": { "<game arena>": { "mod": "<a mod's id>", "arena": "<its folder in that mod>" }, ... }
+            //   "new places": [ { "mod": ..., "arena": ... }, ... ]      after the game's and the recomp's own, in this order
+            // With either key the mods' own "replace" / "new" arenas say nothing: they are only where a mod was made to go.
+            const vendetta_mods::Project *const project = vendetta_mods::currentProject();
+            const vendetta_mods::Json *const stages = project ? project->manifest.find("stages") : nullptr;
+            const vendetta_mods::Json *const places = project ? project->manifest.find("new places") : nullptr;
+            const bool listed = stages || places;
+            if (listed)
+            {
+                const auto entry = [&](const std::string &stage, const vendetta_mods::Json &value, const std::string &where)
+                {
+                    const vendetta_mods::Json *const id = value.isObject() ? value.find("mod") : nullptr;
+                    const vendetta_mods::Json *const arena = value.isObject() ? value.find("arena") : nullptr;
+                    const std::string idText = id && id->isString() ? id->text : std::string();
+                    const vendetta_mods::Mod *const mod = vendetta_mods::modWithId(idText);
+                    if (!mod)
+                    {
+                        vendetta_mods::problem() << "[arenas] " << project->name << ": " << where << ": the mod \"" << idText
+                                                 << "\" isn't on in this project" << std::endl;
+                        vendetta_mods::blocking(project->name + ": " + where + " uses " + vendetta_mods::nameOfId(idText) +
+                                                ", which is off or isn't in the project.");
+                        return;
+                    }
+                    std::error_code ec;
+                    const std::string text = arena && arena->isString() ? arena->text : std::string();
+                    const std::filesystem::path folder = text.empty() || text.find("..") != std::string::npos ? std::filesystem::path() : mod->folder / text;
+                    if (folder.empty() || !std::filesystem::is_directory(folder, ec))
+                    {
+                        vendetta_mods::problem() << "[arenas] " << project->name << ": " << where << ": " << mod->name
+                                                 << " has no arena folder \"" << text << "\"" << std::endl;
+                        vendetta_mods::blocking(project->name + ": " + where + " uses an arena " + mod->name + " doesn't have.");
+                        return;
+                    }
+                    list.push_back({mod->name, stage, text, folder, false});
+                };
+                if (stages && stages->isObject())
+                    for (const auto &[name, value] : stages->members)
+                        entry(name, value, name + (!name.empty() && (name.back() == 's' || name.back() == 'S') ? "' place" : "'s place"));
+                if (places && places->isArray())
+                    for (size_t i = 0; i < places->items.size(); ++i)
+                        entry(std::string(), places->items[i], "new place " + std::to_string(i + 1u));
+            }
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
+                if (listed)
+                    break;
                 const vendetta_mods::Json *replace = mod.manifest.find("replace");
                 const vendetta_mods::Json *arenas = replace ? replace->find("arenas") : nullptr;
                 // "new": {"arenas": ["<folder>", ...]}: each a place of its own after the game's 12

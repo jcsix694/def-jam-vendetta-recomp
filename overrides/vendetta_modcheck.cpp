@@ -122,6 +122,21 @@ namespace vendetta_modcheck
 
         void check()
         {
+            // the project's own choice of themes: each one named must be on and be a theme of that kind
+            if (const vendetta_mods::Project *const project = vendetta_mods::currentProject())
+                if (const Json *const themes = project->manifest.find("themes"); themes && themes->isObject())
+                    for (const auto &[kind, chosen] : themes->members)
+                    {
+                        const std::string words = kind == "menus" ? "menu theme" : kind == "videos" ? "video theme" : kind == "music" ? "music theme" : std::string();
+                        if (words.empty() || !chosen.isString() || chosen.text.empty())
+                            continue;
+                        const vendetta_mods::Mod *const mod = vendetta_mods::modWithId(chosen.text);
+                        if (!mod)
+                            vendetta_mods::blocking(project->name + ": its " + words + " is " + vendetta_mods::nameOfId(chosen.text) +
+                                                    ", which is off or isn't in the project.");
+                        else if (const Json *const has = mod->manifest.find(kind); !has || !has->isObject())
+                            vendetta_mods::blocking(project->name + ": its " + words + " is " + mod->name + ", which isn't a " + words + ".");
+                    }
             vendetta_moves::indexNames();
             const std::set<std::string> animations = newAnimationNames();
             // new wrestlers' (and replacements') own movesets

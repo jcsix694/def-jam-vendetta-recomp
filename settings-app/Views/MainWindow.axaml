@@ -53,7 +53,6 @@
             <Border Background="{StaticResource VNav}" Padding="8,10" IsVisible="{Binding NormalPages}">
                 <StackPanel Spacing="2">
                     <Button Classes="nav" Classes.active="{Binding IsPlay}" Content="Play" Command="{Binding ShowPlayCommand}" />
-                    <Button Classes="nav" Classes.active="{Binding IsMods}" Content="Mods" Command="{Binding ShowModsCommand}" />
                     <TextBlock Text="Settings" Margin="14,12,0,6" Foreground="{StaticResource VText2}" />
                     <Button Classes="nav sub" Classes.active="{Binding IsDisplay}" Content="Display" Command="{Binding ShowDisplayCommand}" />
                     <Button Classes="nav sub" Classes.active="{Binding IsGraphics}" Content="Graphics" Command="{Binding ShowGraphicsCommand}" />
@@ -139,14 +138,12 @@
                         <v:SettingsView DataContext="{Binding Settings}" />
                     </Panel>
                     <v:AboutView IsVisible="{Binding IsAbout}" />
-                    <v:ModsView DataContext="{Binding Mods}" IsVisible="{Binding $parent[Window].((vm:MainViewModel)DataContext).IsMods}" />
                 </Panel>
             </Panel>
         </Grid>
     </DockPanel>
 
     <!-- the Play page's New project / Copy / Rename / Delete, over everything -->
-    <v:ModDialog DataContext="{Binding Mods}" IsVisible="{Binding $parent[Window].((vm:MainViewModel)DataContext).Mods.DialogOpen}" />
     <v:ProjectDialog DataContext="{Binding Projects}" IsVisible="{Binding $parent[Window].((vm:MainViewModel)DataContext).Projects.DialogOpen}" />
     </Panel>
 </Window>

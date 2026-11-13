@@ -37,13 +37,7 @@ public partial class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(CanPlay));
             OnStatusChanged();
         };
-        // a change on the Mods page shows on the Play page's line at once
-        Mods = new ModsViewModel(folder, readOnly, text => Message = text, () => Projects.Reload(Projects.Key));
-        Projects.ModsChanged += () =>
-        {
-            if (IsMods)
-                Mods.Open(Projects.Key); // an import made a project with mods
-        };
+        Mods = new ModsViewModel(folder, text => Message = text);
         Updates.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(UpdateViewModel.Mode) or nameof(UpdateViewModel.ShowNotice))
@@ -94,7 +88,7 @@ public partial class MainViewModel : ObservableObject
     {
         foreach (var name in new[]
                  {
-                     nameof(IsPlay), nameof(IsMods), nameof(IsSettings), nameof(IsAbout), nameof(IsDisplay), nameof(IsGraphics),
+                     nameof(IsPlay), nameof(IsSettings), nameof(IsAbout), nameof(IsDisplay), nameof(IsGraphics),
                      nameof(IsSound), nameof(IsControls), nameof(IsGameplay), nameof(ShowOpenFolder),
                  })
             OnPropertyChanged(name);
@@ -128,7 +122,6 @@ public partial class MainViewModel : ObservableObject
     public bool IsPlay => PageIndex == 0;
     public bool IsSettings => PageIndex == 1;
     public bool IsAbout => PageIndex == 2;
-    public bool IsMods => PageIndex == 3;
     public bool IsDisplay => IsSettings && Settings.TabIndex == 0;
     public bool IsGraphics => IsSettings && Settings.TabIndex == 1;
     public bool IsSound => IsSettings && Settings.TabIndex == 2;
@@ -213,6 +206,9 @@ public partial class MainViewModel : ObservableObject
     public string FolderPath => Folder.Root;
 
     [RelayCommand] private void ShowPlay() => PageIndex = 0;
+    /// <summary>The mod kit opened on the picked project: everything about a project's mods is done there.</summary>
+    [RelayCommand] private void OpenKit() => Mods.OpenModKitOn(Projects.Key);
+    public bool HasModKit => Mods.HasModKit;
     [RelayCommand] private void ShowDisplay() => ShowSettingsTab(0);
     [RelayCommand] private void ShowGraphics() => ShowSettingsTab(1);
     [RelayCommand] private void ShowSound() => ShowSettingsTab(2);
@@ -220,12 +216,6 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand] private void ShowGameplay() => ShowSettingsTab(4);
     [RelayCommand] private void ShowAbout() => PageIndex = 2;
 
-    [RelayCommand]
-    private void ShowMods()
-    {
-        Mods.Open(Projects.Key); // the Play page's pick and its mods
-        PageIndex = 3;
-    }
 
     private void ShowSettingsTab(int tab)
     {
@@ -289,9 +279,6 @@ public partial class MainViewModel : ObservableObject
             case "play-project": PageIndex = 0; Projects.ShowSample("project"); return;
             case "play-export": PageIndex = 0; Projects.ShowSample("export"); return;
             case "play-import": PageIndex = 0; Projects.ShowSample("import"); return;
-            case "mods": Mods.ShowSample("", Projects.Key); PageIndex = 3; return;
-            case "mods-remove": Mods.ShowSample("remove", Projects.Key); PageIndex = 3; return;
-            case "mods-off": Mods.ShowSample("off", Projects.Key); PageIndex = 3; return;
             case "about": PageIndex = 2; break;
             case "display": ShowSettingsTab(0); break;
             case "graphics": ShowSettingsTab(1); break;

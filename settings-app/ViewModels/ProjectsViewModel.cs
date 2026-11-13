@@ -77,7 +77,7 @@ public partial class ProjectsViewModel : ObservableObject
         foreach (var p in Projects.List(_folder))
         {
             var installed = ProjectMods.List(_folder, p.Name);
-            var problems = ProjectCheck.Problems(_folder, p.Name).Select(x => x.Text).ToList();
+            var problems = KitStatus(p.Folder) ?? ProjectCheck.Problems(_folder, p.Name).Select(x => x.Text).ToList();
             var mods = p.Mods.Count switch { 0 => "no mods on", 1 => "1 mod", _ => $"{p.Mods.Count} mods" };
             Choices.Add(new PlayChoice
             {
@@ -122,7 +122,7 @@ public partial class ProjectsViewModel : ObservableObject
         foreach (var name in new[]
                  {
                      nameof(SelectedName), nameof(Heading), nameof(IsOriginal), nameof(IsProject), nameof(SelectedMods),
-                     nameof(HasMods), nameof(NoMods), nameof(SaveLine), nameof(HasProblems), nameof(ProblemCount),
+                     nameof(HasMods), nameof(NoMods), nameof(SaveLine), nameof(HasProblems), nameof(ProblemCount), nameof(ModsCountLine),
                      nameof(ProblemsHeading), nameof(ProblemsLine),
                  })
             OnPropertyChanged(name);
@@ -147,6 +147,27 @@ public partial class ProjectsViewModel : ObservableObject
     public bool NoMods => IsProject && SelectedMods.Count == 0;
     public string SaveLine => Selected?.SaveLine ?? "";
     public bool HasProblems => Selected?.HasProblems ?? false;
+    /// <summary>The one line about a project's mods: how many are on.</summary>
+    public string ModsCountLine => Selected?.Mods.Count switch { null or 0 => "No mods", 1 => "1 mod", var n => $"{n} mods" };
+
+    /// <summary>What the mod kit last said about a project it manages (kit-status.json beside project.json: the things
+    /// to fix before it can be played), or null: the kit doesn't manage it, and this program checks it itself.</summary>
+    private static List<string>? KitStatus(string projectFolder)
+    {
+        try
+        {
+            var path = Path.Combine(projectFolder, "kit-status.json");
+            if (!File.Exists(path))
+                return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+            return doc.RootElement.TryGetProperty("problems", out var list) && list.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? list.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList() : new List<string>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
     public int ProblemCount => Selected?.Problems.Count ?? 0;
     public string ProblemsHeading => ProblemCount == 1 ? "1 problem to fix before playing" : $"{ProblemCount} problems to fix before playing";
     public string ProblemsLine => string.Join(" · ", Selected?.Problems ?? Array.Empty<string>());

@@ -732,6 +732,8 @@ namespace vendetta_videos
             const vendetta_mods::Json *videos = mod.manifest.find("videos");
             if (!videos || !videos->isObject())
                 continue;
+            if (!vendetta_mods::themeOn(mod, "videos"))
+                continue; // the project chose another video theme, or the game's
             const vendetta_mods::Json *format = videos->find("format");
             if (format && format->number > kFormat)
             {

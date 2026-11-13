@@ -88,10 +88,6 @@ internal static class Shot
         Console.WriteLine($"play arguments for the original game: {folder.PlayArguments("")}");
     }
 
-    /// <summary>Dev only (--selftest-mods &lt;a mod's zip or folder&gt; [&lt;another&gt; ...], with VENDETTA_ROOT = a scratch copy
-    /// of the folder holding a project): the Mods page as a player uses it on the first project (install into it, where the
-    /// wrestlers go, on / off with needs, the problems and their fixes, an update that breaks something, remove), with the
-    /// project's list and problems printed after each step.</summary>
     /// <summary>Which kit Open the mod kit starts: an install with its Mod kit folder and a mod-kit.txt naming another kit
     /// (that kit once linked here, then to another game), an install without the folder (the repository) and one with
     /// neither. Scratch folders in the temp folder, removed after; ends "all passed" or the failures.</summary>
@@ -116,7 +112,7 @@ internal static class Shot
         void Check(string what, string root, string? expected)
         {
             Environment.SetEnvironmentVariable("VENDETTA_ROOT", root);
-            var m = new ModsViewModel(GameFolder.Find(), readOnly: true, _ => { }, () => { });
+            var m = new ModsViewModel(GameFolder.Find(), _ => { });
             var got = m.ModKit;
             var ok = string.Equals(got, expected, StringComparison.OrdinalIgnoreCase);
             failed += ok ? 0 : 1;
@@ -145,76 +141,6 @@ internal static class Shot
             try { Directory.Delete(top, recursive: true); } catch { }
         }
         Console.WriteLine(failed == 0 ? "all passed" : $"{failed} failed");
-    }
-
-    public static void SelfTestMods(string[] mods)
-    {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VENDETTA_ROOT")))
-        {
-            Console.WriteLine("--selftest-mods installs and removes mods: set VENDETTA_ROOT to a scratch copy of the folder first");
-            return;
-        }
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
-        var folder = GameFolder.Find();
-        var project = Projects.List(folder).FirstOrDefault()?.Name ?? "";
-        var m = new ModsViewModel(folder, readOnly: false, text => Console.WriteLine("  says: " + text), () => { });
-        void Show(string what)
-        {
-            Console.WriteLine($"{what}: {m.ListHeading}" + (m.HasBad ? $" · {m.BadText}" : ""));
-            foreach (var r in m.Rows)
-                Console.WriteLine($"  {(r.IsOn ? "[on] " : "[off]")} {r.Name} ({r.Kind}): {r.Line}" + (r.IsBad ? " !" : "") + (r.HasFix ? $"  [{r.FixText}]" : ""));
-            Console.WriteLine($"  {project}'s project.json mods: " + string.Join(" | ", Projects.List(folder).First(p => p.Name == project).Mods));
-            if (m.HasNote)
-                Console.WriteLine($"  note: {m.Note}{(m.AskOff ? "  [Turn both off] [Keep it on]" : "")}");
-        }
-        // the mods put into the project as the mod kit's Add to project does (their own mod.json says where they go)
-        foreach (var path in mods)
-        {
-            var (package, error) = ProjectMods.Open(folder, project, path);
-            if (package == null)
-            {
-                Console.WriteLine($"  {path}: {error}");
-                continue;
-            }
-            var (_, err) = ProjectMods.Install(folder, project, package, package.Mod.Wrestlers.ToDictionary(w => w.Folder, w => w.Place));
-            ProjectMods.Discard(package);
-            Console.WriteLine($"  put in {package.Mod.Name}" + (err != null ? $": {err}" : ""));
-        }
-        m.Open(project);
-        Show("start");
-        // on / off with needs, and the rows' fixes
-        foreach (var row in m.Rows.Where(r => r.Mod is { Needs.Count: > 0 }).ToList())
-        {
-            var needed = m.Rows.FirstOrDefault(r => r.Mod != null && row.Mod!.Needs.Any(r.Mod.Is));
-            if (needed == null)
-                continue;
-            needed.Toggle.Execute(null);
-            Show($"turned off {needed.Name} (needed by {row.Name})");
-            m.KeepOnCommand.Execute(null);
-            m.Row(needed.Name)!.Toggle.Execute(null);
-            m.OffBothCommand.Execute(null);
-            Show("both turned off");
-            m.Row(row.Name)!.Toggle.Execute(null);
-            Show($"turned {row.Name} on (its need comes with it)");
-            // a need turned off behind its back (as another program would leave it): the row's fix
-            var on = Projects.List(folder).First(p => p.Name == project).Mods.Where(n => !needed.Mod!.Is(n)).ToList();
-            Projects.SetMods(folder, project, on);
-            m.Open(project);
-            Show($"{needed.Name} off in project.json");
-            if (m.Row(row.Name) is { HasFix: true } bad)
-            {
-                Console.WriteLine($"fix: [{bad.FixText}]");
-                bad.Fix!.Execute(null);
-                Show("after the fix");
-            }
-            // removing the needed one: the users go off too
-            m.Row(needed.Name)!.Remove.Execute(null);
-            Console.WriteLine($"remove dialog: {m.RemoveTitle} | {m.RemoveWarning} | {m.RemoveText} | button {m.RemoveConfirmText}");
-            m.ConfirmDialogCommand.Execute(null);
-            Show("removed");
-            break;
-        }
-        Console.WriteLine("  the project's mods folder: " + string.Join(", ", Directory.GetDirectories(ProjectMods.RootOf(folder, project)).Select(Path.GetFileName)));
     }
 
     /// <summary>Dev only (--selftest-share &lt;project&gt;, with VENDETTA_ROOT = a scratch copy of the folder holding that

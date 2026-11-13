@@ -354,8 +354,13 @@ namespace vendetta_mods
                 // the mods the project has on, in its order (later wins); the others in its folder are off
                 for (const std::string &want : project->mods)
                 {
-                    auto it = std::find_if(found.begin(), found.end(), [&](const Mod &m)
-                                           { return lower(m.folderName) == lower(want) || lower(m.name) == lower(want); });
+                    // the mod in the folder of that name; else the one with that id; else the first of that name left
+                    // (two mods can share a name: their folders and ids tell them apart)
+                    auto it = std::find_if(found.begin(), found.end(), [&](const Mod &m) { return lower(m.folderName) == lower(want); });
+                    if (it == found.end())
+                        it = std::find_if(found.begin(), found.end(), [&](const Mod &m) { return lower(m.id) == lower(want); });
+                    if (it == found.end())
+                        it = std::find_if(found.begin(), found.end(), [&](const Mod &m) { return lower(m.name) == lower(want); });
                     if (it == found.end())
                     {
                         problem() << "[mods] " << project->name << ": \"" << want
@@ -531,6 +536,7 @@ namespace vendetta_mods
                           << " - playing the original game" << std::endl;
                 return nullptr;
             }
+            project->manifest = manifest;
             if (const Json *mods = manifest.find("mods"))
             {
                 if (!mods->isArray())
@@ -788,6 +794,25 @@ namespace vendetta_mods
         loadedMods();
         const auto found = g_namesById.find(lower(id));
         return found == g_namesById.end() ? id : found->second;
+    }
+
+    const Mod *modWithId(const std::string &id)
+    {
+        const std::string want = lower(id);
+        for (const Mod &mod : loadedMods())
+            if (!want.empty() && lower(mod.id) == want)
+                return &mod;
+        return nullptr;
+    }
+
+    bool themeOn(const Mod &mod, const char *kind)
+    {
+        const Project *const project = currentProject();
+        const Json *const themes = project ? project->manifest.find("themes") : nullptr;
+        if (!themes || !themes->isObject() || mod.standard)
+            return true;
+        const Json *const chosen = themes->find(kind);
+        return chosen && chosen->isString() && lower(chosen->text) == lower(mod.id);
     }
 
     std::filesystem::path fileNamed(const std::filesystem::path &folder, const std::string &relative)

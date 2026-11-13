@@ -1404,6 +1404,8 @@ namespace vendetta_menus
                 const vendetta_mods::Json *menus = mod.manifest.find("menus");
                 if (!menus || !menus->isObject())
                     continue;
+                if (!vendetta_mods::themeOn(mod, "menus"))
+                    continue; // the project chose another menu theme, or the game's
                 const vendetta_mods::Json *format = menus->find("format");
                 if (format && format->number > kFormat)
                 {

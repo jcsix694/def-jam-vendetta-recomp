@@ -89,6 +89,12 @@ namespace vendetta_mods
     const Mod *splitId(const std::string &text, std::string &rest);
     // The name of the mod with this id among every mod in the folder (on or off), else the id itself: for messages.
     std::string nameOfId(const std::string &id);
+    // The mod that is on with this id (any case), or null.
+    const Mod *modWithId(const std::string &id);
+    // A project's own choice of themes (project.json "themes": { "menus": "<a mod's id>", "videos": ..., "music": ... }:
+    // one of each kind at most; a kind it leaves out is the game's own). True when this mod's theme of that kind is the
+    // one to use. A project without "themes" uses every mod's, a later one winning, as before.
+    bool themeOn(const Mod &mod, const char *kind);
     // A file a mod's file names: "<id>/<path>" = that path inside that mod, else `relative` under `folder`; empty if it
     // leaves the mod's folder.
     std::filesystem::path fileNamed(const std::filesystem::path &folder, const std::string &relative);
@@ -100,6 +106,7 @@ namespace vendetta_mods
         std::string name;
         std::filesystem::path folder;
         std::vector<std::string> mods;
+        Json manifest; // project.json itself (its own lists: the roster)
     };
     const Project *currentProject();
 

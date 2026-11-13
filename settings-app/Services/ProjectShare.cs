@@ -131,7 +131,7 @@ public static class ProjectShare
                 var found = FindProject(zip);
                 if (found == null)
                     return (null, ProjectMods.FindManifest(zip).Entry != null
-                        ? "That's a mod, not a project: install it on the Mods page."
+                        ? "That's a mod, not a project: install it with the mod kit."
                         : "That zip has no project.json, so it isn't a shared project.");
                 top = found;
             }

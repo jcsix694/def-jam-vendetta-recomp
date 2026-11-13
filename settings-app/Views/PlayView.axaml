@@ -110,7 +110,7 @@
                         <StackPanel Spacing="8">
                             <TextBlock Text="{Binding Projects.ProblemsHeading}" FontWeight="SemiBold" Foreground="#ffe2b0" />
                             <TextBlock Text="{Binding Projects.ProblemsLine}" TextWrapping="Wrap" FontSize="13" Foreground="#e6cf9f" LineHeight="19" />
-                            <Button Classes="outline small" Content="Fix them" Command="{Binding ShowModsCommand}" HorizontalAlignment="Left" />
+                            <Button Classes="accent small" Content="Fix in the mod kit" Command="{Binding OpenKitCommand}" HorizontalAlignment="Left" />
                         </StackPanel>
                     </Border>
                     <Grid ColumnDefinitions="130,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
@@ -120,20 +120,13 @@
                                 <TextBlock Classes="mono" Text="None" />
                                 <TextBlock Classes="hint" Text="The original game never loads mods. Make a project to play some." />
                             </StackPanel>
-                            <StackPanel Spacing="4" IsVisible="{Binding Projects.HasMods}">
-                                <ItemsControl ItemsSource="{Binding Projects.SelectedMods}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="x:String">
-                                            <TextBlock Classes="mono" Text="{Binding}" Margin="0,1" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <TextBlock Classes="hint" Text="In load order: a later mod wins." />
-                            </StackPanel>
-                            <StackPanel Spacing="4" IsVisible="{Binding Projects.NoMods}">
-                                <TextBlock Classes="mono" Text="None yet" />
-                                <TextBlock Classes="hint" Text="Install mods into this project on the Mods page." />
-                            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding Projects.IsProject}">
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Classes="mono" Text="{Binding Projects.ModsCountLine}" />
+                                    <TextBlock Text="Mod kit not found" FontSize="13" Foreground="{StaticResource VWarn}" IsVisible="{Binding !HasModKit}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Classes="outline" BorderBrush="{StaticResource VAccent}" Content="Open in the mod kit" Command="{Binding OpenKitCommand}" IsVisible="{Binding HasModKit}" />
+                            </Grid>
                         </StackPanel>
                         <TextBlock Grid.Row="1" Classes="key" Text="Save data" />
                         <TextBlock Grid.Row="1" Grid.Column="1" Classes="mono" Text="{Binding Projects.SaveLine}" TextWrapping="Wrap" />
