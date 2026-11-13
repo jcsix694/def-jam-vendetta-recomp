@@ -53,6 +53,8 @@ namespace vendetta_cage
         float knockoutWait = 600.0f; // "out by a knockout, pictures down before leaving"
         float doorPictures = 30.0f;  // "the door, pictures to swing open"
         float walkOutside = 0.25f;   // "walking beside the cage, a picture"
+        float doorFrom = 30.5f;      // "the way out by the door, from the middle": the door's own animation (3270) starts
+                                     // at the ropes in front of the door's middle, this far out, facing out
         float tapsEmpty = 1.5f;      // "taps with the momentum meter empty, times": the bars' taps scaled by momentum
         float tapsFull = 0.5f;       // "taps with the momentum meter full, times" (in between: in a straight line)
     };

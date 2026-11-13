@@ -167,6 +167,11 @@ namespace vendetta_cage_file
                 leave.tapsFull = static_cast<float>(v);
                 used = true;
             }
+            if (key == "the way out by the door, from the middle" && number(value, v) && v > 0.0)
+            {
+                leave.doorFrom = static_cast<float>(v);
+                used = true;
+            }
             if (key == "walking beside the cage, a picture" && number(value, v) && v > 0.0)
             {
                 leave.walkOutside = static_cast<float>(v);

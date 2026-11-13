@@ -21,8 +21,12 @@
 //        toward the angle +0x540 until the ropes are reached, then state 14). Here the angle is, each picture, the
 //        way to the ropes in front of the door.
 //     3. At the ropes (state 14 starting) the door swings open; the wrestler stands until it is.
-//     4. The game's state 14: out through the ropes and, being out of the match, on down to the floor, through the
-//        doorway.
+//     4. Through the doorway, the wrestler's own way out to the apron as the game picks it by their movement style
+//        (+0x8BC: normal I101 then I102, heavy I107 then I108, a woman I121 then I122; athletic out of a cage's door as
+//        a normal one), from the ropes in front of the door's middle (cage.json's "the way out by the door, from the
+//        middle" out, facing out), ending on the apron looking into the ring; then the game's own way down from the
+//        apron, I120 (every wrestler's), each carried on from where the last left them as the game carries one clip
+//        into the next; where I120 leaves them is where they stand.
 //     5. On the floor the door shuts, and the wrestler is made to wait outside as one over the top for the team does
 //        (vendetta_cage_climb.cpp), first walking to a place beside the door.
 // The door's place comes from the cage's model (vendetta_cage_draw.cpp); a model without one: the same, through the
@@ -34,6 +38,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 
@@ -54,14 +59,21 @@ namespace vendetta_cage_leave
     constexpr uint32_t kMatchStep = 0x22FBD4u;    // this picture's time step (1 at full speed)
 
     // the fighter's fields
-    constexpr uint32_t kPlayer = 0x30u, kState = 0x40u, kStep = 0x44u, kX = 0xCCu, kZ = 0xD4u, kFacing = 0xDCu,
-                       kFacingToo = 0x148u, kClip = 0xFCu, kDownCount = 0x3F4u, kWalkAngle = 0x540u, kPlace = 0x5ACu,
+    constexpr uint32_t kPlayer = 0x30u, kState = 0x40u, kStep = 0x44u, kX = 0xCCu, kY = 0xD0u, kZ = 0xD4u, kFacing = 0xDCu,
+                       kFacingToo = 0x148u, kClip = 0xFCu, kRemaining = 0x114u, kLeftX = 0x138u, kLeftZ = 0x140u,
+                       kDownCount = 0x3F4u, kWalkAngle = 0x540u, kPlace = 0x5ACu,
                        kAtEdge = 0x79Cu,
                        kOut = 0x5BBu, kPlay = 0x5BCu, kStyle = 0x810u;
     constexpr uint16_t kInRing = 4u, kOnApron = 8u, kOnFloor = 0x10u, kCantBeGrabbed = 0x1u, kCantBeHit = 0x4000u;
     constexpr uint8_t kOutOfMatch = 0x10u, kInPlay = 2u, kTeamB = 4u;
     constexpr uint32_t kStanding = 2u, kLying = 0x16u, kWalkingOut = 0x78u;
     constexpr uint32_t kStanceClips = 0x2710u;    // standing: the clip 0x2710 + the fighter's style
+    constexpr uint32_t kRingOut = 0x8BCu;         // the movement style's ring climbs: 0x08 / 0x20 / 0x40 athletic,
+                                                  // 0x10 heavy, 0x80 a woman
+    constexpr uint32_t kOutNormal = 0x27E5u, kOutHeavy = 0x27EBu, kOutWoman = 0x27F9u; // I101 / I107 / I121 (+ 1: on
+                                                  // the apron, standing facing the ring)
+    constexpr uint32_t kApronDown = 0x27F8u;      // I120: from standing on the apron down to the floor
+    constexpr float kMat = 10.5f;
     constexpr float kRopesFromCage = 5.0f;        // the ropes stand this far inside the cage's walls
     constexpr float kLineUp = 12.0f;              // the walk first goes to a place this far in from the ropes, in front
                                                   // of the door, then straight out at it
@@ -79,6 +91,8 @@ namespace vendetta_cage_leave
         float standX = 0.0f, standZ = 0.0f;
         bool standing = false;   // outside: the stance started
         bool linedUp = false;    // the walk has reached the place in front of the door
+        bool ownWay = false;     // through the door by the wrestler's own clips played here (not the game's state 14)
+        uint32_t clips[3] = {};  // out through the ropes, up on the apron facing the ring, down from the apron
         int pictures = 0;
     };
     Leaver g_leavers[4];
@@ -307,7 +321,8 @@ namespace vendetta_cage_leave
             Leaver &l = g_leavers[index];
             const bool starting = Ps2FastRead32(rdram, fighter + kStep) == 0u &&
                                   (Ps2FastRead16(rdram, fighter + kPlace) & kInRing);
-            if (starting && (Ps2FastRead8(rdram, fighter + kOut) & kOutOfMatch) &&
+            // (the door's own animation, once started, plays to its end: the wrestler is in the doorway)
+            if (starting && (Ps2FastRead8(rdram, fighter + kOut) & kOutOfMatch) && !(l.stage == Stage::Through && l.ownWay) &&
                 stopForTheEnding(rdram, ctx, runtime, fighter))
                 return;
             if (l.stage == Stage::Walking && starting)
@@ -345,7 +360,70 @@ namespace vendetta_cage_leave
                     return;
                 }
                 l.stage = Stage::Through;
+                // the wrestler's own way out to the apron (athletic as normal), then down from it
+                const uint8_t style = Ps2FastRead8(rdram, fighter + kRingOut);
+                const uint32_t out = (style & 0x80u) ? kOutWoman : (style & 0x10u) ? kOutHeavy : kOutNormal;
+                l.clips[0] = out, l.clips[1] = out + 1u, l.clips[2] = kApronDown;
+                l.ownWay = true;
+                if (l.ownWay)
+                {
+                    // from the ropes in front of the door's middle, facing out, blended in from the stance
+                    const Way w = way();
+                    const float midOut = w.midX * w.outX + w.midZ * w.outZ;
+                    const float from = vendetta_cage::cageFile().leave.doorFrom;
+                    const float facing = std::atan2(w.outX, w.outZ) * 180.0f / 3.14159265f;
+                    writeFloat(rdram, fighter + kX, w.midX - w.outX * (midOut - from));
+                    writeFloat(rdram, fighter + kY, kMat);
+                    writeFloat(rdram, fighter + kZ, w.midZ - w.outZ * (midOut - from));
+                    writeFloat(rdram, fighter + kFacing, facing);
+                    writeFloat(rdram, fighter + kFacingToo, facing);
+                    std::cerr << "[cage] the door is open: player " << index << " goes out through it (clips 0x" << std::hex
+                              << l.clips[0] << ", 0x" << l.clips[1] << ", 0x" << l.clips[2] << std::dec << ")" << std::endl;
+                    SET_GPR_U64(ctx, 4, fighter);
+                    SET_GPR_U64(ctx, 5, l.clips[0]);
+                    SET_GPR_U64(ctx, 6, 2u);
+                    runtime->lookupFunction(kPlayClip)(rdram, ctx, runtime);
+                    return;
+                }
                 std::cerr << "[cage] the door is open: player " << index << " goes out through the ropes" << std::endl;
+            }
+            if (l.stage == Stage::Through && l.ownWay)
+            {
+                // the way out playing: each clip to its end, the next carried on from there (flags 0xE: blended, the
+                // anchor and the facing taken from where the last left the wrestler), then on the floor outside where
+                // the last leaves them (+0x138 / +0x140 / +0x148, as the game would carry it into a next clip)
+                const uint32_t playing = Ps2FastRead32(rdram, fighter + kClip);
+                const bool going = readFloat(rdram, fighter + kRemaining) > 0.0f;
+                int at = -1;
+                for (int k = 0; k < 3; ++k)
+                    if (playing == l.clips[k])
+                        at = k;
+                if (at >= 0 && going)
+                {
+                    ctx->pc = getRegU32(ctx, 31);
+                    return;
+                }
+                if (at >= 0 && at < 2)
+                {
+                    SET_GPR_U64(ctx, 4, fighter);
+                    SET_GPR_U64(ctx, 5, l.clips[at + 1]);
+                    SET_GPR_U64(ctx, 6, 0xEu);
+                    runtime->lookupFunction(kPlayClip)(rdram, ctx, runtime);
+                    return;
+                }
+                l.ownWay = false;
+                writeFloat(rdram, fighter + kX, readFloat(rdram, fighter + kLeftX));
+                writeFloat(rdram, fighter + kZ, readFloat(rdram, fighter + kLeftZ));
+                writeFloat(rdram, fighter + kY, 0.0f);
+                writeFloat(rdram, fighter + kFacing, readFloat(rdram, fighter + kFacingToo));
+                Ps2FastWrite16(rdram, fighter + kPlace, static_cast<uint16_t>(
+                                                            (Ps2FastRead16(rdram, fighter + kPlace) & ~(kInRing | kOnApron)) | kOnFloor));
+                std::cerr << "[cage] player " << index << " is through the door, on the floor at (" << readFloat(rdram, fighter + kX)
+                          << ", " << readFloat(rdram, fighter + kZ) << ")" << std::endl;
+                SET_GPR_U64(ctx, 4, fighter);
+                SET_GPR_U64(ctx, 5, kStanding);
+                runtime->lookupFunction(kSetState)(rdram, ctx, runtime);
+                return;
             }
         }
         g_throughRopes(rdram, ctx, runtime);

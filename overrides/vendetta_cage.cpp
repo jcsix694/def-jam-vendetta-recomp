@@ -542,12 +542,14 @@ bool vendetta_cage::resultLists(const int32_t *winners, int winnerCount, const i
 
 void installVendettaCageLeave(PS2Runtime &runtime); // vendetta_cage_leave.cpp: who a fall puts out, the way out by the door
 void installVendettaCageCpu(PS2Runtime &runtime);   // vendetta_cage_cpu.cpp: the computer in a cage match
+void installVendettaCageIntros(PS2Runtime &runtime); // vendetta_cage_intros.cpp: a tag match's intros as the handicap pair's
 
 void installVendettaCage(PS2Runtime &runtime)
 {
     vendetta_cage_fight::install(runtime);
     installVendettaCageLeave(runtime);
     installVendettaCageCpu(runtime);
+    installVendettaCageIntros(runtime);
     vendetta_cage_walls::g_area = vendetta_store::fixed(vendetta_cage_walls::kRecords, vendetta_cage_walls::kAreaEnd -
                                                         vendetta_cage_walls::kRecords, "the cage's walls");
     if (vendetta_cage_walls::g_area)

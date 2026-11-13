@@ -109,6 +109,12 @@ namespace vendetta_cage
     // shut, over so many pictures (it moves as the cage is drawn, so through a match's ending too); doorOpen: how far
     // open it is now, 0 shut to 1 open (the leaf turned 90 degrees outward about its hinges).
     bool door(float &hingeX, float &hingeZ, float &latchX, float &latchZ);
+    // (vendetta_cage_intros.cpp) this intro scene is a tag cage match's team A as a handicap pair, turned half round: its
+    // camera path is turned half round about the ring's middle when it starts (vendetta_ring.cpp)
+    bool introTurnedHalf(uint32_t scene);
+    // (vendetta_cage_intros.cpp) this intro scene is a tag cage match's team as a handicap pair: its two clips are made
+    // to play together from one place, so on a ring of another shape both are moved by one move (the first's)
+    bool introOneMove(uint32_t scene);
 
     // The computer in a cage match (vendetta_cage_cpu.cpp): each match's start; once a picture (the climb's clock);
     // cpuMayClimb: a computer gets onto the cage only from its own climb (a player always may); cpuTap: a computer's

@@ -1097,7 +1097,9 @@ namespace vendetta_ring
             g_movedPathKeys.clear();
         }
 
-        void movePath(uint8_t *rdram, uint32_t path, const PlaceMove &m)
+        // the scene's camera path moved by a place's move (null: not moved) and first, when asked, turned half round about
+        // the ring's middle (a tag cage match's team A filmed by a handicap pair's path, vendetta_cage_intros.cpp)
+        void movePath(uint8_t *rdram, uint32_t path, const PlaceMove *m, bool half = false)
         {
             if (path >= 1024u)
                 return;
@@ -1114,7 +1116,10 @@ namespace vendetta_ring
                 for (const uint32_t at : {0x04u, 0x10u}) // the eye, the target
                 {
                     float x = readFloat(rdram, key + at), z = readFloat(rdram, key + at + 8u);
-                    applyMove(m, x, z);
+                    if (half)
+                        x = -x, z = -z;
+                    if (m)
+                        applyMove(*m, x, z);
                     Ps2FastWrite32(rdram, key + at, std::bit_cast<uint32_t>(x));
                     Ps2FastWrite32(rdram, key + at + 8u, std::bit_cast<uint32_t>(z));
                 }
@@ -1129,9 +1134,16 @@ namespace vendetta_ring
             const uint32_t scene = getRegU32(ctx, 4);
             // the arena's fly-in is built in the same place before the intros, but places no one (flags + 0x84 bit 1)
             const bool placesWrestlers = (Ps2FastRead32(rdram, scene + 0x84u) & 1u) == 0u;
+            const bool half = placesWrestlers && vendetta_cage::introTurnedHalf(scene);
+            if (half && !g_active)
+                movePath(rdram, Ps2FastRead32(rdram, scene + 0x80u), nullptr, true);
             if (g_active && scene - kIntroScenes < kIntroScenesBytes && placesWrestlers)
             {
                 bool camera = true;
+                // a pair made to play together (a tag cage match's team as a handicap pair): one move for both, the first's
+                const bool oneMove = vendetta_cage::introOneMove(scene);
+                bool haveFirst = false;
+                PlaceMove first{};
                 for (uint32_t i = 0; i < 4u; ++i)
                 {
                     const uint32_t entry = scene + i * 0x20u, player = Ps2FastRead32(rdram, entry);
@@ -1139,12 +1151,14 @@ namespace vendetta_ring
                         continue;
                     float px, pz;
                     squarePlaceOf(rdram, player, px, pz);
-                    const PlaceMove m = placeMoveFor(px, pz);
+                    const PlaceMove m = oneMove && haveFirst ? first : placeMoveFor(px, pz);
+                    if (oneMove && !haveFirst && m.ok)
+                        first = m, haveFirst = true;
                     if (!m.ok)
                         continue;
                     if (camera)
                     {
-                        movePath(rdram, Ps2FastRead32(rdram, scene + 0x80u), m);
+                        movePath(rdram, Ps2FastRead32(rdram, scene + 0x80u), &m, half);
                         camera = false;
                     }
                     const std::array<uint32_t, 3> now = {Ps2FastRead32(rdram, entry + 0x04u), Ps2FastRead32(rdram, entry + 0x0Cu),

@@ -25,9 +25,46 @@
       }
     ]
   },
-  "custom sounds": {},
+  "custom sounds": {
+    "BANG": {
+      "file": "sounds/BANG.wav",
+      "volume": 1
+    },
+    "TAP": {
+      "file": "sounds/TAP.wav",
+      "volume": 1
+    },
+    "TAP LONG": {
+      "file": "sounds/TAP LONG.wav",
+      "volume": 1
+    },
+    "TAP MED": {
+      "file": "sounds/TAP MED.wav",
+      "volume": 1
+    },
+    "THROW 1": {
+      "file": "sounds/THROW 1.wav",
+      "volume": 1
+    },
+    "THROW 2": {
+      "file": "sounds/THROW 2.wav",
+      "volume": 1
+    },
+    "THUD": {
+      "file": "sounds/THUD.wav",
+      "volume": 1
+    }
+  },
   "sounds": {
     "3203": [
+      {
+        "frame": 11,
+        "sound": "TAP"
+      },
+      {
+        "frame": 27,
+        "sound": "TAP MED"
+      },
       {
         "frame": 33,
         "sound": "Ropes"
@@ -35,6 +72,18 @@
       {
         "frame": 49,
         "sound": "Ropes"
+      },
+      {
+        "frame": 60,
+        "sound": "TAP"
+      },
+      {
+        "frame": 89,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 94,
+        "sound": "TAP MED"
       }
     ],
     "3205": [
@@ -43,8 +92,298 @@
         "sound": "Ropes"
       },
       {
+        "frame": 11,
+        "sound": "TAP"
+      },
+      {
         "frame": 21,
         "sound": "Ropes"
+      },
+      {
+        "frame": 34,
+        "sound": "TAP MED"
+      }
+    ],
+    "3208": [
+      {
+        "frame": 10,
+        "sound": "TAP"
+      },
+      {
+        "frame": 24,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 34,
+        "sound": "TAP"
+      },
+      {
+        "frame": 50,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 63,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 75,
+        "sound": "TAP MED"
+      }
+    ],
+    "3209": [
+      {
+        "frame": 6,
+        "sound": "TAP"
+      },
+      {
+        "frame": 24,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 37,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 48,
+        "sound": "TAP LONG"
+      }
+    ],
+    "320A": [
+      {
+        "frame": 6,
+        "sound": "TAP"
+      },
+      {
+        "frame": 24,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 37,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 48,
+        "sound": "TAP LONG"
+      }
+    ],
+    "320E": [
+      {
+        "frame": 10,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 17,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 31,
+        "sound": "TAP"
+      },
+      {
+        "frame": 42,
+        "sound": "TAP LONG"
+      }
+    ],
+    "320F": [
+      {
+        "frame": 7,
+        "sound": "TAP"
+      },
+      {
+        "frame": 15,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 26,
+        "sound": "TAP"
+      },
+      {
+        "frame": 40,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 49,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 61,
+        "sound": "TAP MED"
+      }
+    ],
+    "3210": [
+      {
+        "frame": 7,
+        "sound": "TAP"
+      },
+      {
+        "frame": 15,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 23,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 36,
+        "sound": "TAP"
+      }
+    ],
+    "3211": [
+      {
+        "frame": 7,
+        "sound": "TAP"
+      },
+      {
+        "frame": 15,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 23,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 36,
+        "sound": "TAP"
+      }
+    ],
+    "3212": [
+      {
+        "frame": 17,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 23,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 61,
+        "sound": "TAP"
+      },
+      {
+        "frame": 77,
+        "sound": "TAP LONG"
+      }
+    ],
+    "3213": [
+      {
+        "frame": 12,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 27,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 59,
+        "sound": "TAP"
+      },
+      {
+        "frame": 74,
+        "sound": "TAP LONG"
+      }
+    ],
+    "3214": [
+      {
+        "frame": 13,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 27,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 53,
+        "sound": "TAP"
+      },
+      {
+        "frame": 68,
+        "sound": "TAP LONG"
+      }
+    ],
+    "3215": [
+      {
+        "frame": 13,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 24,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 47,
+        "sound": "TAP"
+      },
+      {
+        "frame": 62,
+        "sound": "TAP LONG"
+      }
+    ],
+    "3216": [
+      {
+        "frame": 12,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 21,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 41,
+        "sound": "TAP"
+      },
+      {
+        "frame": 54,
+        "sound": "TAP LONG"
+      }
+    ],
+    "3238": [
+      {
+        "frame": 8,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 24,
+        "sound": "TAP"
+      }
+    ],
+    "3239": [
+      {
+        "frame": 3,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 6,
+        "sound": "TAP"
+      },
+      {
+        "frame": 9,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 14,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 19,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 22,
+        "sound": "TAP"
+      },
+      {
+        "frame": 25,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 30,
+        "sound": "TAP MED"
+      }
+    ],
+    "323A": [
+      {
+        "frame": 0,
+        "sound": "TAP LONG"
       }
     ],
     "323D": [
@@ -52,6 +391,38 @@
         "frame": 5,
         "sound": "Grunt",
         "value": 1
+      },
+      {
+        "frame": 23,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 40,
+        "sound": "TAP LONG"
+      }
+    ],
+    "323F": [
+      {
+        "frame": 27,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 89,
+        "sound": "TAP LONG"
+      },
+      {
+        "frame": 121,
+        "sound": "TAP"
+      }
+    ],
+    "3240": [
+      {
+        "frame": 0,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 9,
+        "sound": "TAP"
       }
     ],
     "3242": [
@@ -64,6 +435,46 @@
         "frame": 0,
         "sound": "Grunt",
         "value": 1
+      }
+    ],
+    "3245": [
+      {
+        "frame": 5,
+        "sound": "TAP"
+      },
+      {
+        "frame": 58,
+        "sound": "TAP LONG"
+      }
+    ],
+    "3247": [
+      {
+        "frame": 15,
+        "sound": "TAP"
+      },
+      {
+        "frame": 34,
+        "sound": "TAP MED"
+      }
+    ],
+    "3249": [
+      {
+        "frame": 79,
+        "sound": "TAP MED"
+      }
+    ],
+    "324B": [
+      {
+        "frame": 9,
+        "sound": "TAP"
+      },
+      {
+        "frame": 38,
+        "sound": "TAP MED"
+      },
+      {
+        "frame": 58,
+        "sound": "TAP LONG"
       }
     ]
   },
@@ -124,6 +535,7 @@
     "ankles above the mat, least": 1.7,
     "ankles above the mat, standing": 1.7,
     "a foot on a rope presses it down": 1,
+    "the way out by the door, from the middle": 30.5,
     "room, chest": 2.2,
     "room, head": 1.8,
     "room, left elbow": 1,
