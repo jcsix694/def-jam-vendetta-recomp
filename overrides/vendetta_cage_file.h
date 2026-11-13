@@ -46,6 +46,35 @@ namespace vendetta_cage
         float volume = 1.0f;        // 1 = as recorded, 0 to 4
     };
 
+    // The numbers of leaving by the door ("numbers" too, the game's own: the climb's rules don't use them): tag and
+    // handicap are last man wins, and someone out by a fall who is not the team's last walks out by the cage's door
+    struct LeaveNumbers
+    {
+        float knockoutWait = 600.0f; // "out by a knockout, pictures down before leaving"
+        float doorPictures = 30.0f;  // "the door, pictures to swing open"
+        float walkOutside = 0.25f;   // "walking beside the cage, a picture"
+        float doorFrom = 30.5f;      // "the way out by the door, from the middle": the door's own animation (3270) starts
+                                     // at the ropes in front of the door's middle, this far out, facing out
+        float tapsEmpty = 1.5f;      // "taps with the momentum meter empty, times": the bars' taps scaled by momentum
+        float tapsFull = 0.5f;       // "taps with the momentum meter full, times" (in between: in a straight line)
+    };
+
+    // The computer's numbers in a cage match ("numbers" too, the game's own; vendetta_cage_cpu.cpp)
+    struct CpuNumbers
+    {
+        float climb = 0.02f;        // "computer: a climb's chance a second": with ESCAPE on, standing in the ring
+        float climbMore = 0.01f;    // "computer: more chance a minute of the fight"
+        float climbMost = 0.08f;    // "computer: a climb's chance a second, most"
+        float climbDown = 0.6f;     // "computer: a climb's chance a second, every opponent down and hurt"
+        float downHurt = 0.6f;      // "computer: an opponent hurt, health below": a share of full health
+        float climbAgain = 600.0f;  // "computer: pictures before trying a climb again"
+        float climbGiveUp = 300.0f; // "computer: pictures to reach the ropes to climb"
+        float shake = 0.35f;        // "computer: a shake's chance": a second, times the game's own answer to a climber
+        float shakeGiveUp = 300.0f; // "computer: pictures to reach a climber's side"
+        float diveMomentum = 20.0f; // "computer: momentum to climb to dive" (Blazin' climbs with any)
+        float dive = 0.25f;         // "computer: a dive's chance a second": with ESCAPE off, an opponent down, the climb to dive
+    };
+
     struct CageFile
     {
         std::map<std::string, CustomSound> customSounds; // by name (capitals)
@@ -54,6 +83,8 @@ namespace vendetta_cage
         std::map<std::string, uint32_t> speeds;
         std::set<std::string> loops;
         ClimbNumbers numbers;
+        LeaveNumbers leave;
+        CpuNumbers cpu;
         std::string from; // the file read, or empty: the values built in
     };
 

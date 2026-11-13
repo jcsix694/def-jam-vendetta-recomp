@@ -92,11 +92,12 @@ namespace vendetta_cage_menu
     constexpr uint32_t kHelp = 0x40u;    // 3 x {button, text} (the lui / addiu at 0x14E12C / 0x14E138)
     constexpr uint32_t kStrings = 0x60u; // the new words, in this order: a menu theme will name them by their address
 
-    // the second step's rows (the mockup's places, from the game's numbers): the battle type's name in yellow at y 300
-    // (the routine's first line), the rows from y 328, 24 apart, each label at x 160 and its value centred on x 455 (the
-    // mockup's 430 moved right: in the game's font PIN & SUBMISSION reached its row's left arrow); an arrow only on the
-    // side a value can still go, as Options' rows (FUN_00144d18: 25 from the middle of a short value, each arrow 30 wide)
-    constexpr float kRowsTop = 328.0f, kRowStep = 24.0f, kLabelX = 160.0f, kValueX = 455.0f;
+    // the second step's rows (from the game's numbers): the battle type's name in yellow at y 300 (the routine's first
+    // line), the rows from y 328, 24 apart, each label at x 136 and its value centred on x 431: the widest row (MATCH
+    // TYPE ... CAGE MATCH, 136 to 504 in the game's font) sits evenly about the screen's middle, 320, and the longest
+    // label, PIN & SUBMISSION, ends clear of its row's left arrow; an arrow only on the side a value can still go, as
+    // Options' rows (FUN_00144d18: 25 from the middle of a short value, each arrow 30 wide)
+    constexpr float kRowsTop = 328.0f, kRowStep = 24.0f, kLabelX = 136.0f, kValueX = 431.0f;
     constexpr float kArrowGap = 25.0f, kArrowWidth = 30.0f, kArrowDown = 2.0f;
 
     enum Row { kMatchType, kEscape, kPinSubmission, kTko, kRopeBreaks, kRows };
@@ -164,7 +165,9 @@ namespace vendetta_cage_menu
     }
 
     int rowCount() { return g_choice.cage ? kRows : 1; }
-    bool dim(int row) { return row == kRopeBreaks && !g_choice.pinSubmission; } // rope breaks only matter for pins and holds
+    // rope breaks only count while pins and holds do: without them the row is dimmed, skipped and reads OFF, and the
+    // match has none (Rules::ropeBreaksOn); the player's own choice is kept for when PIN & SUBMISSION is on again
+    bool dim(int row) { return row == kRopeBreaks && !g_choice.pinSubmission; }
     int waysOn() { return int(g_choice.escape) + int(g_choice.pinSubmission) + int(g_choice.tko); }
 
     // a row's value can go left (to NORMAL, to OFF) or right (to CAGE MATCH, to ON); the last way to win that is on
@@ -182,6 +185,8 @@ namespace vendetta_cage_menu
     {
         if (row == kMatchType)
             return g_word[g_choice.cage ? kWordCage : kWordNormal];
+        if (row == kRopeBreaks)
+            return g_choice.ropeBreaksOn() ? kOn : kOff; // what the match will do: OFF while the row is dimmed
         return *value(row) ? kOn : kOff;
     }
 
@@ -191,7 +196,7 @@ namespace vendetta_cage_menu
             return "NORMAL";
         auto onOff = [](bool b) { return b ? "on" : "off"; };
         return std::string("CAGE MATCH (escape ") + onOff(r.escape) + ", pin & submission " + onOff(r.pinSubmission) +
-               ", TKO " + onOff(r.tko) + ", rope breaks " + onOff(r.ropeBreaks) + ")";
+               ", TKO " + onOff(r.tko) + ", rope breaks " + onOff(r.ropeBreaksOn()) + ")";
     }
 
     // ---- the tables
@@ -516,7 +521,7 @@ namespace vendetta_cage_menu
                 word &= ~kRuleKO;
             if (!rules.pinSubmission)
                 word &= ~(kRuleSubmission | kRulePin);
-            if (!rules.ropeBreaks)
+            if (!rules.ropeBreaksOn()) // off by choice, or because pins and submissions are off
                 word &= ~kRuleRopeBreaks;
             if (kind == 2u) // tag: both partners in the ring, no tags (as Story's tag fights)
                 word |= kRuleTagBothIn;
