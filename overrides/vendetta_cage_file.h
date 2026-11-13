@@ -46,6 +46,15 @@ namespace vendetta_cage
         float volume = 1.0f;        // 1 = as recorded, 0 to 4
     };
 
+    // The numbers of leaving by the door ("numbers" too, the game's own: the climb's rules don't use them): tag and
+    // handicap are last man wins, and someone out by a fall who is not the team's last walks out by the cage's door
+    struct LeaveNumbers
+    {
+        float knockoutWait = 600.0f; // "out by a knockout, pictures down before leaving"
+        float doorPictures = 30.0f;  // "the door, pictures to swing open"
+        float walkOutside = 0.25f;   // "walking beside the cage, a picture"
+    };
+
     struct CageFile
     {
         std::map<std::string, CustomSound> customSounds; // by name (capitals)
@@ -54,6 +63,7 @@ namespace vendetta_cage
         std::map<std::string, uint32_t> speeds;
         std::set<std::string> loops;
         ClimbNumbers numbers;
+        LeaveNumbers leave;
         std::string from; // the file read, or empty: the values built in
     };
 

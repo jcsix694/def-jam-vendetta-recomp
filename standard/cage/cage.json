@@ -146,6 +146,9 @@
     "dangles in a row before a fall": 3,
     "a fall off the cage, damage": 10,
     "a shake into the dangle, momentum": 10,
-    "a shake off the cage, momentum": 20
+    "a shake off the cage, momentum": 20,
+    "out by a knockout, pictures down before leaving": 600,
+    "the door, pictures to swing open": 30,
+    "walking beside the cage, a picture": 0.25
   }
 }

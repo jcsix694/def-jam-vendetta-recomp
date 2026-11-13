@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -80,6 +81,7 @@ namespace vendetta_cage_draw
         int sideB = -1;
         float shade = 1.0f;  // a face's own light
         bool upright = false; // an upright tube: fades as the camera comes near it, as the game's ring posts
+        bool door = false;    // part of the door's leaf: turned about the hinges as the door swings
         float cx = 0.0f, cz = 0.0f;
     };
 
@@ -195,8 +197,13 @@ namespace vendetta_cage_draw
         std::vector<Piece> pieces; // their sides set when the cage is built
         std::vector<std::vector<uint32_t>> pixels;
         std::vector<uint32_t> widths, heights;
+        bool hasDoor = false;      // the file marks a door: its leaf's pieces, and on the floor plan the hinges' line
+        float hinge[2] = {}, latch[2] = {}; // (x, z) and the leaf's other end when shut
     };
     Model g_models[2]; // 0 the square, 1 six sides
+    float g_doorOpen = 0.0f; // 0 shut .. 1 open: the leaf turned 90 degrees outward about its hinges
+    bool g_doorToOpen = false;  // where it is swinging to, and how much a picture
+    float g_doorStep = 1.0f / 30.0f;
     bool g_modelsRead = false, g_modelImagesMade = false;
 
     uint32_t log2of(uint32_t v)
@@ -207,8 +214,9 @@ namespace vendetta_cage_draw
         return n;
     }
 
-    // a .vcage file: "VCAG", 1, the pictures {name[32], width, height, flags (1 see-through), RGBA (alpha 0-128)}, the
-    // polygons {picture, n, n x (x, y, z, s, t)}
+    // a .vcage file: "VCAG", the version (1 or 2), the pictures {name[32], width, height, flags (1 see-through), RGBA
+    // (alpha 0-128)}, the polygons {picture, n, n x (x, y, z, s, t)}; version 2 then has the door: how many of the
+    // polygons are its leaf, their numbers, and the hinges' and the latch's (x, z)
     bool readModel(const std::filesystem::path &path, Model &m, uint32_t firstId)
     {
         std::ifstream in(path, std::ios::binary);
@@ -221,7 +229,8 @@ namespace vendetta_cage_draw
         };
         char magic[4] = {};
         in.read(magic, 4);
-        if (std::memcmp(magic, "VCAG", 4) != 0 || u32() != 1u)
+        const uint32_t version = std::memcmp(magic, "VCAG", 4) == 0 ? u32() : 0u;
+        if (version != 1u && version != 2u)
             return false;
         const uint32_t images = u32();
         if (images == 0u || images > 8u)
@@ -248,6 +257,7 @@ namespace vendetta_cage_draw
         const uint32_t polys = u32();
         if (!in || polys > 100000u)
             return false;
+        std::vector<uint32_t> pieceOf; // each piece's polygon
         for (uint32_t i = 0; i < polys; ++i)
         {
             const uint32_t image = u32(), n = u32();
@@ -270,9 +280,26 @@ namespace vendetta_cage_draw
                     x += piece.p[k].x, z += piece.p[k].z;
                 piece.cx = x / piece.n, piece.cz = z / piece.n;
                 m.pieces.push_back(piece);
+                pieceOf.push_back(i);
                 if (piece.n < 8)
                     break;
             }
+        }
+        if (version >= 2u && in)
+        {
+            const uint32_t count = u32();
+            if (!in || count > polys)
+                return false;
+            std::vector<uint8_t> leaf(polys, 0);
+            for (uint32_t i = 0; i < count; ++i)
+                if (const uint32_t n = u32(); n < polys)
+                    leaf[n] = 1;
+            in.read(reinterpret_cast<char *>(m.hinge), 8);
+            in.read(reinterpret_cast<char *>(m.latch), 8);
+            m.hasDoor = static_cast<bool>(in) && count > 0u;
+            if (m.hasDoor)
+                for (size_t k = 0; k < m.pieces.size(); ++k)
+                    m.pieces[k].door = leaf[pieceOf[k]] != 0;
         }
         m.ok = static_cast<bool>(in);
         return m.ok;
@@ -290,7 +317,8 @@ namespace vendetta_cage_draw
             Model &m = g_models[i];
             if (readModel(folder / names[i], m, 0x52000010u + 0x10u * i))
                 std::cerr << "[cage] the cage's model for " << (i ? "six sides" : "the square") << ": " << m.images.size()
-                          << " pictures, " << m.pieces.size() << " pieces (" << (folder / names[i]).string() << ")" << std::endl;
+                          << " pictures, " << m.pieces.size() << " pieces" << (m.hasDoor ? ", a door" : ", no door marked")
+                          << " (" << (folder / names[i]).string() << ")" << std::endl;
             else
                 m = Model{};
         }
@@ -648,6 +676,31 @@ namespace vendetta_cage_draw
         std::vector<int> alphas(g_pieces.size());
         for (size_t i = 0; i < g_pieces.size(); ++i)
             alphas[i] = alphaOf(g_pieces[i]);
+        // the door swung: its leaf's pieces turned about the hinges' upright line, outward
+        g_doorOpen = std::clamp(g_doorOpen + (g_doorToOpen ? g_doorStep : -g_doorStep), 0.0f, 1.0f);
+        // VENDETTA_CAGETEST_DOOR=<0 to 1> (tests): the door held that far open
+        static const float held = []() {
+            const char *v = std::getenv("VENDETTA_CAGETEST_DOOR");
+            return v && *v ? std::clamp(static_cast<float>(std::atof(v)), 0.0f, 1.0f) : -1.0f;
+        }();
+        if (held >= 0.0f)
+            g_doorOpen = held;
+        const Model &doorModel = g_models[g_sides == 6 ? 1 : 0];
+        const bool swing = doorModel.ok && doorModel.hasDoor && g_doorOpen > 0.0f;
+        float hingeX = 0.0f, hingeZ = 0.0f, alongX = 1.0f, alongZ = 0.0f, outX = 0.0f, outZ = 1.0f, swingCos = 1.0f,
+              swingSin = 0.0f;
+        if (swing)
+        {
+            hingeX = doorModel.hinge[0], hingeZ = doorModel.hinge[1];
+            alongX = doorModel.latch[0] - hingeX, alongZ = doorModel.latch[1] - hingeZ;
+            const float len = std::max(std::sqrt(alongX * alongX + alongZ * alongZ), 0.001f);
+            alongX /= len, alongZ /= len;
+            outX = -alongZ, outZ = alongX;
+            if (outX * hingeX + outZ * hingeZ < 0.0f)
+                outX = -outX, outZ = -outZ;
+            const float angle = g_doorOpen * 1.5707963f;
+            swingCos = std::cos(angle), swingSin = std::sin(angle);
+        }
         // far first, then near (the faded); in each the solid pictures (the depth written, far only), then the
         // see-through ones (not written, as the game's see-through parts); a picture bound once for its pieces
         for (int pass = 0; pass < 2; ++pass)
@@ -671,7 +724,21 @@ namespace vendetta_cage_draw
                             packet.ad(0x71u, uint64_t(g_images[im].tbp) | (uint64_t(g_images[im].id) << 32));
                             bound = true;
                         }
-                        polygon(packet, p, c, alphas[i]);
+                        if (p.door && swing)
+                        {
+                            Piece turned = p;
+                            for (int k = 0; k < turned.n; ++k)
+                            {
+                                const float rx = turned.p[k].x - hingeX, rz = turned.p[k].z - hingeZ;
+                                const float along = rx * alongX + rz * alongZ, out = rx * outX + rz * outZ;
+                                const float a = along * swingCos - out * swingSin, o = along * swingSin + out * swingCos;
+                                turned.p[k].x = hingeX + alongX * a + outX * o;
+                                turned.p[k].z = hingeZ + alongZ * a + outZ * o;
+                            }
+                            polygon(packet, turned, c, alphas[i]);
+                        }
+                        else
+                            polygon(packet, p, c, alphas[i]);
                     }
                 }
             }
@@ -745,6 +812,25 @@ bool vendetta_cage::screenPan(float x, float y, float z, float &pan)
     pan = std::clamp((cx / w - 2048.0f) / 256.0f, -1.0f, 1.0f);
     return true;
 }
+
+bool vendetta_cage::door(float &hingeX, float &hingeZ, float &latchX, float &latchZ)
+{
+    using namespace vendetta_cage_draw;
+    readModels();
+    const Model &m = g_models[vendetta_ring::activeSides() == 6 ? 1 : 0];
+    if (!m.ok || !m.hasDoor)
+        return false;
+    hingeX = m.hinge[0], hingeZ = m.hinge[1], latchX = m.latch[0], latchZ = m.latch[1];
+    return true;
+}
+
+void vendetta_cage::doorTo(bool open, float pictures)
+{
+    vendetta_cage_draw::g_doorToOpen = open;
+    vendetta_cage_draw::g_doorStep = 1.0f / std::max(pictures, 1.0f);
+}
+
+float vendetta_cage::doorOpen() { return vendetta_cage_draw::g_doorOpen; }
 
 void vendetta_cage::drawCage(uint8_t *rdram, PS2Runtime &runtime)
 {

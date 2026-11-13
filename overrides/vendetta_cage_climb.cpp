@@ -719,7 +719,8 @@ namespace vendetta_cage_climb
     }
     bool takingPart(uint8_t *rdram, uint32_t f)
     {
-        return static_cast<int32_t>(Ps2FastRead32(rdram, f + kPlayer)) != -1 && !(Ps2FastRead8(rdram, f + kOut) & kOutOfMatch);
+        return static_cast<int32_t>(Ps2FastRead32(rdram, f + kPlayer)) != -1 && !(Ps2FastRead8(rdram, f + kOut) & kOutOfMatch) &&
+               !vendetta_cage::outByFall(rdram, f); // out by a fall: on the way out by the door, or outside
     }
     // a team-mate of this fighter still to get out (taking part, in play, not waiting outside)
     bool teamMateStillIn(uint8_t *rdram, uint32_t fighter)
@@ -1092,8 +1093,20 @@ namespace vendetta_cage_climb
                 setState(rdram, fighter, kStanding);
             }
             else
+            {
                 Ps2FastWrite16(rdram, fighter + kPlace,
                                static_cast<uint16_t>(Ps2FastRead16(rdram, fighter + kPlace) | kCantBeHit | kCantBeGrabbed));
+                // one out by a fall, just through the door: the walk to its place beside it (the routine's one call)
+                uint32_t flags = 0;
+                if (const uint32_t clip = vendetta_cage::leaveAside(rdram, fighter, flags))
+                {
+                    SET_GPR_U64(ctx, 4, fighter);
+                    SET_GPR_U64(ctx, 5, clip);
+                    SET_GPR_U64(ctx, 6, flags);
+                    runtime->lookupFunction(kPlayClip)(rdram, ctx, runtime);
+                    return;
+                }
+            }
             finish(rdram, ctx, fighter, 0u);
             return;
         }
@@ -1638,6 +1651,30 @@ bool vendetta_cage::waitingOutside(uint8_t *rdram, uint32_t fighter)
     using namespace vendetta_cage_climb;
     const int index = indexOf(fighter);
     return g_active && index >= 0 && g_waiting[index] && cageMatch(rdram);
+}
+
+// a fighter on the floor outside made to wait there: out of play, the climb's state with no climb, as one over the top
+// for the team waits (kept out of reach and untargeted by that state each picture, released when the match is decided)
+void vendetta_cage::waitOutside(uint8_t *rdram, uint32_t fighter)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    if (index < 0 || !g_active)
+        return;
+    g_climbs[index] = Climb();
+    g_waiting[index] = true;
+    Ps2FastWrite8(rdram, fighter + kPlay, static_cast<uint8_t>(Ps2FastRead8(rdram, fighter + kPlay) & ~kInPlay));
+    Ps2FastWrite16(rdram, fighter + kPlace, static_cast<uint16_t>(
+                                                (Ps2FastRead16(rdram, fighter + kPlace) & ~(kInRing | kOnApron)) | kOnFloor |
+                                                kCantBeHit | kCantBeGrabbed));
+    setState(rdram, fighter, kClimbState);
+}
+
+void vendetta_cage::notTargeted(uint8_t *rdram, uint32_t fighter)
+{
+    using namespace vendetta_cage_climb;
+    if (indexOf(fighter) >= 0)
+        cantBeTargeted(rdram, fighter);
 }
 
 bool vendetta_cage::anyoneWaiting(uint8_t *rdram)

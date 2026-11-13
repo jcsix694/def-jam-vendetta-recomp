@@ -11,11 +11,14 @@
 //     "repeat": { "fighter": 1, "slot": 12 },
 //     "keep health": [ true, true ], "loop": true, "skip movies": true,
 //     "match type": "cage", "cage": { "escape": true, "pin & submission": false, "tko": false, "rope breaks": true } }
-// "match": "1-on-1" (two fighters), "4-way" (four, all against all: the block as Battle's Free For All leaves it,
-// +0x10 = 1, +0x14 = +0x18 = 4, the pads 0 / 4 / 5 / 6) or "tag" (four, the first two a team against the last two: as
-// Tag Team leaves it, +0x10 = 2, the order +0x8C..+0x98 = 0 1 2 3; FUN_00140298 makes the match kind 2 from it).
+// "match": "1-on-1" (two fighters), "3-way" or "4-way" (three or four, all against all: the block as Battle's Free For
+// All leaves it, +0x10 = 1, +0x14 = +0x18 = the number, the pads 0 / 4 / 5 / 6), "tag" (four, the first two a team
+// against the last two: as Tag Team leaves it, +0x10 = 2, the order +0x8C..+0x98 = 0 1 2 3) or "2-on-1" / "3-on-1"
+// (three or four, the first alone against the rest: 1 Versus Many, +0x10 = 3); FUN_00140298 makes the match kind from
+// the type and the number (1, 4 / 8, 2, 0x10 / 0x20).
 // "match type": "normal" (the game's own, also without it) or "cage", whose ways to win are "cage"'s (each left out is
-// as Choose Match's second step starts: escape on, pin & submission off, TKO off, rope breaks on; vendetta_cage.h).
+// as Choose Match's second step starts: escape on, pin & submission off, TKO off, rope breaks on; vendetta_cage.h;
+// rope breaks count only with pin & submission on, as in the menu).
 //
 // VENDETTA_TESTWIN=1 (a test, with or without the file, in any match, Story's included): while a match runs, every
 // human fighter (in the match, +0x5BC bit 1, and not the computer's, bit 0, when the fight starts) is played by the
@@ -106,8 +109,9 @@ namespace vendetta_testmatch
     struct Setup
     {
         std::array<Fighter, 4> fighters{};
-        int count = 2; // 2 (1-on-1) or 4 (4-way, tag)
-        bool tag = false;
+        int count = 2;  // the fighters: 2 (1-on-1), 3 (3-way, 2-on-1) or 4 (4-way, tag, 3-on-1)
+        int type = 0;   // the front end's match type: 0 1-ON-1, 1 FREE FOR ALL, 2 TAG TEAM, 3 1 VERSUS MANY
+        const char *name = "1-on-1";
         int arena = 0;
         int repeatFighter = -1;
         int repeatSlot = -1;
@@ -195,14 +199,27 @@ namespace vendetta_testmatch
             return j && j->type == vendetta_mods::Json::Type::Bool ? j->boolean : fallback;
         };
         out.count = 2;
-        out.tag = false;
-        if (const auto *m = json.find("match"); m && m->isString() && (m->text == "4-way" || m->text == "tag"))
+        out.type = 0;
+        out.name = "1-on-1";
+        struct Kind
         {
-            out.count = 4;
-            out.tag = m->text == "tag";
+            const char *name;
+            int count, type;
+        };
+        static const Kind kKinds[] = {{"1-on-1", 2, 0}, {"3-way", 3, 1}, {"4-way", 4, 1},
+                                      {"tag", 4, 2},    {"2-on-1", 3, 3}, {"3-on-1", 4, 3}};
+        if (const auto *m = json.find("match"); m && m->isString())
+        {
+            const Kind *found = nullptr;
+            for (const Kind &k : kKinds)
+                if (m->text == k.name)
+                    found = &k;
+            if (found)
+                out.count = found->count, out.type = found->type, out.name = found->name;
+            else
+                std::cerr << "[testmatch] \"match\" is \"1-on-1\", \"3-way\", \"4-way\", \"tag\", \"2-on-1\" or \"3-on-1\": a 1-on-1"
+                          << std::endl;
         }
-        else if (m && m->isString() && m->text != "1-on-1")
-            std::cerr << "[testmatch] \"match\" is \"1-on-1\", \"4-way\" or \"tag\": a 1-on-1" << std::endl;
         out.arena = std::clamp(number(json.find("arena"), 0), 0, 0xFFFF); // checked against the stages when the match starts
         const auto *fighters = json.find("fighters");
         if (!fighters || !fighters->isArray() || fighters->items.size() != size_t(out.count))
@@ -300,7 +317,7 @@ namespace vendetta_testmatch
                 if (g_setup.fighters[p].control == Control::Cpu && (p == g_setup.repeatFighter || g_setup.repeatFighter < 0))
                     level = g_setup.fighters[p].level;
             }
-        Ps2FastWrite32(rdram, fe + 0x10, g_setup.tag ? 2u : count == 4 ? 1u : 0u); // TAG TEAM / FREE FOR ALL / 1-ON-1 BATTLE
+        Ps2FastWrite32(rdram, fe + 0x10, uint32_t(g_setup.type)); // 1-ON-1 BATTLE / FREE FOR ALL / TAG TEAM / 1 VERSUS MANY
         for (uint32_t p = 0; p < 4u; ++p)
             Ps2FastWrite32(rdram, fe + 0x8Cu + 4u * p, p); // the order the match takes the four in (Tag Team's)
         Ps2FastWrite32(rdram, fe + 0x14, uint32_t(count));
@@ -334,7 +351,7 @@ namespace vendetta_testmatch
         Ps2FastWrite32(rdram, fe + 0x04, 0x19u);          // what Choose Stage leaves: the match setup next
         vendetta_cage::setTestRules(g_setup.rules);       // the match type for the match setup, not the menu's
         g_started = true;
-        std::cerr << "[testmatch] straight into the match (" << (g_setup.tag ? "tag" : count == 4 ? "4-way" : "1-on-1") << "): records";
+        std::cerr << "[testmatch] straight into the match (" << g_setup.name << "): records";
         for (int p = 0; p < count; ++p)
             std::cerr << (p ? ", " : " ") << g_setup.fighters[p].record << " + " << g_setup.fighters[p].attire;
         std::cerr << ", stage " << g_setup.arena << ", computer bits " << cpuBits << ", level " << level << std::endl;

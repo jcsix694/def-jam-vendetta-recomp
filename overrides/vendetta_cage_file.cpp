@@ -44,7 +44,8 @@ namespace vendetta_cage_file
         return true;
     }
 
-    void readNumbers(const Json &numbers, vendetta_cage::ClimbNumbers &n, std::vector<std::string> &skipped)
+    void readNumbers(const Json &numbers, vendetta_cage::ClimbNumbers &n, vendetta_cage::LeaveNumbers &leave,
+                     std::vector<std::string> &skipped)
     {
         struct Named
         {
@@ -128,6 +129,21 @@ namespace vendetta_cage_file
             if (key == "dangles in a row before a fall" && number(value, v) && v >= 1.0 && v <= 100.0)
             {
                 n.danglesToFall = static_cast<int>(v);
+                used = true;
+            }
+            if (key == "out by a knockout, pictures down before leaving" && number(value, v) && v >= 0.0)
+            {
+                leave.knockoutWait = static_cast<float>(v);
+                used = true;
+            }
+            if (key == "the door, pictures to swing open" && number(value, v) && v >= 1.0)
+            {
+                leave.doorPictures = static_cast<float>(v);
+                used = true;
+            }
+            if (key == "walking beside the cage, a picture" && number(value, v) && v > 0.0)
+            {
+                leave.walkOutside = static_cast<float>(v);
                 used = true;
             }
             if (key == "getting on from") // a tool's own: where its wrestler stands; in a match, wherever they stood
@@ -217,7 +233,7 @@ void vendetta_cage::readCageFile()
                 g_file.loops.insert(key.text);
     }
     if (const Json *numbers = root.find("numbers"); numbers && numbers->isObject())
-        readNumbers(*numbers, g_file.numbers, skipped);
+        readNumbers(*numbers, g_file.numbers, g_file.leave, skipped);
     if (const Json *custom = root.find("custom sounds"); custom && custom->isObject())
         for (const auto &[key, value] : custom->members)
         {

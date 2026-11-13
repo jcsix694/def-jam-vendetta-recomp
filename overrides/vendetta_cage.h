@@ -18,6 +18,10 @@ namespace vendetta_cage
         bool pinSubmission = false; // pins and submissions win (rule bits 0x4, 0x2)
         bool tko = false;           // knockouts win (rule bit 0x1)
         bool ropeBreaks = true;     // a pin or a hold is broken at the ropes (rule bit 0x10)
+
+        // Rope breaks in the match: the choice counts only while pins and submissions do. With those off a rope break
+        // would only cut short a hold that can't win, so the match has none whatever the choice was left on.
+        bool ropeBreaksOn() const { return pinSubmission && ropeBreaks; }
     };
 
     // The match's rule halfword 0x2361CC (the match block 0x2361C8 + 4). Every match set-up writes all of it (Battle
@@ -82,4 +86,29 @@ namespace vendetta_cage
                      uint32_t &losersAt);
     // VENDETTA_CAGECLIMBLOG=2: the pictures after a landing, logged (from walls, every fighter every picture)
     void climbWatch(uint8_t *rdram, uint32_t fighter);
+
+    // Leaving by the door (vendetta_cage_leave.cpp). In a cage, tag and handicap are last man wins: someone pinned,
+    // submitted or knocked out who is not the team's last still in the ring is out of the match while it goes on. The
+    // game takes that wrestler over: up from the mat (a knockout after a wait), the walk to the ropes in front of the
+    // cage's door, the door swinging open, out through the ropes and down through the doorway to the floor, the door
+    // shut again, and standing beside it facing the ring, waiting as one over the top for the team does. All against
+    // all is first man wins: the first fall ends the match.
+    void leaveMatchStarting();
+    // out by a fall this match (on the way out or outside): not a team-mate still in the ring, not to be targeted
+    bool outByFall(uint8_t *rdram, uint32_t fighter);
+    // The climb's state for one waiting outside asks, each picture: the walk from the doorway to its place beside the
+    // door. Moves the fighter; the clip to play as the routine's last call (0: none), its flags.
+    uint32_t leaveAside(uint8_t *rdram, uint32_t fighter, uint32_t &flags);
+    // (vendetta_cage_climb.cpp) a fighter on the floor outside made to wait there as one over the top for the team does
+    // (out of play, the climb's state, out of reach, not targeted, left out by the fight camera); notTargeted: everyone
+    // targeting this fighter given someone still in the ring
+    void waitOutside(uint8_t *rdram, uint32_t fighter);
+    void notTargeted(uint8_t *rdram, uint32_t fighter);
+    // The cage's door (vendetta_cage_draw.cpp): where the model's file says it is, for the cage being drawn (the hinge's
+    // and the latch's place on the floor plan); false when the model has none. doorTo: the door told to swing open or
+    // shut, over so many pictures (it moves as the cage is drawn, so through a match's ending too); doorOpen: how far
+    // open it is now, 0 shut to 1 open (the leaf turned 90 degrees outward about its hinges).
+    bool door(float &hingeX, float &hingeZ, float &latchX, float &latchZ);
+    void doorTo(bool open, float pictures);
+    float doorOpen();
 }
