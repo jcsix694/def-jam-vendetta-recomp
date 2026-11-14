@@ -2814,7 +2814,7 @@ index 509fd07..71243e7 100644
  
      std::string CodeGenerator::translateVU_VMTIR(const Instruction &inst)
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..dfb52e8 100644
+index 589d768..94a56c5 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -82,6 +82,10 @@ else()
@@ -2918,13 +2918,14 @@ index 589d768..dfb52e8 100644
  if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      set_target_properties(ps2EntryRunner PROPERTIES
          UNITY_BUILD ON
-@@ -507,6 +567,19 @@ target_include_directories(ps2_runtime PUBLIC
+@@ -507,6 +567,20 @@ target_include_directories(ps2_runtime PUBLIC
  )
  
  target_link_libraries(ps2_runtime PUBLIC ps2_host_backend ffmpeg ps2_iop)
 +if(WIN32)
 +    target_link_libraries(ps2_runtime PRIVATE xinput) # the pads' motors on the PC's controllers (ps2_pad_rumble)
 +    target_link_libraries(ps2_runtime PRIVATE winhttp) # the update check at start (ps2_host_update)
++    target_link_libraries(ps2_runtime PRIVATE dxgi) # the graphics driver's version at start (ps2_host_update)
 +endif()
 +
 +# The window's exact fullscreen mode (resolution and refresh rate) through GLFW, which raylib builds in on desktops
@@ -2938,7 +2939,7 @@ index 589d768..dfb52e8 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
-@@ -518,10 +591,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
+@@ -518,10 +592,42 @@ if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_VITA AND NOT PS2X_IS_ANDROID)
      )
      target_link_libraries(ps2EntryRunner PRIVATE rlImGui imgui)
      target_compile_definitions(ps2EntryRunner PRIVATE PS2X_ENABLE_DEBUG_UI=1)
@@ -4817,10 +4818,10 @@ index 0000000..8337038
 +}
 diff --git a/ps2xRuntime/include/runtime/ps2_host_update.h b/ps2xRuntime/include/runtime/ps2_host_update.h
 new file mode 100644
-index 0000000..8da3052
+index 0000000..abee1b8
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_update.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,53 @@
 +#pragma once
 +
 +#include <cstdint>
@@ -4854,6 +4855,25 @@ index 0000000..8da3052
 +    // itself once finished() says so). progress(done, total) is asked a few times a second. Returns at once where
 +    // there is no such popup (not Windows).
 +    void showPreparing(const std::function<void(uint32_t &, uint32_t &)> &progress, const std::function<bool()> &finished);
++
++    // The graphics card the game draws with, as Vulkan describes it.
++    struct GraphicsCard
++    {
++        std::string name;              // VkPhysicalDeviceProperties::deviceName
++        uint32_t vendorId = 0;         // PCI: 0x8086 Intel, 0x1002 AMD, 0x10DE NVIDIA
++        uint32_t deviceId = 0;
++        uint32_t vulkanDriverVersion = 0; // VkPhysicalDeviceProperties::driverVersion (each maker packs it its own way)
++        bool luidValid = false;        // VkPhysicalDeviceIDProperties: the adapter's LUID, to find it in DXGI
++        uint8_t luid[8] = {};
++    };
++
++    // The card and its driver logged at every start ("[driver] ..."; the driver's version as Windows shows it in
++    // Device Manager, read through DXGI). A driver on the list of drivers known to draw this game wrong gets a popup
++    // once per card and driver (Play anyway / Quit; the answer kept in driver-warned.txt beside the game program), and
++    // a log line at every start. VENDETTA_DRIVER_CHECK=0: only the card's line; =log: no popup.
++    // VENDETTA_DRIVER_LIST=<file>: that list instead of the built-in one (tests). Returns false when the player chose
++    // Quit: the game should end.
++    bool checkGraphicsDriver(const GraphicsCard &card);
 +}
 diff --git a/ps2xRuntime/include/runtime/ps2_host_window.h b/ps2xRuntime/include/runtime/ps2_host_window.h
 new file mode 100644
@@ -12701,10 +12721,10 @@ index 0000000..39dc2de
 +bool gsPresentOverlayAvailable() { return false; }
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
 new file mode 100644
-index 0000000..f5d72b2
+index 0000000..782be52
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gs_gpu_parallel.cpp
-@@ -0,0 +1,1470 @@
+@@ -0,0 +1,1495 @@
 +// The GS on the graphics card: paraLLEl-GS (Arntzen Software AS, LGPL-3.0+) on Granite's Vulkan backend.
 +//
 +// The GS front end hands over the raw GS input in its own order (GIF data per path, register writes, presentations);
@@ -13364,6 +13384,31 @@ index 0000000..f5d72b2
 +                const VkPhysicalDevice chosen = pickPhysicalDevice(context.get_instance(), m_options.gpuSelector);
 +                if (!context.init_device(chosen, VK_NULL_HANDLE, nullptr, 0, flags))
 +                    return fail("no usable Vulkan device");
++                {
++                    // the card and its driver in the log; a driver known to draw the game wrong: a popup (once per
++                    // driver) before anything is prepared; Quit ends the game here
++                    ps2_host_update::GraphicsCard card;
++                    const VkPhysicalDeviceProperties &props = context.get_gpu_props();
++                    card.name = props.deviceName;
++                    card.vendorId = props.vendorID;
++                    card.deviceId = props.deviceID;
++                    card.vulkanDriverVersion = props.driverVersion;
++                    if (vkGetPhysicalDeviceProperties2)
++                    {
++                        VkPhysicalDeviceIDProperties idProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
++                        VkPhysicalDeviceProperties2 props2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
++                        props2.pNext = &idProps;
++                        vkGetPhysicalDeviceProperties2(context.get_gpu(), &props2);
++                        card.luidValid = idProps.deviceLUIDValid == VK_TRUE;
++                        std::memcpy(card.luid, idProps.deviceLUID, sizeof(card.luid));
++                    }
++                    if (!ps2_host_update::checkGraphicsDriver(card))
++                    {
++                        std::cout.flush();
++                        std::cerr.flush();
++                        std::_Exit(0);
++                    }
++                }
 +
 +                auto deviceHolder = std::make_unique<Vulkan::Device>();
 +                Vulkan::Device &device = *deviceHolder;
@@ -17743,10 +17788,10 @@ index 0000000..0396c38
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_host_update.cpp b/ps2xRuntime/src/lib/ps2_host_update.cpp
 new file mode 100644
-index 0000000..7cb7c1b
+index 0000000..a866a8a
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_host_update.cpp
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,687 @@
 +#include "runtime/ps2_host_update.h"
 +
 +#include <iostream>
@@ -17760,22 +17805,27 @@ index 0000000..7cb7c1b
 +#endif
 +#include <windows.h>
 +#include <commctrl.h>
++#include <dxgi.h>
 +#include <winhttp.h>
 +
 +// Windows' newer controls (version 6): the popups' current look and the task dialog with a progress bar
 +#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 +
++#include <algorithm>
 +#include <array>
++#include <cctype>
 +#include <chrono>
 +#include <condition_variable>
 +#include <cstdio>
 +#include <cstdlib>
++#include <cstring>
 +#include <filesystem>
 +#include <fstream>
 +#include <memory>
 +#include <mutex>
 +#include <sstream>
 +#include <thread>
++#include <vector>
 +#endif
 +
 +namespace ps2_host_update
@@ -17798,6 +17848,12 @@ index 0000000..7cb7c1b
 +#if !defined(_WIN32)
 +    bool checkAtStart() { return true; }
 +    void showPreparing(const std::function<void(uint32_t &, uint32_t &)> &, const std::function<bool()> &) {}
++    bool checkGraphicsDriver(const GraphicsCard &card)
++    {
++        std::cerr << "[driver] card \"" << card.name << "\" (vendor " << std::hex << card.vendorId << ", device "
++                  << card.deviceId << std::dec << ")" << std::endl;
++        return true;
++    }
 +#else
 +    namespace
 +    {
@@ -17974,6 +18030,7 @@ index 0000000..7cb7c1b
 +        // The popup's two buttons say Update (or Rebuild) and Play (a message box's Yes and No, renamed as it opens).
 +        HHOOK g_hook = nullptr;
 +        const wchar_t *g_yesText = L"Update";
++        const wchar_t *g_noText = L"Play";
 +
 +        LRESULT CALLBACK renameButtons(int code, WPARAM wparam, LPARAM lparam)
 +        {
@@ -17981,7 +18038,7 @@ index 0000000..7cb7c1b
 +            {
 +                const HWND box = reinterpret_cast<HWND>(wparam);
 +                SetDlgItemTextW(box, IDYES, g_yesText);
-+                SetDlgItemTextW(box, IDNO, L"Play");
++                SetDlgItemTextW(box, IDNO, g_noText);
 +                UnhookWindowsHookEx(g_hook);
 +                g_hook = nullptr;
 +                return 0;
@@ -17989,18 +18046,26 @@ index 0000000..7cb7c1b
 +            return CallNextHookEx(g_hook, code, wparam, lparam);
 +        }
 +
-+        bool askYesPlay(const std::wstring &text, const wchar_t *yes)
++        // A message box with its Yes and No buttons renamed: true = the first (yes) one.
++        bool askTwo(const std::wstring &text, const wchar_t *yes, const wchar_t *no, UINT icon)
 +        {
 +            g_yesText = yes;
++            g_noText = no;
 +            g_hook = SetWindowsHookExW(WH_CBT, renameButtons, nullptr, GetCurrentThreadId());
-+            const int choice = MessageBoxW(nullptr, text.c_str(), wide(config().title).c_str(),
-+                                           MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON1 | MB_SETFOREGROUND | MB_TOPMOST);
++            const std::string title = config().title.empty() ? std::string("PS2Recomp") : config().title;
++            const int choice = MessageBoxW(nullptr, text.c_str(), wide(title).c_str(),
++                                           MB_YESNO | icon | MB_DEFBUTTON1 | MB_SETFOREGROUND | MB_TOPMOST);
 +            if (g_hook)
 +            {
 +                UnhookWindowsHookEx(g_hook);
 +                g_hook = nullptr;
 +            }
 +            return choice == IDYES;
++        }
++
++        bool askYesPlay(const std::wstring &text, const wchar_t *yes)
++        {
++            return askTwo(text, yes, L"Play", MB_ICONINFORMATION);
 +        }
 +
 +        bool askUpdate(const std::string &latest, const std::string &installed)
@@ -18097,6 +18162,209 @@ index 0000000..7cb7c1b
 +        taskDialog(&dialog, nullptr, nullptr, nullptr);
 +        while (!finished())
 +            std::this_thread::sleep_for(std::chrono::milliseconds(50));
++    }
++
++    namespace
++    {
++        // The graphics drivers known to draw the game wrong. Each line: the card's maker (intel, amd, nvidia), the
++        // card (a part of its name as Vulkan gives it, or * for every card of that maker), then the newest driver
++        // version known to draw wrong, as Windows numbers it: that one and every older one are on the list.
++        //   intel * 30.0.100.9864: a laptop's Intel UHD Graphics (i3-1005G1): the wrestlers missing, then the whole
++        //     3-D picture striped
++        //   intel Iris(R) Xe 31.0.101.3302: an Iris Xe: no wrestlers, the ropes missing, black specks, the mat's
++        //     logo wrong; Intel's 32.0.101.7092 draws it right
++        // Both come from Intel's compiler getting paraLLEl-GS's main shader wrong.
++        const char *kDriverList = "intel * 30.0.100.9864\n"
++                                  "intel Iris(R) Xe 31.0.101.3302\n";
++        const char *kDriverWarnedFile = "driver-warned.txt"; // the card and driver the player chose Play anyway for
++
++        using DriverVersion = std::array<int, 4>;
++
++        bool parseDriverVersion(const std::string &text, DriverVersion &out)
++        {
++            int a = 0, b = 0, c = 0, d = 0;
++            const int n = std::sscanf(text.c_str(), "%d.%d.%d.%d", &a, &b, &c, &d);
++            if (n < 2)
++                return false;
++            out = {a, b, n >= 3 ? c : 0, n >= 4 ? d : 0};
++            return true;
++        }
++
++        std::string lowerCase(std::string text)
++        {
++            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c)
++                           { return static_cast<char>(std::tolower(c)); });
++            return text;
++        }
++
++        // "intel" / "amd" / "nvidia" (the list's word), and the name for the message
++        std::string makerWord(uint32_t vendor)
++        {
++            switch (vendor)
++            {
++            case 0x8086u: return "intel";
++            case 0x1002u: return "amd";
++            case 0x10DEu: return "nvidia";
++            default: return {};
++            }
++        }
++
++        std::wstring makerName(uint32_t vendor)
++        {
++            switch (vendor)
++            {
++            case 0x8086u: return L"Intel";
++            case 0x1002u: return L"AMD";
++            case 0x10DEu: return L"NVIDIA";
++            default: return {};
++            }
++        }
++
++        // The driver's version as Device Manager shows it (e.g. 32.0.101.7092): DXGI's user-mode driver version of
++        // the adapter Vulkan draws with (found by its LUID, else by its vendor and device ids). Empty if not found.
++        std::string windowsDriverVersion(const GraphicsCard &card)
++        {
++            IDXGIFactory1 *factory = nullptr;
++            if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void **>(&factory))) || !factory)
++                return {};
++            std::string found;
++            IDXGIAdapter1 *adapter = nullptr;
++            for (UINT i = 0; found.empty() && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
++            {
++                DXGI_ADAPTER_DESC1 desc{};
++                if (SUCCEEDED(adapter->GetDesc1(&desc)))
++                {
++                    static_assert(sizeof(desc.AdapterLuid) == sizeof(card.luid), "a LUID is 8 bytes");
++                    const bool same = card.luidValid ? std::memcmp(&desc.AdapterLuid, card.luid, sizeof(card.luid)) == 0
++                                                     : desc.VendorId == card.vendorId && desc.DeviceId == card.deviceId;
++                    LARGE_INTEGER umd{};
++                    if (same && SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd)))
++                    {
++                        char text[64];
++                        std::snprintf(text, sizeof(text), "%u.%u.%u.%u", unsigned(HIWORD(umd.HighPart)),
++                                      unsigned(LOWORD(umd.HighPart)), unsigned(HIWORD(umd.LowPart)), unsigned(LOWORD(umd.LowPart)));
++                        found = text;
++                    }
++                }
++                adapter->Release();
++            }
++            factory->Release();
++            return found;
++        }
++
++        // Vulkan's own driver number, unpacked as each maker packs it
++        std::string vulkanDriverText(const GraphicsCard &card)
++        {
++            const uint32_t v = card.vulkanDriverVersion;
++            char text[64];
++            if (card.vendorId == 0x10DEu)
++                std::snprintf(text, sizeof(text), "%u.%u.%u.%u", (v >> 22) & 0x3FFu, (v >> 14) & 0xFFu, (v >> 6) & 0xFFu, v & 0x3Fu);
++            else if (card.vendorId == 0x8086u)
++                std::snprintf(text, sizeof(text), "%u.%u", v >> 14, v & 0x3FFFu);
++            else
++                std::snprintf(text, sizeof(text), "%u.%u.%u", v >> 22, (v >> 12) & 0x3FFu, v & 0xFFFu);
++            return text;
++        }
++
++        // The list's line this card and driver fall under; empty = none.
++        std::string driverListLine(const GraphicsCard &card, const DriverVersion &driver, std::string &source)
++        {
++            std::string list = kDriverList;
++            source = "the built-in list";
++            if (const char *file = std::getenv("VENDETTA_DRIVER_LIST"); file && *file)
++            {
++                if (readWhole(file, list))
++                    source = file;
++                else
++                    std::cerr << "[driver] VENDETTA_DRIVER_LIST=" << file << " can't be read: the built-in list" << std::endl;
++            }
++            const std::string maker = makerWord(card.vendorId), name = lowerCase(card.name);
++            std::istringstream lines(list);
++            std::string line;
++            while (std::getline(lines, line))
++            {
++                if (!line.empty() && line.back() == '\r')
++                    line.pop_back();
++                std::istringstream words(line);
++                std::vector<std::string> parts;
++                for (std::string word; words >> word;)
++                    parts.push_back(word);
++                if (parts.size() < 3 || parts[0][0] == '#')
++                    continue;
++                std::string part;
++                for (size_t i = 1; i + 1 < parts.size(); ++i)
++                    part += (i > 1 ? " " : "") + parts[i];
++                DriverVersion newestWrong{};
++                if (lowerCase(parts[0]) != maker || !parseDriverVersion(parts.back(), newestWrong))
++                    continue;
++                if (part != "*" && name.find(lowerCase(part)) == std::string::npos)
++                    continue;
++                if (driver <= newestWrong)
++                    return line;
++            }
++            return {};
++        }
++    }
++
++    bool checkGraphicsDriver(const GraphicsCard &card)
++    {
++        const std::string windows = windowsDriverVersion(card);
++        char ids[64];
++        std::snprintf(ids, sizeof(ids), "vendor %04x, device %04x", card.vendorId, card.deviceId);
++        std::cerr << "[driver] card \"" << card.name << "\" (" << ids << "), driver "
++                  << (windows.empty() ? std::string("unknown (Windows doesn't say)") : windows)
++                  << " (Vulkan's own number " << vulkanDriverText(card) << ")" << std::endl;
++        const char *mode = std::getenv("VENDETTA_DRIVER_CHECK");
++        if (mode && mode[0] == '0')
++            return true;
++        DriverVersion driver{};
++        if (windows.empty() || !parseDriverVersion(windows, driver))
++        {
++            std::cerr << "[driver] the driver's version unknown: not checked" << std::endl;
++            return true;
++        }
++        std::string source;
++        const std::string line = driverListLine(card, driver, source);
++        if (line.empty())
++        {
++            std::cerr << "[driver] not on the list of drivers known to draw the game wrong" << std::endl;
++            return true;
++        }
++        std::cerr << "[driver] ON THE LIST of drivers known to draw the game wrong (" << source << ": \"" << line
++                  << "\"): the wrestlers and other parts of a match may not show; the fix is a newer driver"
++                  << std::endl;
++        if (mode && std::string(mode) == "log")
++        {
++            std::cerr << "[driver] no popup (VENDETTA_DRIVER_CHECK=log)" << std::endl;
++            return true;
++        }
++        const std::filesystem::path warned = programFolder() / kDriverWarnedFile;
++        const std::string key = card.name + " | " + windows;
++        std::string before;
++        std::getline(std::ifstream(warned), before);
++        if (before == key)
++        {
++            std::cerr << "[driver] the player chose Play anyway for this card and driver before (" << kDriverWarnedFile
++                      << "): no popup" << std::endl;
++            return true;
++        }
++        std::cerr << "[driver] the warning shown" << std::endl;
++        const std::wstring maker = makerName(card.vendorId);
++        const std::wstring site = maker.empty() ? L"the card maker's website" : maker + L"'s website";
++        const bool play = askTwo(
++            L"Your graphics driver is too old for this game.\n\nCard: " + wide(card.name) + L"\nDriver: " + wide(windows) +
++                L"\n\nWith this driver, the wrestlers and other parts of a match may not show. Update the driver from " +
++                site + L" (Windows Update often keeps an old one), or set Drawn by to CPU in the settings program."
++                L"\n\nPlay anyway starts the game now. You won't be asked again for this driver.",
++            L"Play anyway", L"Quit", MB_ICONWARNING);
++        if (!play)
++        {
++            std::cerr << "[driver] the player chose Quit" << std::endl;
++            return false;
++        }
++        std::ofstream(warned) << key << "\n";
++        std::cerr << "[driver] the player chose Play anyway" << std::endl;
++        return true;
 +    }
 +
 +    bool checkAtStart()
@@ -23179,7 +23447,7 @@ index 6974254..6fe0609 100644
 +    return true;
 +}
 diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
-index 563bcbd..d20d0c8 100644
+index 563bcbd..6652ad2 100644
 --- a/ps2xRuntime/src/main.cpp
 +++ b/ps2xRuntime/src/main.cpp
 @@ -1,4 +1,7 @@
@@ -23198,7 +23466,7 @@ index 563bcbd..d20d0c8 100644
  
  #if defined(__ANDROID__)
  #include <android/log.h>
-@@ -157,19 +161,79 @@ namespace
+@@ -157,19 +161,82 @@ namespace
          {
              return configuredPath;
          }
@@ -23259,6 +23527,9 @@ index 563bcbd..d20d0c8 100644
 +        std::string whyNot;
 +#if defined(_WIN32)
 +        _putenv_s("VENDETTA_PREPARE_POPUP", "0");
++        // no driver popup during the setup (only its lines): the player sees it at the game's own start
++        if (const char *check = std::getenv("VENDETTA_DRIVER_CHECK"); !(check && check[0] == '0'))
++            _putenv_s("VENDETTA_DRIVER_CHECK", "log");
 +#endif
 +        auto renderer = makeGpuRenderer(options, whyNot);
 +        if (!renderer)

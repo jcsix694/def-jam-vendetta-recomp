@@ -17,6 +17,8 @@ $r = Split-Path -Parent $PSScriptRoot
 $env:VENDETTA_NO_HOST_INPUT = '1'
 # and the player's settings.toml too (the built-in defaults, no file written); a normal window unless -Max
 if (-not $env:VENDETTA_SETTINGS) { $env:VENDETTA_SETTINGS = 'none' }
+# an old graphics driver's popup would wait for a click: only its log lines in a test run
+if (-not $env:VENDETTA_DRIVER_CHECK) { $env:VENDETTA_DRIVER_CHECK = 'log' }
 if (-not $Max -and -not $env:VENDETTA_MAXIMISED) { $env:VENDETTA_MAXIMISED = '0' }
 $p = Start-Process -FilePath "$r\PS2Recomp\out\$Build\ps2xRuntime\ps2EntryRunner.exe" -ArgumentList "`"$r\game\SLUS_206.39`"" -WorkingDirectory $r -RedirectStandardOutput "$r\shots\$Name.log" -RedirectStandardError "$r\shots\$Name.log.err" -PassThru
 "started pid $($p.Id)"
