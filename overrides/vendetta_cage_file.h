@@ -75,6 +75,9 @@ namespace vendetta_cage
         float climbGiveUp = 300.0f; // "computer: pictures to reach the ropes to climb"
         float shake = 0.35f;        // "computer: a shake's chance": a second, times the game's own answer to a climber
         float shakeGiveUp = 300.0f; // "computer: pictures to reach a climber's side"
+        float watchMost = 3.0f;     // "computer: seconds at most watching a climber": standing in the ring with an
+                                    // opponent on the cage, it goes to shake by then at the lowest level (two thirds of
+                                    // it at level 1, a third at level 2), whatever its chance a second rolled
         float diveMomentum = 20.0f; // "computer: momentum to climb to dive" (Blazin' climbs with any)
         float dive = 0.25f;         // "computer: a dive's chance a second": with ESCAPE off, an opponent down, the climb to dive
     };

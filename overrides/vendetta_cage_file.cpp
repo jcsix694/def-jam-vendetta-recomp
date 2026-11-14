@@ -61,6 +61,7 @@ namespace vendetta_cage_file
                                        {"computer: pictures to reach the ropes to climb", &cpu.climbGiveUp},
                                        {"computer: a shake's chance", &cpu.shake},
                                        {"computer: pictures to reach a climber's side", &cpu.shakeGiveUp},
+                                       {"computer: seconds at most watching a climber", &cpu.watchMost},
                                        {"computer: a dive's chance a second", &cpu.dive},
                                        {"computer: momentum to climb to dive", &cpu.diveMomentum}};
         struct Named

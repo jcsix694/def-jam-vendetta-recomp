@@ -17,7 +17,9 @@
 //   shaking or waiting outside it presses nothing (the climb's own state makes a computer's inputs there).
 // - The thinker wrapped: a computer in the cage's state is given action 16; with an opponent on the cage that can be
 //   shaken, by a chance (the game's own answer to a turnbuckle climber: skill x 0.7 + 0.5, a third at level 0) it goes
-//   to shake; with ESCAPE on, by a chance a second (much higher while every opponent is down and hurt, as No Mercy's
+//   to shake, and at the latest after "computer: seconds at most watching a climber" (by its level: all of it at 0,
+//   two thirds at 1, a third at 2; a random part of that: the roll alone left a computer that kept failing it standing
+//   there, the game's own thinker having nothing to do with an opponent on the cage); with ESCAPE on, by a chance a second (much higher while every opponent is down and hurt, as No Mercy's
 //   trigger), it goes to climb out; with ESCAPE off, by a chance a second while an opponent is down, it climbs the
 //   side nearest that opponent to dive off the top onto it (on the truss the climb's state presses cross: the
 //   wrestler's own top-rope dive; none fitting, it climbs back down); otherwise the game's thinker, as the routine's
@@ -73,6 +75,8 @@ namespace vendetta_cage_cpu
         bool climbNext = false;                  // a passed climb roll, used at the next think
         bool beenOnCage = false;                 // this action has had the fighter in the cage's state: done once out
         uint32_t diveAt = 0;                     // ESCAPE off: the opponent down that the passed roll is for
+        float watching = 0.0f;                   // pictures standing in the ring with an opponent on the cage to shake
+        float watchLimit = -1.0f;                // this watch's most, picked when it starts (-1: none started)
     };
     Cpu g_cpu[4];
     float g_fight = 0.0f; // pictures of this cage match's fight
@@ -398,19 +402,23 @@ namespace vendetta_cage_cpu
             const uint32_t level = Ps2FastRead32(rdram, brain + kLevel);
             // an opponent on the cage: the shake, by a roll each second (at once after coming down to shake)
             const bool cameDown = vendetta_cage::cpuDroppedToShake(rdram, fighter);
+            const bool watchedLongEnough = c.watchLimit >= 0.0f && c.watching >= c.watchLimit;
             // VENDETTA_CAGETEST_NOSHAKE=1 (tests): no shake by chance (coming down to shake still does)
             static const bool noShake = []() { const char *v = std::getenv("VENDETTA_CAGETEST_NOSHAKE"); return v && v[0] == '1'; }();
             if (const uint32_t climber = climberToShake(rdram, fighter);
-                climber && (cameDown || (!noShake && c.sinceShakeRoll >= 60.0f)))
+                climber && (cameDown || (!noShake && (c.sinceShakeRoll >= 60.0f || watchedLongEnough))))
             {
                 c.sinceShakeRoll = 0.0f;
                 float p = (skill * 0.7f + 0.5f) * num().shake;
                 if (level == 0u)
                     p *= 0.35f;
-                if (cameDown || roll(p))
+                if (cameDown || watchedLongEnough || roll(p))
                 {
                     Ps2FastWrite32(rdram, fighter + kTarget, climber);
-                    startOwn(rdram, brain, fighter, index, Mode::Shake, "an opponent on the cage");
+                    std::cerr << "[cage] cpu: player " << index << " watched the climber " << c.watching / 60.0f
+                              << " s (its most " << c.watchLimit / 60.0f << " s, level " << level << ")" << std::endl;
+                    startOwn(rdram, brain, fighter, index, Mode::Shake,
+                             watchedLongEnough && !cameDown ? "an opponent on the cage, watched long enough" : "an opponent on the cage");
                     ctx->pc = getRegU32(ctx, 31);
                     return;
                 }
@@ -489,8 +497,24 @@ void vendetta_cage::cpuEveryPicture(uint8_t *rdram)
                           << std::endl;
             c.mode = Mode::None; // the game started another action (knocked down, hit): ours is over
         }
-        if (!(Ps2FastRead8(rdram, f + kPlay) & kComputer) || c.mode != Mode::None ||
-            Ps2FastRead32(rdram, f + kState) != kStanding || !fighting(rdram, f) || c.sinceTried < num().climbAgain)
+        // the watch: standing in the ring, doing nothing of the cage's, with an opponent on the cage it could shake
+        const bool computer = (Ps2FastRead8(rdram, f + kPlay) & kComputer) != 0u;
+        const bool standing = Ps2FastRead32(rdram, f + kState) == kStanding && fighting(rdram, f) &&
+                              (Ps2FastRead16(rdram, f + kPlace) & kInRing);
+        if (computer && c.mode == Mode::None && standing && vendetta_cage_cpu::climberToShake(rdram, f))
+        {
+            if (c.watchLimit < 0.0f)
+            {
+                const uint32_t level = std::min(Ps2FastRead32(rdram, brain + kLevel), 2u);
+                const float most = std::max(num().watchMost, 0.0f) * 60.0f * (3.0f - static_cast<float>(level)) / 3.0f;
+                c.watchLimit = std::uniform_real_distribution<float>(0.5f, 1.0f)(g_random) * most;
+                c.watching = 0.0f;
+            }
+            c.watching += step;
+        }
+        else if (!computer || c.mode != Mode::None || !vendetta_cage_cpu::climberToShake(rdram, f))
+            c.watching = 0.0f, c.watchLimit = -1.0f; // (knocked about while watching: the watch goes on)
+        if (!computer || c.mode != Mode::None || !standing || c.sinceTried < num().climbAgain)
             continue;
         c.sinceRoll += step;
         if (c.sinceRoll < 60.0f)

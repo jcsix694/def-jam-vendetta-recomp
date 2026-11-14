@@ -647,6 +647,7 @@
     "computer: a shake's chance": 0.35,
     "computer: a dive's chance a second": 0.25,
     "computer: momentum to climb to dive": 20,
-    "computer: pictures to reach a climber's side": 300
+    "computer: pictures to reach a climber's side": 300,
+    "computer: seconds at most watching a climber": 3
   }
 }
