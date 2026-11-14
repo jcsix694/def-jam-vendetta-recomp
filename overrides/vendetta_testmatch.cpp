@@ -16,7 +16,7 @@
 // against the last two: as Tag Team leaves it, +0x10 = 2, the order +0x8C..+0x98 = 0 1 2 3) or "2-on-1" / "3-on-1"
 // (three or four, the first alone against the rest: 1 Versus Many, +0x10 = 3); FUN_00140298 makes the match kind from
 // the type and the number (1, 4 / 8, 2, 0x10 / 0x20).
-// "match type": "normal" (the game's own, also without it) or "cage", whose ways to win are "cage"'s (each left out is
+// "match type": "normal" (the game's own, also without it), "tornado" (tag: both partners in, no tags) or "cage", whose ways to win are "cage"'s (each left out is
 // as Choose Match's second step starts: escape on, pin off, submission off, TKO off, rope breaks on; vendetta_cage.h;
 // rope breaks count only with pin or submission on, as in the menu; the older "pin & submission" sets both).
 //
@@ -251,8 +251,10 @@ namespace vendetta_testmatch
         out.rules = vendetta_cage::normalRules();
         if (const auto *type = json.find("match type"); type && type->isString() && type->text == "cage")
             out.rules = vendetta_cage::Rules{}, out.rules.cage = true;
+        else if (type && type->isString() && type->text == "tornado")
+            out.rules.tornado = true; // a tag match's tornado tag (its ways to win as a normal match's: "normal")
         else if (type && !(type->isString() && type->text == "normal"))
-            std::cerr << "[testmatch] \"match type\" is \"normal\" or \"cage\": a normal match" << std::endl;
+            std::cerr << "[testmatch] \"match type\" is \"normal\", \"tornado\" or \"cage\": a normal match" << std::endl;
         if (const auto *cage = json.find("cage"); out.rules.cage && cage && cage->isObject())
         {
             out.rules.escape = flag(cage->find("escape"), out.rules.escape);

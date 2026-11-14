@@ -171,7 +171,7 @@ static const char *const kMenuJoined[10] = {
     "user-setup.p14-1",
 };
 
-static const MenuPiece kMenuPieces[1169] = {
+static const MenuPiece kMenuPieces[1170] = {
     {"arrows.g0-0", 1, 0, 2, 0x0u, 0u, 97, 52, 131, 103, 0u, 1u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
     {"arrows.g0-0.left", 1, 0, 2, 0x0u, 0u, 62, 52, 96, 103, 1u, 1u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
     {"backdrop.background", 1, 0, 1, 0x2u, 0u, 0, 0, 512, 224, 2u, 1u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
@@ -1341,4 +1341,5 @@ static const MenuPiece kMenuPieces[1169] = {
     {"choose-match.text-2000288", 2, 0, 0, 0x2000288u, 0u, 0, 0, 0, 0, 1542u, 0u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
     {"choose-match.text-200028c", 2, 0, 0, 0x200028Cu, 0u, 0, 0, 0, 0, 1542u, 0u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
     {"choose-match.text-2000299", 2, 0, 0, 0x2000299u, 0u, 0, 0, 0, 0, 1542u, 0u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
+    {"choose-match.text-20002a4", 2, 0, 0, 0x20002A4u, 0u, 0, 0, 0, 0, 1542u, 0u, 0, -1, 0, 0.0000f, 0.0000f, 1.0000f, 1.0000f},
 };

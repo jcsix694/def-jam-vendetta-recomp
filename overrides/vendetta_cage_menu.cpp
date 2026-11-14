@@ -106,10 +106,11 @@ namespace vendetta_cage_menu
     const Row kCageRows[] = {kMatchType, kEscape, kPin, kSubmission, kTko, kRopeBreaks};
     const Row kNormalRows[] = {kMatchType, kPin, kSubmission, kTko, kRopeBreaks};
     // (SUBMISSION last: the words before it keep their places in the store's area)
+    // (TORNADO TAG last: the same)
     enum Word { kWordMatchType, kWordNormal, kWordCage, kWordEscape, kWordPin, kWordTko, kWordRopeBreaks, kWordEmpty,
-                kWordSubmission, kWords };
+                kWordSubmission, kWordTornado, kWords };
     const char *const kWordText[kWords] = {"MATCH TYPE", "NORMAL", "CAGE MATCH", "ESCAPE", "PIN", "TKO", "ROPE BREAKS", "",
-                                           "SUBMISSION"};
+                                           "SUBMISSION", "TORNADO TAG"};
     const Word kRowLabel[kRows] = {kWordMatchType, kWordEscape, kWordPin, kWordSubmission, kWordTko, kWordRopeBreaks};
 
     PS2Runtime::RecompiledFunction g_original = nullptr, g_originalBackFrom = nullptr, g_originalSetUp = nullptr,
@@ -123,10 +124,34 @@ namespace vendetta_cage_menu
         r.cage = true;
         return r;
     }
+    vendetta_cage::Rules tornadoDefaults()
+    {
+        vendetta_cage::Rules r = vendetta_cage::normalRules();
+        r.tornado = true;
+        return r;
+    }
     vendetta_cage::Rules g_cageChoice = cageDefaults();
     vendetta_cage::Rules g_normalChoice = vendetta_cage::normalRules();
-    bool g_cageType = false;
-    vendetta_cage::Rules &choice() { return g_cageType ? g_cageChoice : g_normalChoice; }
+    vendetta_cage::Rules g_tornadoChoice = tornadoDefaults();
+    // MATCH TYPE's values, left to right: NORMAL, TORNADO TAG (the tag battle type only), CAGE MATCH
+    enum Type { kTypeNormal, kTypeTornado, kTypeCage };
+    int g_type = kTypeNormal;
+    uint32_t g_battleType = 0; // the battle type the second step is for (front end +0x10: 2 tag)
+    constexpr uint32_t kTagBattle = 2u;
+    bool g_cageType = false;   // (g_type == kTypeCage, kept in step with it)
+    vendetta_cage::Rules &choice()
+    {
+        return g_type == kTypeCage ? g_cageChoice : g_type == kTypeTornado ? g_tornadoChoice : g_normalChoice;
+    }
+    // the match types this battle type offers, in order
+    int typeCount() { return g_battleType == kTagBattle ? 3 : 2; }
+    int typePlace() { return g_type == kTypeNormal ? 0 : g_type == kTypeCage ? typeCount() - 1 : 1; }
+    int typeAt(int place) { return place <= 0 ? kTypeNormal : place >= typeCount() - 1 ? kTypeCage : kTypeTornado; }
+    void setType(int type)
+    {
+        g_type = type;
+        g_cageType = type == kTypeCage;
+    }
     vendetta_cage::Rules g_test{};   // the test match's, for its own match set-up
     bool g_haveTest = false;
 
@@ -200,16 +225,16 @@ namespace vendetta_cage_menu
     bool canLeft(int row)
     {
         if (kindAt(row) == kMatchType)
-            return g_cageType;
+            return typePlace() > 0;
         const bool on = *value(row);
         return on && (kindAt(row) == kRopeBreaks || waysOn() > 1);
     }
-    bool canRight(int row) { return kindAt(row) == kMatchType ? !g_cageType : !*value(row); }
+    bool canRight(int row) { return kindAt(row) == kMatchType ? typePlace() < typeCount() - 1 : !*value(row); }
 
     uint32_t valueText(int row)
     {
         if (kindAt(row) == kMatchType)
-            return g_word[g_cageType ? kWordCage : kWordNormal];
+            return g_word[g_type == kTypeCage ? kWordCage : g_type == kTypeTornado ? kWordTornado : kWordNormal];
         if (kindAt(row) == kRopeBreaks)
             return choice().ropeBreaksOn() ? kOn : kOff; // what the match will do: OFF while the row is dimmed
         return *value(row) ? kOn : kOff;
@@ -219,7 +244,7 @@ namespace vendetta_cage_menu
     {
         auto onOff = [](bool b) { return b ? "on" : "off"; };
         if (!r.cage)
-            return std::string("NORMAL (pin ") + onOff(r.pin) + ", submission " + onOff(r.submission) + ", TKO " +
+            return std::string(r.tornado ? "TORNADO TAG (pin " : "NORMAL (pin ") + onOff(r.pin) + ", submission " + onOff(r.submission) + ", TKO " +
                    onOff(r.tko) + ", rope breaks " + onOff(r.ropeBreaksOn()) + ")";
         return std::string("CAGE MATCH (escape ") + onOff(r.escape) + ", pin " + onOff(r.pin) + ", submission " + onOff(r.submission) +
                ", TKO " + onOff(r.tko) + ", rope breaks " + onOff(r.ropeBreaksOn()) + ")";
@@ -302,7 +327,7 @@ namespace vendetta_cage_menu
             if (right ? !canRight(g_row) : !canLeft(g_row))
                 return kSoundBump;
             if (kindAt(g_row) == kMatchType)
-                g_cageType = right; // the rows below change with it: the cursor stays on MATCH TYPE
+                setType(typeAt(typePlace() + (right ? 1 : -1))); // the rows below change with it: the cursor stays on MATCH TYPE
             else
                 *value(g_row) = right;
             return kSoundMove;
@@ -368,6 +393,9 @@ namespace vendetta_cage_menu
                     Ps2FastWrite32(rdram, menu + kRepeats, repeats & ~(kLeft | kRight));
                     g_stage = 2;
                     g_row = kMatchType;
+                    g_battleType = Ps2FastRead32(rdram, menu + kKind);
+                    if (g_type == kTypeTornado && g_battleType != kTagBattle)
+                        setType(kTypeNormal); // tornado tag is for tag only
                     g_swallow |= kCross;
                     sound = kSoundSelect;
                 }
@@ -514,6 +542,7 @@ namespace vendetta_cage_menu
         };
         add(word & vendetta_cage::kRuleCage, "cage");
         add(word & vendetta_cage::kRuleEscape, "escape");
+        add(word & vendetta_cage::kRuleTornado, "tornado tag");
         add(word & vendetta_cage::kRuleKO, "KOs");
         add(word & vendetta_cage::kRuleSubmission, "submissions");
         add(word & vendetta_cage::kRulePin, "pins");
@@ -552,6 +581,8 @@ namespace vendetta_cage_menu
                 word &= ~kRuleSubmission;
             if (!rules.ropeBreaksOn())
                 word &= ~kRuleRopeBreaks;
+            if (rules.tornado && kind == 2u) // tornado tag: both partners in the ring, no tags; the cage's tag intros
+                word |= kRuleTagBothIn | kRuleTornado;
             if (word != before)
                 Ps2FastWrite16(rdram, kMatch + 4u, word);
         }

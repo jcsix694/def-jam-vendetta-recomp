@@ -1,4 +1,5 @@
-// Def Jam Vendetta (USA, SLUS-20639) - the cage match: a tag match's intros as the handicap pair's.
+// Def Jam Vendetta (USA, SLUS-20639) - the cage match and Battle's tornado tag: a tag match's intros as the handicap
+// pair's.
 // Copied into ps2xRuntime/src/runner/ by tools/sync_generated.py; edit this file in the repo's overrides/ folder.
 //
 // FUN_001245c8 builds the intro scenes at 0x29AF48 (0x84 bytes each: four entries of 0x20 {player, place x y z, angles
@@ -7,7 +8,7 @@
 // 0, 1) at spot 2 (facing 180), team B (2, 3) at spot 0. A handicap match's pair (FUN_00124fd8) has its own: clips
 // 0x2A20 + 2k and + 1, k a random 0-2, facing 0, camera path 0x1C + k (28-30), made for spot 0's end only.
 //
-// In a tag cage match FUN_00124748 is replaced: both teams get a handicap pair's intro (different ones), team B as the
+// In a tag cage match and Battle's tornado tag (rule bit kRuleTornado) FUN_00124748 is replaced: both teams get a handicap pair's intro (different ones), team B as the
 // handicap pair has it, team A turned half round (facing 180: its clips carry it to the far end) with its camera path
 // turned half round about the ring's middle when its scene starts (vendetta_ring.cpp's scene start, through
 // vendetta_cage::introTurnedHalf; put back after, as it puts back a path it moves).
@@ -55,10 +56,10 @@ namespace vendetta_cage_intros
 
     void orFlags(uint8_t *rdram, uint32_t at, uint16_t bits) { Ps2FastWrite16(rdram, at, static_cast<uint16_t>(Ps2FastRead16(rdram, at) | bits)); }
 
-    // ---- FUN_00124748: in a cage match each team a handicap pair's intro
+    // ---- FUN_00124748: in a cage match and Battle's tornado tag each team a handicap pair's intro
     void tagIntros(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        if (!(Ps2FastRead16(rdram, kRuleWord) & vendetta_cage::kRuleCage))
+        if (!(Ps2FastRead16(rdram, kRuleWord) & (vendetta_cage::kRuleCage | vendetta_cage::kRuleTornado)))
         {
             g_turned = false;
             g_tagIntros(rdram, ctx, runtime);

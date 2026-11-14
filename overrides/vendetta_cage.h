@@ -16,6 +16,7 @@ namespace vendetta_cage
     struct Rules
     {
         bool cage = false;
+        bool tornado = false;       // a tornado tag match (tag only): both partners in the ring, no tags (rule bit 0x20)
         bool escape = true;         // climbing out of the cage wins
         bool pin = false;           // pins win (rule bit 0x4)
         bool submission = false;    // submissions win (rule bit 0x2)
@@ -27,11 +28,12 @@ namespace vendetta_cage
         // whatever the choice was left on.
         bool ropeBreaksOn() const { return (pin || submission) && ropeBreaks; }
     };
-    // a normal match as the game plays it: every way to win on, rope breaks on
+    // a normal match as the game plays it: every way to win on, rope breaks on (a tornado tag match: the same, tornado)
     inline Rules normalRules()
     {
         Rules r;
         r.cage = false;
+        r.tornado = false;
         r.escape = false;
         r.pin = r.submission = r.tko = true;
         r.ropeBreaks = true;
@@ -45,6 +47,9 @@ namespace vendetta_cage
     constexpr uint16_t kRuleKO = 0x0001u, kRuleSubmission = 0x0002u, kRulePin = 0x0004u, kRuleRopeBreaks = 0x0010u,
                        kRuleTagBothIn = 0x0020u; // with match kind 2: both partners start in the ring, no tags
     constexpr uint16_t kRuleCage = 0x8000u, kRuleEscape = 0x4000u;
+    // Battle's tornado tag (with kRuleTagBothIn): Story's tag fights have both partners in too but not this, so only
+    // Battle's tornado tag gets the tag cage match's intros (vendetta_cage_intros.cpp)
+    constexpr uint16_t kRuleTornado = 0x2000u;
 
     // The cage's clips go by the numbers they had in the game they were converted from (3203 getting on, ...). One more is
     // made by the loader from 3204 (hanging): the hang at the rope hold, the lowest foot on the top rope, which its
