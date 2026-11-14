@@ -2,7 +2,10 @@
 #   python tools/setup_game.py --data <install folder> [--disc <disc.chd | disc.iso>] [--after-copy]
 # 1. the disc -> disc/ + game/ in the install folder, 2. Microsoft's C++ build tools (installed when missing: one
 # Windows prompt), 3. PS2Recomp's recompiler, 4. the game's code -> C++, 5. the game, 6. "Def Jam Vendetta
-# Recompiled.exe" in the install folder. The build folders are build/recomp and build/game there.
+# Recompiled.exe" in the install folder. The build folders are build/recomp and build/game there. A build folder made
+# with another compiler than the one the build tools give now (Visual Studio removed, updated or swapped for the Build
+# Tools: CMake keeps the first compiler's full path and fails with "is not a full path to an existing compiler tool",
+# GitHub issue #10) is emptied first, so it is configured afresh with this one.
 # A player's install (one with release-manifest.txt) keeps a copy of the list it was built from in
 # build/built-from-manifest.txt: a later build marks every file that differs from it as changed now, so files copied in
 # by hand with older dates (a release's files are all dated two days before it) are still rebuilt. --after-copy (the
@@ -76,6 +79,9 @@ KNOWN_ERRORS = [
     (re.compile(r'C1001|internal compiler error', re.IGNORECASE),
      "Microsoft's C++ compiler crashed: your build tools may be too old. Open the Visual Studio Installer, update "
      '"Build Tools 2022", then run the setup again.'),
+    (re.compile(r'is not a full path to an existing compiler tool', re.IGNORECASE),
+     "The build folder was set up with build tools that are no longer on this PC. Delete the folder files\\build in "
+     'the install folder, then run the setup again.'),
     (re.compile(r'still dirty after|system time is not set', re.IGNORECASE),
      "Some files are dated in the future. Check that your PC's date, time and time zone are right, then try again."),
 ]
@@ -390,9 +396,41 @@ def fix_future_dates(folder):
         say(f'{fixed} files were dated in the future: dated now')
 
 
+def cached_compiler(build):
+    """The C++ compiler a build folder was configured with (CMakeCache.txt's CMAKE_CXX_COMPILER), or None."""
+    try:
+        with open(os.path.join(build, 'CMakeCache.txt'), encoding='utf-8', errors='replace') as f:
+            for line in f:
+                m = re.match(r'CMAKE_CXX_COMPILER:[A-Z]+=(.+)', line.strip())
+                if m:
+                    return m.group(1).strip()
+    except OSError:
+        pass
+    return None
+
+
+def fresh_if_compiler_changed(build, env):
+    """A build folder configured with a compiler that is gone or isn't the one the build tools give now: emptied, so
+    CMake configures it afresh (it never looks for the compiler again once it has written one down)."""
+    old = cached_compiler(build)
+    if not old:
+        return
+    now = shutil.which('cl', path=env.get('PATH', env.get('Path', '')))
+    same = now and os.path.normcase(os.path.normpath(old)) == os.path.normcase(os.path.normpath(now))
+    if same and os.path.isfile(old):
+        return
+    why = 'is gone' if not os.path.isfile(old) else f'is not the one in use now ({now})'
+    say(f'{os.path.basename(build)}: it was set up with the compiler {old}, which {why}: building it afresh')
+    shutil.rmtree(build, ignore_errors=True)
+    if os.path.exists(os.path.join(build, 'CMakeCache.txt')):
+        raise SetupError(f'the old build folder {build} could not be removed (a program may be using it). Close the '
+                         'game and the settings program\'s other windows, delete that folder, then run the setup again')
+
+
 def step_recompiler(env, data, arch):
     step(3, STEPS[2])
     build = os.path.join(data, 'build', 'recomp')
+    fresh_if_compiler_changed(build, env)
     run(['cmake', '-S', PS2RECOMP, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DPS2X_BUILD_RUNTIME=OFF',
          '-DPS2X_BUILD_TEST=OFF', '-DPS2X_BUILD_STUDIO=OFF', '-DPS2X_BUILD_ANALYZER=OFF',
          f'-DPS2X_MSVC_ARCH={arch}'] + deps_args(), env=env)
@@ -442,6 +480,7 @@ def step_recompile(recompiler, data):
 def step_game(env, data, arch):
     step(5, STEPS[4])
     build = os.path.join(data, 'build', 'game')
+    fresh_if_compiler_changed(build, env)
     # the same build as build-fast.bat (out\fast), for this PC's processor
     cxx_flags = '/O2 /Ob1 /DNDEBUG' + (f' /arch:{arch}' if arch else '')
     run(['cmake', '-S', PS2RECOMP, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=RelWithDebInfo',
