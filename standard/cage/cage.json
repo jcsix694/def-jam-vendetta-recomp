@@ -26,32 +26,32 @@
     ]
   },
   "custom sounds": {
-    "BANG": {
-      "file": "sounds/BANG.wav",
+    "CAGE BANG": {
+      "file": "sounds/CAGE BANG.wav",
       "volume": 1
     },
-    "TAP": {
-      "file": "sounds/TAP.wav",
+    "CAGE TAP": {
+      "file": "sounds/CAGE TAP.wav",
       "volume": 1
     },
-    "TAP LONG": {
-      "file": "sounds/TAP LONG.wav",
+    "CAGE TAP LONG": {
+      "file": "sounds/CAGE TAP LONG.wav",
       "volume": 1
     },
-    "TAP MED": {
-      "file": "sounds/TAP MED.wav",
+    "CAGE TAP MED": {
+      "file": "sounds/CAGE TAP MED.wav",
       "volume": 1
     },
-    "THROW 1": {
-      "file": "sounds/THROW 1.wav",
+    "CAGE THROW 1": {
+      "file": "sounds/CAGE THROW 1.wav",
       "volume": 1
     },
-    "THROW 2": {
-      "file": "sounds/THROW 2.wav",
+    "CAGE THROW 2": {
+      "file": "sounds/CAGE THROW 2.wav",
       "volume": 1
     },
-    "THUD": {
-      "file": "sounds/THUD.wav",
+    "CAGE THUD": {
+      "file": "sounds/CAGE THUD.wav",
       "volume": 1
     }
   },
@@ -59,11 +59,11 @@
     "3203": [
       {
         "frame": 11,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 27,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 33,
@@ -75,15 +75,15 @@
       },
       {
         "frame": 60,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 89,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 94,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "3205": [
@@ -93,7 +93,7 @@
       },
       {
         "frame": 11,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 21,
@@ -101,289 +101,289 @@
       },
       {
         "frame": 34,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "3208": [
       {
         "frame": 10,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 24,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 34,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 50,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 63,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 75,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "3209": [
       {
         "frame": 6,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 24,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 37,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 48,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "320A": [
       {
         "frame": 6,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 24,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 37,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 48,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "320E": [
       {
         "frame": 10,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 17,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 31,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 42,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "320F": [
       {
         "frame": 7,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 15,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 26,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 40,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 49,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 61,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "3210": [
       {
         "frame": 7,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 15,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 23,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 36,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       }
     ],
     "3211": [
       {
         "frame": 7,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 15,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 23,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 36,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       }
     ],
     "3212": [
       {
         "frame": 17,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 23,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 61,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 77,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "3213": [
       {
         "frame": 12,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 27,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 59,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 74,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "3214": [
       {
         "frame": 13,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 27,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 53,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 68,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "3215": [
       {
         "frame": 13,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 24,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 47,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 62,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "3216": [
       {
         "frame": 12,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 21,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 41,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 54,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "3238": [
       {
         "frame": 8,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 24,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       }
     ],
     "3239": [
       {
         "frame": 3,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 6,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 9,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 14,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 19,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 22,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 25,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 30,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "323A": [
       {
         "frame": 0,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "323D": [
@@ -394,35 +394,35 @@
       },
       {
         "frame": 23,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 40,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "323F": [
       {
         "frame": 27,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 89,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       },
       {
         "frame": 121,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       }
     ],
     "3240": [
       {
         "frame": 0,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 9,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       }
     ],
     "3242": [
@@ -440,41 +440,107 @@
     "3245": [
       {
         "frame": 5,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 58,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
       }
     ],
     "3247": [
       {
         "frame": 15,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 34,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "3249": [
       {
         "frame": 79,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       }
     ],
     "324B": [
       {
         "frame": 9,
-        "sound": "TAP"
+        "sound": "CAGE TAP"
       },
       {
         "frame": 38,
-        "sound": "TAP MED"
+        "sound": "CAGE TAP MED"
       },
       {
         "frame": 58,
-        "sound": "TAP LONG"
+        "sound": "CAGE TAP LONG"
+      }
+    ],
+    "3260": [
+      {
+        "frame": 28,
+        "sound": "CAGE TAP"
+      },
+      {
+        "frame": 38,
+        "sound": "CAGE TAP LONG"
+      },
+      {
+        "frame": 54,
+        "sound": "CAGE TAP MED"
+      },
+      {
+        "frame": 62,
+        "sound": "CAGE TAP MED"
+      }
+    ],
+    "3262": [
+      {
+        "frame": 8,
+        "sound": "CAGE TAP MED"
+      },
+      {
+        "frame": 16,
+        "sound": "CAGE TAP MED"
+      },
+      {
+        "frame": 32,
+        "sound": "CAGE TAP LONG"
+      },
+      {
+        "frame": 42,
+        "sound": "CAGE TAP"
+      }
+    ],
+    "3263": [
+      {
+        "frame": 21,
+        "sound": "CAGE TAP"
+      },
+      {
+        "frame": 31,
+        "sound": "CAGE TAP LONG"
+      },
+      {
+        "frame": 46,
+        "sound": "CAGE TAP MED"
+      },
+      {
+        "frame": 60,
+        "sound": "CAGE TAP"
+      }
+    ],
+    "3264": [
+      {
+        "frame": 11,
+        "sound": "CAGE TAP LONG"
+      }
+    ],
+    "3266": [
+      {
+        "frame": 0,
+        "sound": "Stomp"
       }
     ]
   },
@@ -511,7 +577,8 @@
     "324B": 120,
     "3260": 120,
     "3262": 120,
-    "3263": 120
+    "3263": 120,
+    "3266": 120
   },
   "loops": [
     "3204",
@@ -559,11 +626,17 @@
     "a fall off the cage, damage": 10,
     "a shake into the dangle, momentum": 10,
     "a shake off the cage, momentum": 20,
+    "on the truss, out past the walls": 1.8,
+    "the drop outside lands, out past the walls": 6.5,
+    "the drop outside, times gravity": 5,
+    "the fall into the ring, times gravity": 5,
     "out by a knockout, pictures down before leaving": 600,
     "the door, pictures to swing open": 30,
     "walking beside the cage, a picture": 0.25,
     "taps with the momentum meter empty, times": 1.5,
-    "taps with the momentum meter full, times": 0.5,
+    "taps with the momentum meter full, times": 0.4,
+    "a shaker's taps at full health, times": 1,
+    "a shaker's taps with no health, times": 4,
     "computer: a climb's chance a second": 0.02,
     "computer: more chance a minute of the fight": 0.01,
     "computer: a climb's chance a second, most": 0.08,

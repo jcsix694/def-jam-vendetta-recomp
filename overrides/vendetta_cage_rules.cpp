@@ -101,9 +101,21 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
             c.out += std::clamp(move, -n.toCage, n.offCage);
             return;
         }
+        // inside: only what is no higher than the cage's top is behind a wire. A point above the top by less than its room
+        // rounds the top's edge (its room a ball: the part of it still below the top); one clear of the top is not held
+        // at all (a head or a hand out over the truss)
+        const float top = kMat + n.height;
         float most = -1e9f;
         for (int32_t i = 0; i < CAGE_ROOMS; ++i)
-            most = std::max(most, body.rooms[i].x + n.room[i]);
+        {
+            const float over = c.writtenY + body.rooms[i].z - top;
+            if (over >= n.room[i])
+                continue;
+            const float reach = over <= 0.0f ? n.room[i] : std::sqrt(n.room[i] * n.room[i] - over * over);
+            most = std::max(most, body.rooms[i].x + reach);
+        }
+        if (most < -1e8f)
+            return; // every point clear of the top
         const float move = n.wires - (most + c.out);
         if (move > 0.0f && !touch)
             return;
@@ -152,8 +164,18 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         startPhase(c, out, CAGE_PHASE_ONTO_TOP, CAGE_CLIP_ONTO_TOP, blend);
     }
 
-    // the second bar full (or ESCAPE off): up onto the truss from where the crouch has the anchor (kept: the truss's
-    // clips are made for it)
+    // where the truss's clips are made to start from: the anchor that has their end, resting on the truss, "on the
+    // truss, out past the walls"
+    float trussFrom(const CageNumbers &n, const CageHeights &h) { return n.walls + n.trussOut - h.truss[2]; }
+
+    float eased(float t)
+    {
+        t = std::clamp(t, 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    // the second bar full (or ESCAPE off): up onto the truss from where the crouch has the anchor (kept: getting onto
+    // the truss brings the anchor from there to trussFrom, coming back off takes it back)
     void ontoTruss(CageClimber &c, CagePictureOut &out)
     {
         c.dangles = 0;
@@ -165,10 +187,10 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
 
     // off the truss (back or over): the anchor back where the truss's clips are made for, facing the cage, a cut (their
     // first frame is the resting pose turned round)
-    void offTruss(CageClimber &c, CagePictureOut &out, int32_t phase, int32_t clip)
+    void offTruss(const CageNumbers &n, const CageHeights &h, CageClimber &c, CagePictureOut &out, int32_t phase, int32_t clip)
     {
         c.onTruss = 0;
-        c.out = c.perchOut;
+        c.out = trussFrom(n, h);
         c.along = c.perchAlong;
         c.y = c.perchY;
         startPhase(c, out, phase, clip, 0);
@@ -180,7 +202,8 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
     {
         return phase == CAGE_PHASE_OVER || phase == CAGE_PHASE_ONTO_TRUSS || phase == CAGE_PHASE_ON_TRUSS ||
                phase == CAGE_PHASE_OFF_TRUSS || phase == CAGE_PHASE_OVER_TRUSS || phase == CAGE_PHASE_LOSE_GRIP ||
-               phase == CAGE_PHASE_FALLING || phase == CAGE_PHASE_LAND;
+               phase == CAGE_PHASE_FALLING || phase == CAGE_PHASE_LAND || phase == CAGE_PHASE_HANG_OUTSIDE ||
+               phase == CAGE_PHASE_FALL_OUTSIDE || phase == CAGE_PHASE_LAND_OUTSIDE;
     }
 
     bool canBeShaken(int32_t phase)
@@ -366,6 +389,10 @@ void cage_rules_standard_numbers(CageNumbers *numbers)
     n.fallDamage = 10.0f;
     n.shakeDangleMomentum = 10.0f;
     n.shakeOffMomentum = 20.0f;
+    n.trussOut = 1.8f;
+    n.dropOut = 6.5f;
+    n.dropGravity = 2.5f;
+    n.fallGravity = 1.0f;
     *numbers = n;
 }
 
@@ -383,7 +410,8 @@ int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFr
                                    const CageClipFrame *letGo, int32_t letGoFrames, const CageClipFrame *dropLast,
                                    const CageClipFrame *trussLast, const CageClipFrame *restFirst,
                                    const CageClipFrame *gripLast, const CageClipFrame *fallPose,
-                                   const CageClipFrame *landFirst, CageHeights *heights)
+                                   const CageClipFrame *landFirst, const CageClipFrame *landOutFirst,
+                                   CageHeights *heights)
 {
     using namespace cage_rules_inside;
     if (!numbers || !onto || !hangFirst || !letGo || !dropLast || !trussLast || !restFirst || !gripLast || !fallPose ||
@@ -498,6 +526,15 @@ int32_t cage_rules_work_out_heights(const CageNumbers *numbers, const CageClipFr
     h.grip[0] = gripLast->root.x - fallPose->root.x;
     h.grip[1] = gripLast->root.y - fallPose->root.y;
     h.grip[2] = gripLast->root.z - fallPose->root.z;
+
+    // the way down outside: the landing's first frame's hips
+    if (landOutFirst)
+    {
+        h.dropOutside = 1;
+        h.landOut[0] = landOutFirst->hips.x;
+        h.landOut[1] = landOutFirst->hips.y;
+        h.landOut[2] = landOutFirst->hips.z;
+    }
     return 1;
 }
 
@@ -589,11 +626,12 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
     ++c.pictures;
     const bool started = c.pictures > 1; // the clip asked for last picture is playing
     // a picture of falling (one pose) back into the ring: down by gravity, back over the ropes to where the climb started
-    // as it goes; when the root is as low as landing starts with the anchor on the mat, the landing, there
+    // as it goes; when the root is as low as landing starts with the anchor on the mat, the landing, there. It falls
+    // "the fall into the ring, times gravity" as hard as a body really does
     auto fallStep = [&]()
     {
         const float landAt = kMat + h.landRootY - h.fallRootY;
-        c.fallSpeed += kGravity * in->step;
+        c.fallSpeed += kGravity * (n.fallGravity > 0.0f ? n.fallGravity : 1.0f) * in->step;
         c.y -= c.fallSpeed * in->step;
         const float t = c.fallFromY > landAt ? std::clamp((c.fallFromY - c.y) / (c.fallFromY - landAt), 0.0f, 1.0f) : 1.0f;
         const float toOut = std::min(c.startOut, c.fallFromOut); // back into the ring, never out again
@@ -778,12 +816,15 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         // up onto the truss, turning to face the ring (the clip carries the body from the crouch's anchor); at its end
         // the anchor moved onto the truss and turned, the resting clip played from there, a cut (it starts on the last
         // frame's pose)
+        // across the clip the anchor is brought from where the crouch had it to where the truss's clips are made for
+        if (started && !in->clipEnded)
+            c.out = c.perchOut + (trussFrom(n, h) - c.perchOut) * eased(in->progress);
         if (started && in->clipEnded)
         {
             c.onTruss = 1;
             c.along += h.truss[0];
             c.y += h.truss[1];
-            c.out += h.truss[2];
+            c.out = trussFrom(n, h) + h.truss[2];
             startPhase(c, o, CAGE_PHASE_ON_TRUSS, CAGE_CLIP_TRUSS_REST, 0);
         }
         break;
@@ -795,14 +836,20 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         if (in->cross)
             o.dive = 1;
         else if (in->triangle && in->mayGoOver)
-            offTruss(c, o, CAGE_PHASE_OVER_TRUSS, CAGE_CLIP_OVER_TRUSS);
+            offTruss(n, h, c, o, CAGE_PHASE_OVER_TRUSS, CAGE_CLIP_OVER_TRUSS);
         else if (in->down)
-            offTruss(c, o, CAGE_PHASE_OFF_TRUSS, CAGE_CLIP_OFF_TRUSS);
+            offTruss(n, h, c, o, CAGE_PHASE_OFF_TRUSS, CAGE_CLIP_OFF_TRUSS);
         break;
     case CAGE_PHASE_OFF_TRUSS:
-        // back off the truss to the crouch, then down from the top to the hang
+        // back off the truss to the crouch (the anchor taken back, across the clip, to where the crouch had it), then
+        // down from the top to the hang
+        if (started && !in->clipEnded)
+            c.out = c.fromOut + (c.perchOut - c.fromOut) * eased(in->progress);
         if (started && in->clipEnded)
+        {
+            c.out = c.perchOut;
             startPhase(c, o, CAGE_PHASE_OFF_TOP, CAGE_CLIP_OFF_TOP, 1);
+        }
         break;
     case CAGE_PHASE_ON_TOP:
         // resting on top: cross the dive (the caller's); down with triangle over the top; down held on its own back down
@@ -849,6 +896,13 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
             o.escaped = 1;
             break;
         }
+        if (h.dropOutside && c.phase == CAGE_PHASE_OVER_TRUSS)
+        {
+            // the way down outside: hanging where over the truss left the body (the hang's first frame is that pose, at
+            // the same anchor: a cut), nothing keeping it off the truss
+            startPhase(c, o, CAGE_PHASE_HANG_OUTSIDE, CAGE_CLIP_HANG_OUTSIDE, 0);
+            break;
+        }
         {
             const float hipsOut = c.writtenOut + body.hips.x, hipsAlong = c.writtenAlong + body.hips.y,
                         hipsUp = c.writtenY + body.hips.z;
@@ -861,6 +915,44 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
             nextOutside(n, h, c, o);
         }
         break;
+    case CAGE_PHASE_HANG_OUTSIDE:
+        // hanging from the truss to the clip's end, then let go: the dropping pose eased in from the hang as the anchor
+        // starts to fall, from where the hips are
+        if (started && in->clipEnded)
+        {
+            c.fallSpeed = 0.0f;
+            c.fallFromOut = c.out;
+            c.fallFromY = c.y;
+            c.fromOut = c.writtenOut + body.hips.x;
+            startPhase(c, o, CAGE_PHASE_FALL_OUTSIDE, CAGE_CLIP_FALL_OUTSIDE, 1);
+        }
+        break;
+    case CAGE_PHASE_FALL_OUTSIDE:
+    {
+        // down by gravity, the hips drifting out to "the drop outside lands, out past the walls" as they fall; when
+        // they are as high over the floor as the landing's first frame has them: the landing, its anchor on the floor
+        // under them, facing the cage. It falls "the drop outside, times gravity" as hard as a body really does
+        c.fallSpeed += kGravity * (n.dropGravity > 0.0f ? n.dropGravity : 1.0f) * in->step;
+        const float next = c.y - c.fallSpeed * in->step;
+        const float landAt = kFloor + h.landOut[1] - body.hips.z; // the anchor's height when the hips are that high
+        if (started && next <= landAt)
+        {
+            const float hipsOut = c.writtenOut + body.hips.x + (c.out - c.writtenOut);
+            const float hipsAlong = c.writtenAlong + body.hips.y;
+            c.outside = 1; // facing in: the clip's forward is the side's inward way, its left the side's way back
+            c.out = hipsOut + h.landOut[2];
+            c.along = hipsAlong + h.landOut[0];
+            c.y = kFloor;
+            startPhase(c, o, CAGE_PHASE_LAND_OUTSIDE, CAGE_CLIP_LAND_OUTSIDE, 0);
+            break;
+        }
+        c.y = next;
+        const float span = c.fallFromY - landAt;
+        // (the drift over the first third of the way down: clear of the truss it hung from before it is far below it)
+        const float t = span > 0.0f ? std::clamp(3.0f * (c.fallFromY - c.y) / span, 0.0f, 1.0f) : 1.0f;
+        c.out = c.fallFromOut + (n.walls + n.dropOut - c.fromOut) * t * t * (3.0f - 2.0f * t);
+        break;
+    }
     case CAGE_PHASE_LOSE_GRIP:
     {
         // losing the grip where the climber was (the clip falls part of the way itself, faster and faster at its end);
@@ -910,7 +1002,9 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
         }
         break;
     case CAGE_PHASE_DROP:
-        // the clip drops the body to the floor; at its end standing there, outside the cage
+    case CAGE_PHASE_LAND_OUTSIDE:
+        // the clip drops the body to the floor (the landing outside: it is on the floor already, the knees giving and
+        // straightening); at its end standing there, outside the cage
         if (started && in->clipEnded)
         {
             c.phase = CAGE_PHASE_NONE;

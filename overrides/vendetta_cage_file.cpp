@@ -96,7 +96,11 @@ namespace vendetta_cage_file
                                 {"the dive's take-off, feet over the top", &n.diveFeet},
                                 {"a fall off the cage, damage", &n.fallDamage},
                                 {"a shake into the dangle, momentum", &n.shakeDangleMomentum},
-                                {"a shake off the cage, momentum", &n.shakeOffMomentum}};
+                                {"a shake off the cage, momentum", &n.shakeOffMomentum},
+                                {"on the truss, out past the walls", &n.trussOut},
+                                {"the drop outside lands, out past the walls", &n.dropOut},
+                                {"the drop outside, times gravity", &n.dropGravity},
+                                {"the fall into the ring, times gravity", &n.fallGravity}};
         for (const auto &[key, value] : numbers.members)
         {
             double v = 0.0;
@@ -165,6 +169,16 @@ namespace vendetta_cage_file
             if (key == "taps with the momentum meter full, times" && number(value, v) && v > 0.0)
             {
                 leave.tapsFull = static_cast<float>(v);
+                used = true;
+            }
+            if (key == "a shaker's taps at full health, times" && number(value, v) && v > 0.0)
+            {
+                leave.shakeFullHealth = static_cast<float>(v);
+                used = true;
+            }
+            if (key == "a shaker's taps with no health, times" && number(value, v) && v > 0.0)
+            {
+                leave.shakeNoHealth = static_cast<float>(v);
                 used = true;
             }
             if (key == "the way out by the door, from the middle" && number(value, v) && v > 0.0)

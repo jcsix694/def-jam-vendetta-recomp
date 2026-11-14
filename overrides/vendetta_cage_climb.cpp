@@ -45,10 +45,11 @@
 // button, cross (state 2's check 2 FUN_0013c098, cross at an edge, and check 10 FUN_0013d158, the grab, wrapped: the
 // shake comes first; check 10 runs at every cross, the edge or not), when the fighter one
 // targets is on the cage on that side and can still be shaken (before getting onto the truss): state 102 as a shaker,
-// the cage's 3238 grab and 3239 shaking with the game's tapping bar for the shaker (the first stage's number of taps);
-// full: every climber on that side shaken (the rules: into the dangle, or off the cage when dangling), the shaker lets go
-// (323A) and stands; the stick away from the cage, or nobody left to shake on that side, lets go too. The shaker can be
-// hit (a hit's state ends the shake). Shaken off, a climber falls back into the ring and lands face up: the game's lying
+// the cage's 3238 grab and 3239 shaking with the game's tapping bar for the shaker (the first stage's number of taps,
+// by the shaker's own health: more the more hurt, cage.json's "a shaker's taps ..."; a climber's bars by its own
+// momentum); full: every climber on that side shaken (the rules: into the dangle, or off the cage when dangling), and
+// the shaker keeps hold, shaking on with the bar from empty; the stick away from the cage, or nobody left to shake on
+// that side, lets go (323A) and stands. The shaker can be hit (a hit's state ends the shake). Shaken off, a climber falls back into the ring and lands face up: the game's lying
 // state 22 (its pose by the ending 51, V101, +0x3EC), the fall's damage taken from its health (+0x3A8, of +0x3AC).
 // A game routine called from here can be left half way by the scheduler (a checkpoint), so each of ours calls at most one,
 // as its very last step, with its own return address: a pause then resumes it and it returns where it should. A state
@@ -99,6 +100,8 @@ namespace vendetta_cage_climb
     constexpr uint32_t kMatchFlags = 0x22FDE4u;    // halfword: 0x1000 the match decided (slow motion, no input)
     constexpr uint32_t kMatchPhase = 0x22FBE4u;    // 3 the fight, 4 its end
     constexpr uint32_t kMatchStep = 0x22FBD4u;     // this picture's time step (1 at full speed)
+    constexpr uint32_t kSlowFactor = 0x2948F8u;    // float: what a decided match's step is multiplied by until the victory
+                                                   // (0.45, the game's own slow motion: FUN_0011a600)
     constexpr uint32_t kMatchKind = 0x2361CEu;     // the kind byte: 1 one on one, 2 tag, 4 / 8 every man, 0x10 / 0x20 handicap
     constexpr uint32_t kDecided = 0x1000u, kFightPhase = 3u, kEndPhase = 4u, kEscapeKind = 0x81u;
     constexpr uint32_t kMoveSlot = 0x102938u;      // FUN_00102938(fighter, owner, slot): the move record for a slot
@@ -135,6 +138,7 @@ namespace vendetta_cage_climb
     // the bars' taps for this fighter: the file's, times a factor by its momentum (more taps with an empty meter, fewer
     // with a full one, a straight line between)
     int32_t tapsFor(uint8_t *rdram, uint32_t fighter, int32_t taps);
+    int32_t shakeTapsFor(uint8_t *rdram, uint32_t fighter, int32_t taps);
 
     // ---- the cage's clips posed on the climber's own skeleton as the game poses them, for the rules' heights. The rig
     // 0x1E13980 + 0x34C x fighter: + 0x334 its model, a WRS (a part's data at the model + 0x10 + 4n + its word there): slot
@@ -428,6 +432,9 @@ namespace vendetta_cage_climb
         case CAGE_PHASE_LOSE_GRIP: return "losing the grip";
         case CAGE_PHASE_FALLING: return "falling";
         case CAGE_PHASE_LAND: return "landing on the mat";
+        case CAGE_PHASE_HANG_OUTSIDE: return "hanging from the truss outside";
+        case CAGE_PHASE_FALL_OUTSIDE: return "dropping to the floor outside";
+        case CAGE_PHASE_LAND_OUTSIDE: return "landing on the floor outside";
         }
         return "?";
     }
@@ -446,6 +453,13 @@ namespace vendetta_cage_climb
     // the game's own out-of-play: pins and KOs skip him), down the outside, then waiting there, standing, unable to move
     // (still in state 102) until the match is decided
     bool g_waiting[4] = {};
+    // An escape's ending is played at the fight's own speed (the user, 2026-11-14: "when someone escapes, the animations
+    // is like slow motion ... Is it possible to not do that?"): the game slows a decided match by its factor 0x2948F8
+    // until the victory, and the escape decides the match while the winner still has the way down outside to play. So
+    // the escape that wins puts 1.0 there; the next match's start puts the game's own back (a pin or a knockout in a
+    // cage match keeps the game's slow motion: only the escape does this).
+    bool g_fullSpeedEnding = false;
+    uint32_t g_slowFactorWas = 0;
     // a shaker: on from circle at the cage until it lets go (step 0 the grab, 1 shaking, 2 letting go); the side it
     // shakes (its outward normal), the stick's way away from the cage, its bar's taps
     struct Shake
@@ -457,7 +471,7 @@ namespace vendetta_cage_climb
         uint32_t away = 0;
         int32_t taps = 0, tapsInWindow = 0;
         float window = 0.0f;
-        float momentumDue = 0.0f; // earned by a full bar: paid at letting go's next picture (no clip starts there)
+        float momentumDue = 0.0f; // earned by a full bar: paid at the next picture that starts no clip
     };
     Shake g_shakes[4];
     bool g_shook[4] = {}; // a shaker's bar filled on this climber's side: handed to the rules at its next picture
@@ -668,6 +682,20 @@ namespace vendetta_cage_climb
         const CageClipFrame hangFirst = frameOf(ch, 0.0f), dropLast = frameOf(cd, static_cast<float>(lastD));
         const CageClipFrame trussLast = frameOf(ct, static_cast<float>(lastT)), restFirst = frameOf(cr, 0.0f);
         const CageClipFrame fallPose = frameOf(cf, 0.0f), landFirst = frameOf(cn, 0.0f);
+        // the way down outside (the hang, the drop, the landing): only with all three clips; else the climb down
+        CageClipFrame landOutFirst{};
+        bool wayDown = false;
+        if (const std::vector<uint8_t> *landOut = vendetta_animations_cageClipBytes(CAGE_CLIP_LAND_OUTSIDE);
+            landOut && vendetta_animations_cageClip(CAGE_CLIP_HANG_OUTSIDE) && vendetta_animations_cageClip(CAGE_CLIP_FALL_OUTSIDE))
+        {
+            std::vector<Channel> cw;
+            uint32_t lastW = 0;
+            if (readClip(*landOut, s, lastW, cw))
+            {
+                landOutFirst = frameOf(cw, 0.0f);
+                wayDown = true;
+            }
+        }
         const CageClipFrame gripLast = frameOf(cg, static_cast<float>(lastG));
         std::vector<CageRopeBend> bends;
         if (const auto b = vendetta_cage::cageFile().ropeBends.find(vendetta_cage::clipKey(CAGE_CLIP_ONTO));
@@ -677,6 +705,7 @@ namespace vendetta_cage_climb
         if (!cage_rules_work_out_heights(&num(), ontoFrames.data(), static_cast<int32_t>(ontoFrames.size()), bends.data(),
                                          static_cast<int32_t>(bends.size()), &hangFirst, letGoFrames.data(),
                                          static_cast<int32_t>(letGoFrames.size()), &dropLast, &trussLast, &restFirst, &gripLast, &fallPose, &landFirst,
+                                         wayDown ? &landOutFirst : nullptr,
                                          &hs.h))
             return why = "a clip has more frames than the climb's rules take (" + std::to_string(CAGE_MOST_FRAMES) + ")", false;
         hs.model = model;
@@ -816,6 +845,13 @@ namespace vendetta_cage_climb
             }
         Ps2FastWrite16(rdram, kMatchFlags, static_cast<uint16_t>(Ps2FastRead16(rdram, kMatchFlags) | kDecided));
         Ps2FastWrite32(rdram, kMatchPhase, kEndPhase);
+        // no slow motion for the way down outside: the game's factor held at 1.0 until the next match's start
+        if (!g_fullSpeedEnding)
+        {
+            g_slowFactorWas = Ps2FastRead32(rdram, kSlowFactor);
+            g_fullSpeedEnding = true;
+        }
+        Ps2FastWrite32(rdram, kSlowFactor, 0x3F800000u);
         if (logOn())
         {
             std::cerr << "[cage] escape: player " << won[0] << " is over the top and wins" << (teams ? " for the team" : "")
@@ -830,11 +866,22 @@ namespace vendetta_cage_climb
         return true;
     }
 
+    // a climber's bar: its taps by the climber's own momentum (fewer the fuller the meter)
     int32_t tapsFor(uint8_t *rdram, uint32_t fighter, int32_t taps)
     {
         const vendetta_cage::LeaveNumbers &l = vendetta_cage::cageFile().leave;
         const float m = std::clamp(readFloat(rdram, fighter + kMomentum) / 100.0f, 0.0f, 1.0f);
         const float times = l.tapsEmpty + (l.tapsFull - l.tapsEmpty) * m;
+        return std::max(1, static_cast<int32_t>(std::lround(static_cast<float>(taps) * times)));
+    }
+
+    // a shaker's bar: its taps by the shaker's own health (+0x3A8 of +0x3AC; more the more hurt)
+    int32_t shakeTapsFor(uint8_t *rdram, uint32_t fighter, int32_t taps)
+    {
+        const vendetta_cage::LeaveNumbers &l = vendetta_cage::cageFile().leave;
+        const float full = std::max(readFloat(rdram, fighter + kFullHealth), 1.0f);
+        const float h = std::clamp(readFloat(rdram, fighter + kHealth) / full, 0.0f, 1.0f);
+        const float times = l.shakeNoHealth + (l.shakeFullHealth - l.shakeNoHealth) * h;
         return std::max(1, static_cast<int32_t>(std::lround(static_cast<float>(taps) * times)));
     }
 
@@ -1002,6 +1049,10 @@ namespace vendetta_cage_climb
         writeFloat(rdram, fighter + kFacing, std::atan2(s.nx, s.nz) * 180.0f / 3.14159265f);
         if (s.pictures == 1)
         {
+            if (logOn())
+                std::cerr << "[cage] shake: player " << index << "'s bar is " << shakeTapsFor(rdram, fighter, num().tapsPart1)
+                          << " taps (its health " << readFloat(rdram, fighter + kHealth) << " of "
+                          << readFloat(rdram, fighter + kFullHealth) << ")" << std::endl;
             finish(rdram, ctx, fighter, CAGE_CLIP_SHAKE_GRAB, 2u); // blended in from the stance
             return;
         }
@@ -1057,7 +1108,7 @@ namespace vendetta_cage_climb
         s.window += readFloat(rdram, kMatchStep);
         if (s.window >= 6.0f)
             s.window = 0.0f, s.tapsInWindow = 0;
-        const int32_t needed = std::max(1, tapsFor(rdram, fighter, num().tapsPart1));
+        const int32_t needed = std::max(1, shakeTapsFor(rdram, fighter, num().tapsPart1));
         Ps2FastWrite8(rdram, fighter + kBarBits, static_cast<uint8_t>(Ps2FastRead8(rdram, fighter + kBarBits) | kBar));
         writeFloat(rdram, fighter + kTapsNeeded, static_cast<float>(needed));
         writeFloat(rdram, fighter + kTapsLeft, static_cast<float>(std::max(0, needed - s.taps)));
@@ -1075,14 +1126,33 @@ namespace vendetta_cage_climb
                     if (logOn())
                         std::cerr << "[cage] shake: player " << index << "'s bar is full: player " << j << " shaken ("
                                   << phaseName(g_climbs[j].c.phase) << ", dangles in a row " << g_climbs[j].c.dangles << "; "
-                                  << (result == 2 ? "off the cage" : result == 1 ? "the dangle" : "nothing") << ")" << std::endl;
+                                  << (result == 2 ? "off the cage" : result == 1 ? "the dangle" : "nothing") << "; the bar was "
+                                  << needed << " taps, the shaker's health " << readFloat(rdram, fighter + kHealth) << " of "
+                                  << readFloat(rdram, fighter + kFullHealth) << ")" << std::endl;
                 }
-            return letGo("the bar is full");
+            // the shaker keeps hold and shakes on: the bar from empty again (letting go is the stick away, nobody left on
+            // this side, or a hit)
+            s.taps = s.tapsInWindow = 0;
+            s.window = 0.0f;
+            writeFloat(rdram, fighter + kTapsLeft, static_cast<float>(needed));
         }
         if (s.step == 0 && clipEnded)
         {
             s.step = 1;
             finish(rdram, ctx, fighter, CAGE_CLIP_SHAKE, 0u); // the grab ends where the shaking starts
+            return;
+        }
+        // the momentum a full bar earned, on a picture that starts no clip (the one game routine this picture calls)
+        if (s.momentumDue > 0.0f)
+        {
+            const float due = s.momentumDue;
+            s.momentumDue = 0.0f;
+            if (logOn())
+                std::cerr << "[cage] shake: player " << index << " gains momentum " << due << " (from "
+                          << readFloat(rdram, fighter + kMomentum) << "), shaking on" << std::endl;
+            SET_GPR_U64(ctx, 4, fighter);
+            ctx->f[12] = due;
+            g_runtime->lookupFunction(kMomentumGain)(rdram, ctx, g_runtime);
             return;
         }
         finish(rdram, ctx, fighter, 0u);
@@ -1806,6 +1876,11 @@ void vendetta_cage::climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime)
 {
     using namespace vendetta_cage_climb;
     g_runtime = &runtime;
+    if (g_fullSpeedEnding) // the last match ended by an escape: the game's own slow motion factor back
+    {
+        Ps2FastWrite32(rdram, kSlowFactor, g_slowFactorWas);
+        g_fullSpeedEnding = false;
+    }
     for (Climb &cl : g_climbs)
         cl = Climb();
     for (Heights &h : g_heights) // the clips or cage.json may have changed: worked out again at the first climb

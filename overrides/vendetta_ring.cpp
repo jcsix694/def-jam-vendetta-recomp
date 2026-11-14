@@ -1132,8 +1132,16 @@ namespace vendetta_ring
         {
             putPathBack(rdram);
             const uint32_t scene = getRegU32(ctx, 4);
+            // The victory is built in the same place as the intros (FUN_00125ac8 clears 0x29AF48 and builds the winner's,
+            // a pair's or a trio's scene there), started from the winner's idle once the match is decided (the match's
+            // flags 0x22FDE4 0x1000, its phase 0x22FBE4 past the intros' 0). It is not an intro: its wrestlers are put at
+            // the ring's middle and filmed there, which is the middle of any ring. Moved as an intro's, each by his own
+            // start place's move and the camera by the first's, a winning pair or trio was pulled apart on six sides
+            // (the user, 2026-11-14: "handicap or tag team match won in a six sided ring ... i dont think all players
+            // are in the middle selebration": one in the picture, the other at its edge).
+            const bool victory = (Ps2FastRead16(rdram, 0x22FDE4u) & 0x1000u) != 0u && Ps2FastRead32(rdram, 0x22FBE4u) != 0u;
             // the arena's fly-in is built in the same place before the intros, but places no one (flags + 0x84 bit 1)
-            const bool placesWrestlers = (Ps2FastRead32(rdram, scene + 0x84u) & 1u) == 0u;
+            const bool placesWrestlers = (Ps2FastRead32(rdram, scene + 0x84u) & 1u) == 0u && !victory;
             const bool half = placesWrestlers && vendetta_cage::introTurnedHalf(scene);
             if (half && !g_active)
                 movePath(rdram, Ps2FastRead32(rdram, scene + 0x80u), nullptr, true);

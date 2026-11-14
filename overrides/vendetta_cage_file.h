@@ -55,8 +55,12 @@ namespace vendetta_cage
         float walkOutside = 0.25f;   // "walking beside the cage, a picture"
         float doorFrom = 30.5f;      // "the way out by the door, from the middle": the door's own animation (3270) starts
                                      // at the ropes in front of the door's middle, this far out, facing out
-        float tapsEmpty = 1.5f;      // "taps with the momentum meter empty, times": the bars' taps scaled by momentum
-        float tapsFull = 0.5f;       // "taps with the momentum meter full, times" (in between: in a straight line)
+        float tapsEmpty = 1.5f;      // "taps with the momentum meter empty, times": the climber's bars' taps scaled by
+                                     // the climber's own momentum
+        float tapsFull = 0.4f;       // "taps with the momentum meter full, times" (in between: in a straight line)
+        float shakeFullHealth = 1.0f; // "a shaker's taps at full health, times": the shaker's bar's taps scaled by the
+                                      // shaker's own health
+        float shakeNoHealth = 4.0f;   // "a shaker's taps with no health, times" (in between: in a straight line)
     };
 
     // The computer's numbers in a cage match ("numbers" too, the game's own; vendetta_cage_cpu.cpp)
