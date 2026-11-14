@@ -1,5 +1,5 @@
 // Def Jam Vendetta (USA, SLUS-20639) - the cage match's menu: Choose Match's second step (MATCH TYPE, NORMAL or CAGE
-// MATCH, and a cage match's ways to win), and the choice put into the match's rule word at Battle's match set-up.
+// MATCH, and the match's ways to win), and the choice put into the match's rule word at Battle's match set-up.
 // Copied into ps2xRuntime/src/runner/ by tools/sync_generated.py; edit this file in the repo's overrides/ folder.
 //
 // Choose Match is one routine, FUN_0014da00(front end), run once a picture: input (left / right move the battle type
@@ -25,8 +25,8 @@
 // answered here, so a call that waits never leaves this code half done.
 //
 // The choice is kept while the game runs (a rematch and the next Battle start with it). At Battle's match set-up
-// (FUN_00140298) a cage match's choice goes into the rule word (vendetta_cage.h); NORMAL leaves the game's 0x5F as it
-// is. Each match's start (FUN_00119d70) logs the rule word, whichever mode set it up.
+// (FUN_00140298) the choice goes into the rule word (vendetta_cage.h): a cage match's ways to win, or a normal match's
+// (PIN, SUBMISSION, TKO, ROPE BREAKS under NORMAL, for every battle type; all on leaves the game's 0x5F as it is). Each match's start (FUN_00119d70) logs the rule word, whichever mode set it up.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_cage.h"
@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <string>
 
 namespace vendetta_cage_menu
@@ -93,24 +94,39 @@ namespace vendetta_cage_menu
     constexpr uint32_t kStrings = 0x60u; // the new words, in this order: a menu theme will name them by their address
 
     // the second step's rows (from the game's numbers): the battle type's name in yellow at y 300 (the routine's first
-    // line), the rows from y 328, 24 apart, each label at x 136 and its value centred on x 431: the widest row (MATCH
-    // TYPE ... CAGE MATCH, 136 to 504 in the game's font) sits evenly about the screen's middle, 320, and the longest
-    // label, PIN & SUBMISSION, ends clear of its row's left arrow; an arrow only on the side a value can still go, as
+    // line), the rows from y 328, 22 apart (six rows), each label at x 136 and its value centred on x 431: the widest row
+    // (MATCH TYPE ... CAGE MATCH, 136 to 504 in the game's font) sits evenly about the screen's middle, 320, and the
+    // longest label, ROPE BREAKS, ends clear of its row's left arrow; an arrow only on the side a value can still go, as
     // Options' rows (FUN_00144d18: 25 from the middle of a short value, each arrow 30 wide)
-    constexpr float kRowsTop = 328.0f, kRowStep = 24.0f, kLabelX = 136.0f, kValueX = 431.0f;
+    constexpr float kRowsTop = 328.0f, kRowStep = 22.0f, kLabelX = 136.0f, kValueX = 431.0f;
     constexpr float kArrowGap = 25.0f, kArrowWidth = 30.0f, kArrowDown = 2.0f;
 
-    enum Row { kMatchType, kEscape, kPinSubmission, kTko, kRopeBreaks, kRows };
-    enum Word { kWordMatchType, kWordNormal, kWordCage, kWordEscape, kWordPinSubmission, kWordTko, kWordRopeBreaks,
-                kWordEmpty, kWords };
-    const char *const kWordText[kWords] = {"MATCH TYPE", "NORMAL", "CAGE MATCH", "ESCAPE", "PIN & SUBMISSION", "TKO",
-                                           "ROPE BREAKS", ""};
-    const Word kRowLabel[kRows] = {kWordMatchType, kWordEscape, kWordPinSubmission, kWordTko, kWordRopeBreaks};
+    // a row's kind; the rows shown: a cage match's six, a normal match's five (no ESCAPE), from the top
+    enum Row { kMatchType, kEscape, kPin, kSubmission, kTko, kRopeBreaks, kRows };
+    const Row kCageRows[] = {kMatchType, kEscape, kPin, kSubmission, kTko, kRopeBreaks};
+    const Row kNormalRows[] = {kMatchType, kPin, kSubmission, kTko, kRopeBreaks};
+    // (SUBMISSION last: the words before it keep their places in the store's area)
+    enum Word { kWordMatchType, kWordNormal, kWordCage, kWordEscape, kWordPin, kWordTko, kWordRopeBreaks, kWordEmpty,
+                kWordSubmission, kWords };
+    const char *const kWordText[kWords] = {"MATCH TYPE", "NORMAL", "CAGE MATCH", "ESCAPE", "PIN", "TKO", "ROPE BREAKS", "",
+                                           "SUBMISSION"};
+    const Word kRowLabel[kRows] = {kWordMatchType, kWordEscape, kWordPin, kWordSubmission, kWordTko, kWordRopeBreaks};
 
     PS2Runtime::RecompiledFunction g_original = nullptr, g_originalBackFrom = nullptr, g_originalSetUp = nullptr,
                                    g_originalInit = nullptr, g_icon = nullptr, g_fontEnd = nullptr;
 
-    vendetta_cage::Rules g_choice{}; // the menu's, kept while the game runs
+    // the menu's, kept while the game runs: each match type its own ways to win (a normal match's start as the game's
+    // own, a cage match's as Rules' defaults); choice() is the one MATCH TYPE shows
+    vendetta_cage::Rules cageDefaults()
+    {
+        vendetta_cage::Rules r;
+        r.cage = true;
+        return r;
+    }
+    vendetta_cage::Rules g_cageChoice = cageDefaults();
+    vendetta_cage::Rules g_normalChoice = vendetta_cage::normalRules();
+    bool g_cageType = false;
+    vendetta_cage::Rules &choice() { return g_cageType ? g_cageChoice : g_normalChoice; }
     vendetta_cage::Rules g_test{};   // the test match's, for its own match set-up
     bool g_haveTest = false;
 
@@ -152,50 +168,60 @@ namespace vendetta_cage_menu
 
     // ---- the choice
 
-    bool *value(int row)
+    // the row on screen at a place (0 the top) -> its kind
+    Row kindAt(int place)
     {
-        switch (row)
+        if (g_cageType)
+            return place >= 0 && place < int(std::size(kCageRows)) ? kCageRows[place] : kRows;
+        return place >= 0 && place < int(std::size(kNormalRows)) ? kNormalRows[place] : kRows;
+    }
+
+    bool *value(int place)
+    {
+        switch (kindAt(place))
         {
-        case kEscape: return &g_choice.escape;
-        case kPinSubmission: return &g_choice.pinSubmission;
-        case kTko: return &g_choice.tko;
-        case kRopeBreaks: return &g_choice.ropeBreaks;
+        case kEscape: return &choice().escape;
+        case kPin: return &choice().pin;
+        case kSubmission: return &choice().submission;
+        case kTko: return &choice().tko;
+        case kRopeBreaks: return &choice().ropeBreaks;
         default: return nullptr;
         }
     }
 
-    int rowCount() { return g_choice.cage ? kRows : 1; }
-    // rope breaks only count while pins and holds do: without them the row is dimmed, skipped and reads OFF, and the
-    // match has none (Rules::ropeBreaksOn); the player's own choice is kept for when PIN & SUBMISSION is on again
-    bool dim(int row) { return row == kRopeBreaks && !g_choice.pinSubmission; }
-    int waysOn() { return int(g_choice.escape) + int(g_choice.pinSubmission) + int(g_choice.tko); }
+    int rowCount() { return g_cageType ? int(std::size(kCageRows)) : int(std::size(kNormalRows)); }
+    // rope breaks only count while pins or holds do: with both off the row is dimmed, skipped and reads OFF, and the
+    // match has none (Rules::ropeBreaksOn); the player's own choice is kept for when PIN or SUBMISSION is on again
+    bool dim(int row) { return kindAt(row) == kRopeBreaks && !choice().pin && !choice().submission; }
+    int waysOn() { return int(choice().escape) + int(choice().pin) + int(choice().submission) + int(choice().tko); }
 
     // a row's value can go left (to NORMAL, to OFF) or right (to CAGE MATCH, to ON); the last way to win that is on
     // can't go off, so no match can be set up that nobody can win
     bool canLeft(int row)
     {
-        if (row == kMatchType)
-            return g_choice.cage;
+        if (kindAt(row) == kMatchType)
+            return g_cageType;
         const bool on = *value(row);
-        return on && (row == kRopeBreaks || waysOn() > 1);
+        return on && (kindAt(row) == kRopeBreaks || waysOn() > 1);
     }
-    bool canRight(int row) { return row == kMatchType ? !g_choice.cage : !*value(row); }
+    bool canRight(int row) { return kindAt(row) == kMatchType ? !g_cageType : !*value(row); }
 
     uint32_t valueText(int row)
     {
-        if (row == kMatchType)
-            return g_word[g_choice.cage ? kWordCage : kWordNormal];
-        if (row == kRopeBreaks)
-            return g_choice.ropeBreaksOn() ? kOn : kOff; // what the match will do: OFF while the row is dimmed
+        if (kindAt(row) == kMatchType)
+            return g_word[g_cageType ? kWordCage : kWordNormal];
+        if (kindAt(row) == kRopeBreaks)
+            return choice().ropeBreaksOn() ? kOn : kOff; // what the match will do: OFF while the row is dimmed
         return *value(row) ? kOn : kOff;
     }
 
     std::string describe(const vendetta_cage::Rules &r)
     {
-        if (!r.cage)
-            return "NORMAL";
         auto onOff = [](bool b) { return b ? "on" : "off"; };
-        return std::string("CAGE MATCH (escape ") + onOff(r.escape) + ", pin & submission " + onOff(r.pinSubmission) +
+        if (!r.cage)
+            return std::string("NORMAL (pin ") + onOff(r.pin) + ", submission " + onOff(r.submission) + ", TKO " +
+                   onOff(r.tko) + ", rope breaks " + onOff(r.ropeBreaksOn()) + ")";
+        return std::string("CAGE MATCH (escape ") + onOff(r.escape) + ", pin " + onOff(r.pin) + ", submission " + onOff(r.submission) +
                ", TKO " + onOff(r.tko) + ", rope breaks " + onOff(r.ropeBreaksOn()) + ")";
     }
 
@@ -259,7 +285,7 @@ namespace vendetta_cage_menu
         if (pressed & kCross)
         {
             // the routine's own cross: the front end block's writes, the card scan, User Setup
-            std::cerr << "[cage] Choose Match: " << describe(g_choice) << std::endl;
+            std::cerr << "[cage] Choose Match: " << describe(choice()) << std::endl;
             return 0u;
         }
         if (repeats & (kUp | kDown))
@@ -275,8 +301,8 @@ namespace vendetta_cage_menu
             const bool right = (repeats & kRight) != 0;
             if (right ? !canRight(g_row) : !canLeft(g_row))
                 return kSoundBump;
-            if (g_row == kMatchType)
-                g_choice.cage = right;
+            if (kindAt(g_row) == kMatchType)
+                g_cageType = right; // the rows below change with it: the cursor stays on MATCH TYPE
             else
                 *value(g_row) = right;
             return kSoundMove;
@@ -405,7 +431,7 @@ namespace vendetta_cage_menu
             {
                 ctx->f[12] = kLabelX + slide;
                 ctx->f[13] = y;
-                callGuest(ctx, kRowsReturn, kWord, selected, g_word[kRowLabel[row]], 0u, faded);
+                callGuest(ctx, kRowsReturn, kWord, selected, g_word[kRowLabel[kindAt(row)]], 0u, faded);
                 return;
             }
             if (step == 1)
@@ -502,7 +528,7 @@ namespace vendetta_cage_menu
     {
         const uint32_t ra = getRegU32(ctx, 31);
         const bool test = g_haveTest;
-        const vendetta_cage::Rules rules = test ? g_test : g_choice;
+        const vendetta_cage::Rules rules = test ? g_test : choice();
         g_haveTest = false;
         g_originalSetUp(rdram, ctx, runtime);
         if (ctx->pc != ra)
@@ -514,14 +540,31 @@ namespace vendetta_cage_menu
         const uint16_t before = Ps2FastRead16(rdram, kMatch + 4u);
         const uint8_t kind = Ps2FastRead8(rdram, kMatch + 6u);
         uint16_t word = before;
+        if (!rules.cage)
+        {
+            // a normal match: the ways to win turned off (all on = the game's own word, nothing changed)
+            using namespace vendetta_cage;
+            if (!rules.tko)
+                word &= ~kRuleKO;
+            if (!rules.pin)
+                word &= ~kRulePin;
+            if (!rules.submission)
+                word &= ~kRuleSubmission;
+            if (!rules.ropeBreaksOn())
+                word &= ~kRuleRopeBreaks;
+            if (word != before)
+                Ps2FastWrite16(rdram, kMatch + 4u, word);
+        }
         if (rules.cage)
         {
             using namespace vendetta_cage;
             if (!rules.tko)
                 word &= ~kRuleKO;
-            if (!rules.pinSubmission)
-                word &= ~(kRuleSubmission | kRulePin);
-            if (!rules.ropeBreaksOn()) // off by choice, or because pins and submissions are off
+            if (!rules.pin)
+                word &= ~kRulePin;
+            if (!rules.submission)
+                word &= ~kRuleSubmission;
+            if (!rules.ropeBreaksOn()) // off by choice, or because pins and submissions are both off
                 word &= ~kRuleRopeBreaks;
             if (kind == 2u) // tag: both partners in the ring, no tags (as Story's tag fights)
                 word |= kRuleTagBothIn;

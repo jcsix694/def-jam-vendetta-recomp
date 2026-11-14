@@ -10,19 +10,33 @@ class PS2Runtime;
 
 namespace vendetta_cage
 {
-    // The ways a cage match is won. A normal match is the game's own (Battle's rule word 0x5F, nothing changed).
+    // The ways a Battle match is won: a cage match's, or a normal match's (its pins, submissions, knockouts and rope
+    // breaks as chosen; all on = the game's own rule word 0x5F, nothing changed). Defaults: a cage match's (a normal
+    // match's are normalRules()).
     struct Rules
     {
         bool cage = false;
         bool escape = true;         // climbing out of the cage wins
-        bool pinSubmission = false; // pins and submissions win (rule bits 0x4, 0x2)
+        bool pin = false;           // pins win (rule bit 0x4)
+        bool submission = false;    // submissions win (rule bit 0x2)
         bool tko = false;           // knockouts win (rule bit 0x1)
         bool ropeBreaks = true;     // a pin or a hold is broken at the ropes (rule bit 0x10)
 
-        // Rope breaks in the match: the choice counts only while pins and submissions do. With those off a rope break
-        // would only cut short a hold that can't win, so the match has none whatever the choice was left on.
-        bool ropeBreaksOn() const { return pinSubmission && ropeBreaks; }
+        // Rope breaks in the match: the choice counts only while pins or submissions do (a rope break ends a pin and a
+        // hold alike). With both off a rope break would only cut short a hold that can't win, so the match has none
+        // whatever the choice was left on.
+        bool ropeBreaksOn() const { return (pin || submission) && ropeBreaks; }
     };
+    // a normal match as the game plays it: every way to win on, rope breaks on
+    inline Rules normalRules()
+    {
+        Rules r;
+        r.cage = false;
+        r.escape = false;
+        r.pin = r.submission = r.tko = true;
+        r.ropeBreaks = true;
+        return r;
+    }
 
     // The match's rule halfword 0x2361CC (the match block 0x2361C8 + 4). Every match set-up writes all of it (Battle
     // FUN_00140298, Survival FUN_00145630, Story FUN_00187e28), and a rematch keeps it. Its bits 0x0200-0x8000 are read

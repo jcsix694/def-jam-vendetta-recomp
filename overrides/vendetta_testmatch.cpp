@@ -10,15 +10,15 @@
 //                   { "record": 9, "attire": 0, "control": "cpu", "level": 1 } ],
 //     "repeat": { "fighter": 1, "slot": 12 },
 //     "keep health": [ true, true ], "loop": true, "skip movies": true,
-//     "match type": "cage", "cage": { "escape": true, "pin & submission": false, "tko": false, "rope breaks": true } }
+//     "match type": "cage", "cage": { "escape": true, "pin": false, "submission": false, "tko": false, "rope breaks": true } }
 // "match": "1-on-1" (two fighters), "3-way" or "4-way" (three or four, all against all: the block as Battle's Free For
 // All leaves it, +0x10 = 1, +0x14 = +0x18 = the number, the pads 0 / 4 / 5 / 6), "tag" (four, the first two a team
 // against the last two: as Tag Team leaves it, +0x10 = 2, the order +0x8C..+0x98 = 0 1 2 3) or "2-on-1" / "3-on-1"
 // (three or four, the first alone against the rest: 1 Versus Many, +0x10 = 3); FUN_00140298 makes the match kind from
 // the type and the number (1, 4 / 8, 2, 0x10 / 0x20).
 // "match type": "normal" (the game's own, also without it) or "cage", whose ways to win are "cage"'s (each left out is
-// as Choose Match's second step starts: escape on, pin & submission off, TKO off, rope breaks on; vendetta_cage.h;
-// rope breaks count only with pin & submission on, as in the menu).
+// as Choose Match's second step starts: escape on, pin off, submission off, TKO off, rope breaks on; vendetta_cage.h;
+// rope breaks count only with pin or submission on, as in the menu; the older "pin & submission" sets both).
 //
 // VENDETTA_TESTWIN=1 (a test, with or without the file, in any match, Story's included): while a match runs, every
 // human fighter (in the match, +0x5BC bit 1, and not the computer's, bit 0, when the fight starts) is played by the
@@ -248,21 +248,36 @@ namespace vendetta_testmatch
         }
         out.loop = flag(json.find("loop"), true);
         out.skipMovies = flag(json.find("skip movies"), true);
-        out.rules = vendetta_cage::Rules{};
+        out.rules = vendetta_cage::normalRules();
         if (const auto *type = json.find("match type"); type && type->isString() && type->text == "cage")
-            out.rules.cage = true;
+            out.rules = vendetta_cage::Rules{}, out.rules.cage = true;
         else if (type && !(type->isString() && type->text == "normal"))
             std::cerr << "[testmatch] \"match type\" is \"normal\" or \"cage\": a normal match" << std::endl;
         if (const auto *cage = json.find("cage"); out.rules.cage && cage && cage->isObject())
         {
             out.rules.escape = flag(cage->find("escape"), out.rules.escape);
-            out.rules.pinSubmission = flag(cage->find("pin & submission"), out.rules.pinSubmission);
+            const bool both = flag(cage->find("pin & submission"), out.rules.pin && out.rules.submission);
+            out.rules.pin = flag(cage->find("pin"), both || out.rules.pin);
+            out.rules.submission = flag(cage->find("submission"), both || out.rules.submission);
             out.rules.tko = flag(cage->find("tko"), out.rules.tko);
             out.rules.ropeBreaks = flag(cage->find("rope breaks"), out.rules.ropeBreaks);
-            if (!out.rules.escape && !out.rules.pinSubmission && !out.rules.tko)
+            if (!out.rules.escape && !out.rules.pin && !out.rules.submission && !out.rules.tko)
             {
                 std::cerr << "[testmatch] a cage match needs a way to win: escape on" << std::endl;
                 out.rules.escape = true;
+            }
+        }
+        // a normal match's ways to win: "normal": { "pin", "submission", "tko", "rope breaks" } (each on by default)
+        if (const auto *normal = json.find("normal"); !out.rules.cage && normal && normal->isObject())
+        {
+            out.rules.pin = flag(normal->find("pin"), true);
+            out.rules.submission = flag(normal->find("submission"), true);
+            out.rules.tko = flag(normal->find("tko"), true);
+            out.rules.ropeBreaks = flag(normal->find("rope breaks"), true);
+            if (!out.rules.pin && !out.rules.submission && !out.rules.tko)
+            {
+                std::cerr << "[testmatch] a normal match needs a way to win: pins on" << std::endl;
+                out.rules.pin = true;
             }
         }
         return true;

@@ -1174,3 +1174,11 @@ help.button-circle,picture,menu,select teams stage,,,group,0,4,96 0 127 23,3967,
 help.button-arrow,picture,menu,home-message,,,group,0,4,96 50 127 73,3967,,,,,live,,,,,buttons
 player-panel.g0-0.c1,picture,menu,select vs survival-next,,,group,0,0,128 0 159 29,3800,,,,,live,,,,,panels
 big-pictures.picture.11,picture,menu,match-complete,,,prm,11,11,0 0 128 128,3600,,,,,live,,,,,
+choose-match.text-2000260,words,menu,choose-match,,,text,2000260,,,,,,,,live,,,,,
+choose-match.text-200026b,words,menu,choose-match,,,text,200026B,,,,,,,,live,,,,,
+choose-match.text-2000272,words,menu,choose-match,,,text,2000272,,,,,,,,live,,,,,
+choose-match.text-200027d,words,menu,choose-match,,,text,200027D,,,,,,,,live,,,,,
+choose-match.text-2000284,words,menu,choose-match,,,text,2000284,,,,,,,,live,,,,,
+choose-match.text-2000288,words,menu,choose-match,,,text,2000288,,,,,,,,live,,,,,
+choose-match.text-200028c,words,menu,choose-match,,,text,200028C,,,,,,,,live,,,,,
+choose-match.text-2000299,words,menu,choose-match,,,text,2000299,,,,,,,,live,,,,,
