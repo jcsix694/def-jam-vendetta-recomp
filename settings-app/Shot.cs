@@ -313,6 +313,20 @@ internal static class Shot
         Console.WriteLine($"custom off and on again: {s.CustomMatchSpeed} '{s.CustomSpeedText}'");
         Console.WriteLine($"status: {s.Status}");
         Console.WriteLine($"summary: {s.SummaryWindow} | {s.SummaryPicture} | {s.SummaryPlayers}");
+        // the camera: the game's pause menu writes its line while this page is open; the page shows it, and a setting
+        // changed here afterwards leaves it as the game wrote it
+        string CameraLine() => File.ReadLines(folder.SettingsPath).FirstOrDefault(l => l.TrimStart().StartsWith("camera")) ?? "no camera line";
+        s.CameraIndex = 1;
+        Console.WriteLine($"camera NO MERCY here: {CameraLine()} | status: {s.Status}");
+        var text = File.ReadAllText(folder.SettingsPath).Replace("camera = \"nomercy\"", "camera = \"wk2\"");
+        File.WriteAllText(folder.SettingsPath, text);
+        s.RereadFile();
+        Console.WriteLine($"the game wrote wk2: the page shows camera {s.CameraIndex} | status: {s.Status}");
+        s.Volume = 60;
+        Console.WriteLine($"volume changed here: {CameraLine()} (wk2 kept: {CameraLine().Contains("\"wk2\"")})");
+        File.WriteAllText(folder.SettingsPath, File.ReadAllText(folder.SettingsPath).Replace("camera = \"wk2\"", "camera = \"vendetta\""));
+        s.Volume = 65; // (not read again first: what this page last saw stays wk2, the file says vendetta)
+        Console.WriteLine($"changed in the game, not seen yet, volume changed here: {CameraLine()} (vendetta kept: {CameraLine().Contains("\"vendetta\"")})");
         Console.WriteLine("--- settings.toml now:");
         Console.Write(File.ReadAllText(folder.SettingsPath));
     }

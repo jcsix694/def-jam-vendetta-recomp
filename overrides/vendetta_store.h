@@ -39,7 +39,8 @@ namespace vendetta_store
     // offsets, listed here: 0x0000-0x01FF the main menu's tables and texts (vendetta_menu.cpp); 0x0200-0x03FF Choose
     // Match's second step, its tables and words (vendetta_cage_menu.cpp); 0x0400-0x0FFF a cage match's walls and lists
     // (vendetta_cage.cpp); 0x1000-0xD2CF the clip
-    // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp); the roster tables below
+    // names the sound step reads, and the new clips' names (vendetta_clipsounds.cpp); 0xE000-0xE1FF the pause menu's CAMERA row,
+    // its records and words (vendetta_pause.cpp); the roster tables below
     // (vendetta_wrestlers.cpp); from 0x1310000 the arena's fly-in and Choose Stage tables, from 0x1405500 its crowd and
     // stand-in scene (vendetta_arenas.cpp). Returns the guest address of `offset`, its memory committed, or 0.
     constexpr uint32_t kFixedArea = 0x02000000u;

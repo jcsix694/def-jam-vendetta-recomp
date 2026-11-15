@@ -171,14 +171,37 @@ public sealed class GameSettings
         File.Move(temp, path, overwrite: true);
     }
 
-    /// <summary>Writes the values into the file (the default file first when there is none), each in its own line.</summary>
-    public void Save(string path)
+    /// <summary>Writes the values into the file (the default file first when there is none), each in its own line. With
+    /// <c>since</c> (what the file held when it was last read or written here) only the values changed since then are
+    /// written: a line the game changed meanwhile (the pause menu's camera) is never put back to an old value.</summary>
+    public void Save(string path, GameSettings? since = null)
     {
-        var lines = (File.Exists(path) ? File.ReadAllText(path) : DefaultFile)
+        var exists = File.Exists(path);
+        var lines = (exists ? File.ReadAllText(path) : DefaultFile)
             .Replace("\r\n", "\n").Split('\n').ToList();
         if (lines.Count > 0 && lines[^1] == "")
             lines.RemoveAt(lines.Count - 1);
-        var values = new (string Section, string Key, string Value)[]
+        var before = exists && since != null ? since.Values().ToHashSet() : null;
+        var changed = 0;
+        foreach (var (section, key, value) in Values())
+        {
+            if (before != null && before.Contains((section, key, value)))
+                continue;
+            SetLine(lines, section, key, value);
+            changed++;
+        }
+        if (exists && changed == 0)
+            return;
+        var text = string.Join("\n", lines) + "\n";
+        var temp = path + ".new";
+        File.WriteAllText(temp, text, new UTF8Encoding(false));
+        File.Move(temp, path, overwrite: true);
+    }
+
+    /// <summary>Every value as the file writes it: (section, key, the value's text).</summary>
+    public IEnumerable<(string Section, string Key, string Value)> Values()
+    {
+        return new (string Section, string Key, string Value)[]
         {
             ("display", "mode", Quote(Mode)),
             ("display", "screen", Screen.ToString(CultureInfo.InvariantCulture)),
@@ -209,13 +232,10 @@ public sealed class GameSettings
             ("gameplay", "custom_match_speed", SpeedText(CustomMatchSpeed)),
             ("updates", "check_on_open", CheckUpdates ? "true" : "false"),
         };
-        foreach (var (section, key, value) in values)
-            SetLine(lines, section, key, value);
-        var text = string.Join("\n", lines) + "\n";
-        var temp = path + ".new";
-        File.WriteAllText(temp, text, new UTF8Encoding(false));
-        File.Move(temp, path, overwrite: true);
     }
+
+    /// <summary>The same values as another's.</summary>
+    public bool SameAs(GameSettings other) => Values().SequenceEqual(other.Values());
 
     // --- the file's TOML: [section], key = "string" | number | true / false, # comments ---
 

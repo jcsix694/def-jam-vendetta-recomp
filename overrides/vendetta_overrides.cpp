@@ -30,6 +30,7 @@ void installVendettaIop();                           // vendetta_iop.cpp: IOP ro
 void installVendettaWidescreen(PS2Runtime &runtime); // vendetta_widescreen.cpp: the match's view widened (VENDETTA_WIDESCREEN)
 void installVendettaHighPoly(PS2Runtime &runtime);   // vendetta_highpoly.cpp: High Poly in every match (VENDETTA_HIGHPOLY)
 void installVendettaCamera(PS2Runtime &runtime);     // vendetta_camera.cpp: the fight camera's styles (VENDETTA_CAMERA)
+void installVendettaPause(PS2Runtime &runtime);      // vendetta_pause.cpp: the pause menu's CAMERA row (the camera's style in a match)
 void installVendettaUnlocks(PS2Runtime &runtime);    // vendetta_unlocks.cpp: unlock everything, the save unchanged (VENDETTA_UNLOCKALL)
 void installVendettaMenu(PS2Runtime &runtime);       // vendetta_menu.cpp: the main menu's Quit item (with config/patches.toml)
 void installVendettaCageMenu(PS2Runtime &runtime);   // vendetta_cage_menu.cpp: Choose Match's match types, a cage match's rules (with config/patches.toml)
@@ -588,6 +589,7 @@ namespace
         installVendettaWidescreen(runtime);
         installVendettaHighPoly(runtime);
         installVendettaCamera(runtime);
+        installVendettaPause(runtime);
         installVendettaUnlocks(runtime);
         installVendettaMenu(runtime);
         installVendettaCageMenu(runtime);

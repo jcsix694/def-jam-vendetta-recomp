@@ -1183,3 +1183,7 @@ choose-match.text-2000288,words,menu,choose-match,,,text,2000288,,,,,,,,live,,,,
 choose-match.text-200028c,words,menu,choose-match,,,text,200028C,,,,,,,,live,,,,,
 choose-match.text-2000299,words,menu,choose-match,,,text,2000299,,,,,,,,live,,,,,
 choose-match.text-20002a4,words,menu,choose-match,,,text,20002A4,,,,,,,,live,,,,,
+pause.text-200e040,words,menu,pause options,,,text,200E040,,,,,,,,live,,,,,shared-words
+pause.text-200e060,words,menu,pause options,,,text,200E060,,,,,,,,live,,,,,shared-words
+pause.text-200e080,words,menu,pause options,,,text,200E080,,,,,,,,live,,,,,shared-words
+pause.text-200e0a0,words,menu,pause options,,,text,200E0A0,,,,,,,,live,,,,,shared-words

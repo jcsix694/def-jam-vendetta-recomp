@@ -36,17 +36,29 @@
 // steps, its arena limits included, hold for any direction. VENDETTA_CAMERA_VERIFY=1 runs the
 // port with the game's own settings next to the original and reports the largest difference (the game keeps the
 // original's result). Scripted cameras (intros, DEMO scenes, camera modes 1-5 and 99) stay the game's.
+//
+// The style can change while the game runs: the pause menu's CAMERA row (vendetta_pause.cpp) chooses one when the pause
+// closes, and writes it into settings.toml's [graphics] camera line (only that line's value changes), the line the
+// settings program reads and writes; a change of that line while the game runs (the settings program) is used within a
+// second, from the next picture. VENDETTA_CAMERA set to something else than the file says (a test) keeps the file as it
+// is: a style chosen in the pause menu then lasts for that run only.
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_cage.h"
+#include "vendetta_camera.h"
+#include "runtime/ps2_host_settings.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 namespace vendetta_camera
@@ -359,7 +371,7 @@ namespace vendetta_camera
         const uint32_t fighter = getRegU32(ctx, 4);
         const bool reads = (Ps2FastRead16(rdram, kMatchPadFlags) & 0x40u) == 0u && (Ps2FastRead8(rdram, fighter + 0x5BCu) & 1u) == 0u;
         g_originalPadRead(rdram, ctx, runtime);
-        if (!reads || nowMs() - g_fightCameraAt.load() > 150)
+        if (g_rig.facing == 0.0f || !reads || nowMs() - g_fightCameraAt.load() > 150)
             return;
         const float angle = g_rig.facing / 180.0f * kPi;
         const float c = std::cos(angle), sn = std::sin(angle);
@@ -392,9 +404,12 @@ namespace vendetta_camera
         writeF(rdram, fighter + 0x678u, x * sn + y * c);
     }
 
+    void followFile(uint8_t *rdram);
+
     void replacement(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         g_fightCameraAt.store(nowMs());
+        followFile(rdram);
         if (g_verify)
         {
             static uint64_t frames = 0;
@@ -453,33 +468,246 @@ namespace vendetta_camera
         return rig;
     }
 
+    // --- the style chosen while the game runs (the pause menu's CAMERA row, vendetta_pause.cpp), kept in settings.toml ---
+
+    const char *const kStyleNames[kStyles] = {"vendetta", "nomercy", "wk2"};
+    int g_style = kVendetta;
+    bool g_followFile = false;                    // settings.toml's camera line is the style's home (no switch pinned it)
+    std::filesystem::path g_file;                 // settings.toml
+    std::filesystem::file_time_type g_fileTime{}; // when it was last read or written
+    int64_t g_fileCheckedAt = 0;
+
+    int styleOf(const std::string &name)
+    {
+        for (int i = 0; i < kStyles; ++i)
+            if (name == kStyleNames[i])
+                return i;
+        return -1;
+    }
+
+    std::string trimmed(const std::string &text)
+    {
+        const size_t first = text.find_first_not_of(" \t\r");
+        if (first == std::string::npos)
+            return {};
+        return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+    }
+
+    std::string lowered(std::string text)
+    {
+        for (char &c : text)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return text;
+    }
+
+    bool readText(const std::filesystem::path &file, std::string &text)
+    {
+        std::ifstream in(file, std::ios::binary);
+        if (!in)
+            return false;
+        std::ostringstream content;
+        content << in.rdbuf();
+        text = content.str();
+        return true;
+    }
+
+    // The [graphics] camera line in a settings file's text: where its value starts and ends (the quotes included), the
+    // section's end (where a missing line goes), or npos.
+    struct CameraLine
+    {
+        size_t valueBegin = std::string::npos, valueEnd = std::string::npos;
+        size_t sectionEnd = std::string::npos; // after the [graphics] section's last line that isn't empty
+        std::string value;                     // unquoted
+    };
+
+    CameraLine findCameraLine(const std::string &text)
+    {
+        CameraLine found;
+        std::string section;
+        for (size_t begin = 0; begin < text.size();)
+        {
+            size_t end = text.find('\n', begin);
+            if (end == std::string::npos)
+                end = text.size();
+            const std::string line = text.substr(begin, end - begin);
+            const size_t hash = line.find('#');
+            const std::string body = line.substr(0, hash);
+            const std::string bare = trimmed(body);
+            if (!bare.empty() && bare.front() == '[' && bare.back() == ']')
+                section = lowered(trimmed(bare.substr(1, bare.size() - 2)));
+            else if (section == "graphics")
+            {
+                if (!bare.empty())
+                    found.sectionEnd = std::min(end + 1, text.size());
+                const size_t equals = body.find('=');
+                if (equals != std::string::npos && lowered(trimmed(body.substr(0, equals))) == "camera")
+                {
+                    const size_t first = body.find_first_not_of(" \t", equals + 1);
+                    const size_t last = body.find_last_not_of(" \t\r");
+                    if (first != std::string::npos && last != std::string::npos && last >= first)
+                    {
+                        found.valueBegin = begin + first;
+                        found.valueEnd = begin + last + 1;
+                        std::string value = body.substr(first, last - first + 1);
+                        if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+                            value = value.substr(1, value.size() - 2);
+                        found.value = lowered(trimmed(value));
+                    }
+                }
+            }
+            begin = end + 1;
+        }
+        return found;
+    }
+
+    // the camera line's style in the file, or -1 (no file, no line, not a style)
+    int styleInFile(const std::filesystem::path &file)
+    {
+        std::string text;
+        if (file.empty() || !readText(file, text))
+            return -1;
+        return styleOf(findCameraLine(text).value);
+    }
+
+    // The camera line given a style: only its value changed (spacing, its comment and every other line as they were);
+    // a missing line added at the end of [graphics], a missing [graphics] at the end. Written beside it and moved over
+    // it, as the settings program writes the file.
+    bool writeStyle(const std::filesystem::path &file, int style)
+    {
+        std::string text;
+        if (!readText(file, text))
+            return false;
+        const std::string quoted = std::string("\"") + kStyleNames[style] + "\"";
+        const CameraLine line = findCameraLine(text);
+        const std::string newline = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+        if (line.valueBegin != std::string::npos)
+        {
+            if (text.compare(line.valueBegin, line.valueEnd - line.valueBegin, quoted) == 0)
+                return true;
+            text.replace(line.valueBegin, line.valueEnd - line.valueBegin, quoted);
+        }
+        else if (line.sectionEnd != std::string::npos)
+            text.insert(line.sectionEnd, "camera = " + quoted + newline);
+        else
+        {
+            if (!text.empty() && text.back() != '\n')
+                text += newline;
+            text += newline + "[graphics]" + newline + "camera = " + quoted + newline;
+        }
+        std::filesystem::path temp = file;
+        temp += ".new";
+        {
+            std::ofstream out(temp, std::ios::binary);
+            if (!out || !(out << text) || !out.flush())
+                return false;
+        }
+        std::error_code error;
+        std::filesystem::rename(temp, file, error);
+        if (error)
+            std::filesystem::remove(temp, error);
+        return !error;
+    }
+
+    void useStyle(uint8_t *rdram, int style)
+    {
+        g_style = style;
+        g_rig = rigFor(kStyleNames[style]);
+        g_ownCamera = style == kVendetta && !g_verify;
+        if (rdram) // the camera cut straight to the new style (no easing from the old one's place)
+            Ps2FastWrite16(rdram, kFlags, static_cast<uint16_t>(Ps2FastRead16(rdram, kFlags) | 0x1u));
+    }
+
+    // Once a second while matches run: a change of settings.toml's camera line (the settings program, or a hand edit)
+    // used from the next picture. Not while the pause menu is open (its CAMERA row has the say then).
+    void followFile(uint8_t *rdram)
+    {
+        if (!g_followFile || g_verify)
+            return;
+        const int64_t now = nowMs();
+        if (now - g_fileCheckedAt < 1000)
+            return;
+        g_fileCheckedAt = now;
+        constexpr uint32_t kMatchFlags = 0x22FDE4u; // bit 1: the pause menu is open
+        if (Ps2FastRead32(rdram, kMatchFlags) & 0x2u)
+            return;
+        std::error_code error;
+        const auto time = std::filesystem::last_write_time(g_file, error);
+        if (error || time == g_fileTime)
+            return;
+        g_fileTime = time;
+        const int style = styleInFile(g_file);
+        const int wanted = style < 0 ? kVendetta : style;
+        if (wanted == g_style)
+            return;
+        useStyle(rdram, wanted);
+        std::cerr << "[camera] settings.toml changed: style " << kStyleNames[wanted] << std::endl;
+    }
+
     void install(PS2Runtime &runtime)
     {
         const char *style = std::getenv("VENDETTA_CAMERA");
         const char *verify = std::getenv("VENDETTA_CAMERA_VERIFY");
         g_verify = verify && *verify && verify[0] != '0';
         const std::string chosen = style && *style ? style : "vendetta";
-        // the default: the game's own camera, through our hook only to leave out a cage's team member waiting outside
-        g_ownCamera = chosen == "vendetta" && !g_verify;
         g_original = runtime.lookupFunction(kFightCamera);
         if (!g_original)
         {
             std::cerr << "[camera] the fight camera 0x1039E0 isn't recompiled: the game's own camera" << std::endl;
             return;
         }
-        g_rig = rigFor(chosen);
+        // the switch (settings.toml's line fills it in when it isn't set) gives the style at start; the file stays its
+        // home unless the switch says something else than the file (a test's own camera)
+        const int start = styleOf(chosen);
+        useStyle(nullptr, start < 0 ? kVendetta : start);
+        g_style = start < 0 ? kVendetta : start;
+        if (start < 0)
+            g_rig = rigFor(chosen); // (an unknown name: the game's numbers, as before)
+        g_file = ps2_host_settings::get().file;
+        if (!g_file.empty())
+        {
+            const int inFile = styleInFile(g_file);
+            g_followFile = (inFile < 0 ? kVendetta : inFile) == g_style;
+            std::error_code error;
+            g_fileTime = std::filesystem::last_write_time(g_file, error);
+        }
         runtime.replaceFunction(kFightCamera, replacement);
-        if (g_rig.facing != 0.0f && !g_verify)
+        if (!g_verify)
         {
             g_originalPadRead = runtime.lookupFunction(kPadRead);
             if (g_originalPadRead)
                 runtime.replaceFunction(kPadRead, padRead);
         }
+        if (!g_followFile)
+            std::cerr << "[camera] " << (g_file.empty() ? "no settings file" : "VENDETTA_CAMERA set")
+                      << ": a style chosen in the pause menu is kept for this run only" << std::endl;
         if (g_ownCamera)
             return; // (nothing to say: the game's own)
         std::cerr << "[camera] " << (g_verify ? "verify: the port against the game's own camera" : "style: ")
                   << (g_verify ? "" : g_rig.name) << std::endl;
     }
+}
+
+int vendetta_camera::style() { return g_style; }
+
+void vendetta_camera::chooseStyle(uint8_t *rdram, int style, bool save)
+{
+    if (style < 0 || style >= kStyles || !g_original)
+        return;
+    if (style != g_style)
+    {
+        useStyle(rdram, style);
+        std::cerr << "[camera] style: " << kStyleNames[style] << " (the pause menu)" << std::endl;
+    }
+    if (!save || !g_followFile || styleInFile(g_file) == style)
+        return;
+    if (writeStyle(g_file, style))
+    {
+        std::error_code error;
+        g_fileTime = std::filesystem::last_write_time(g_file, error);
+        std::cerr << "[camera] settings.toml: camera = \"" << kStyleNames[style] << "\"" << std::endl;
+    }
+    else
+        std::cerr << "[camera] settings.toml couldn't be written: the style is kept for this run only" << std::endl;
 }
 
 void installVendettaCamera(PS2Runtime &runtime) { vendetta_camera::install(runtime); }

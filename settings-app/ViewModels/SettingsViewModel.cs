@@ -8,7 +8,9 @@ namespace VendettaSettings.ViewModels;
 /// <summary>One entry of a drop-down list.</summary>
 public sealed record Choice(string Label, int Value, int Value2 = 0);
 
-/// <summary>The Settings page: every change is written to settings.toml at once (the game reads it when it starts).</summary>
+/// <summary>The Settings page: every change is written to settings.toml at once (the game reads it when it starts; the
+/// camera also while it runs). Only the lines changed here are written, and a change made to the file meanwhile (the
+/// game's pause menu writes the camera) is shown here at once.</summary>
 public partial class SettingsViewModel : ObservableObject
 {
     private static readonly int[] Scales = { 1, 2, 4, 8, 16 };
@@ -31,6 +33,9 @@ public partial class SettingsViewModel : ObservableObject
     private readonly bool _readOnly;
     private readonly IReadOnlyList<Displays.Screen> _screens;
     private bool _loading;
+    private GameSettings _onDisk;                    // what the file held when last read or written here
+    private FileSystemWatcher? _watcher;
+    private Avalonia.Threading.DispatcherTimer? _reread;
 
     public SettingsViewModel(GameFolder folder, bool readOnly)
     {
@@ -38,9 +43,11 @@ public partial class SettingsViewModel : ObservableObject
         _readOnly = readOnly;
         _screens = Displays.Find();
         var settings = GameSettings.Load(folder.SettingsPath);
+        _onDisk = settings;
         Load(settings);
         if (settings.WasFullscreen)
-            Save(); // the file said fullscreen: it says borderless from now on
+            Save(all: true); // the file said fullscreen: it says borderless from now on
+        WatchFile();
         UpdatePads();
         if (!readOnly)
         {
@@ -418,18 +425,81 @@ public partial class SettingsViewModel : ObservableObject
         CheckUpdates = CheckUpdates,
     };
 
-    private void Save()
+    private void Save(bool all = false)
     {
         if (_loading || _readOnly)
             return;
         try
         {
-            Current().Save(_folder.SettingsPath);
-            Status = "Saved. Used the next time the game starts.";
+            var now = Current();
+            var cameraOnly = now.Values().Except(_onDisk.Values()).Select(v => v.Key).SequenceEqual(new[] { "camera" });
+            now.Save(_folder.SettingsPath, all ? null : _onDisk);
+            _onDisk = now;
+            Status = cameraOnly ? "Saved. A game that's running uses it straight away." : "Saved. Used the next time the game starts.";
         }
         catch (Exception ex)
         {
             Status = $"Couldn't save {_folder.SettingsPath}: {ex.Message}";
         }
+    }
+
+    // the file changed on disk (the game's pause menu, or a hand edit): read again, shown when its values differ
+    private void WatchFile()
+    {
+        var path = _folder.SettingsPath;
+        var folder = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+            return;
+        _reread = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _reread.Tick += (_, _) =>
+        {
+            _reread.Stop();
+            Reread();
+        };
+        try
+        {
+            _watcher = new FileSystemWatcher(folder, Path.GetFileName(path))
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            };
+            FileSystemEventHandler changed = (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _reread.Stop();
+                _reread.Start();
+            });
+            _watcher.Changed += changed;
+            _watcher.Created += changed;
+            _watcher.Renamed += (s, e) => changed(s, e);
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception)
+        {
+            _watcher = null; // (no watching: the page shows the file as it was when opened)
+        }
+    }
+
+    /// <summary>The file read again (the watcher does it; the self-test calls it straight).</summary>
+    public void RereadFile() => Reread();
+
+    private void Reread()
+    {
+        GameSettings disk;
+        try
+        {
+            if (!File.Exists(_folder.SettingsPath))
+                return;
+            disk = GameSettings.Load(_folder.SettingsPath);
+        }
+        catch (IOException)
+        {
+            _reread?.Start(); // being written: a moment later
+            return;
+        }
+        if (disk.SameAs(_onDisk))
+            return;
+        var cameraOnly = disk.Values().Except(_onDisk.Values()).Select(v => v.Key).SequenceEqual(new[] { "camera" });
+        _onDisk = disk;
+        Load(disk);
+        Status = cameraOnly ? "The camera was changed in the game." : "The settings file was changed: shown as it is now.";
     }
 }

@@ -363,4 +363,12 @@ instructions = [
   { address = "0x00138eb0", value = "0x3c030339" }, # lui $v1, 0x339: corner angles 135 45 -45 -135 (FUN_00138b60)
   { address = "0x00138f1c", value = "0x3c03033a" }, # lui $v1, 0x33a: corner angles -45 -135 135 45 (FUN_00138b60)
   { address = "0x0013bf48", value = "0x3c02033b" }, # lui $v0, 0x33b: stick bits by corner (FUN_0013bf18)
+  # Options FUN_00142768 gets an 8th row, CAMERA, between DIFFICULTY and VIBRATION (overrides/vendetta_pause.cpp answers
+  # the three calls; each hook makes the call it replaces)
+  { address = "0x00142808", value = "0x0c077e30" }, # jal 0x1DF8C0 (was jal FUN_001906d8): before the input, the row set
+  { address = "0x0014319c", value = "0x0c077e32" }, # jal 0x1DF8C8 (was jal FUN_00171000): after the input, the row followed
+  { address = "0x0014325c", value = "0x0c077e33" }, # jal 0x1DF8CC (was jal FUN_00144d18): the CAMERA row, then VIBRATION
+  { address = "0x00143248", value = "0x3c01438c" }, # lui $at, 0x438C: VIBRATION at y 280 (was 252)
+  { address = "0x00143278", value = "0x3c01439a" }, # lui $at, 0x439A: the card's row at y 308 (was 280)
+  { address = "0x00143298", value = "0x3c0143a8" }, # lui $at, 0x43A8: EXIT at y 336 (was 308)
 ]
