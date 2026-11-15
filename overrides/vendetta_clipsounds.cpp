@@ -432,6 +432,66 @@ namespace vendetta_clipsounds
         g_originalLookup(rdram, ctx, runtime);
     }
 
+    // FUN_001c4720(player, key, frame): once a picture, a fighter's clip's events. It keeps, per player, the key
+    // (0x1E340B8 + 8 x player), its entry (0x1E30F60 + 4 x), the frame it was last given (0x1E31560 + 4 x), the next
+    // event's index (0x1E340D8 + 4 x, -1 = none left) and place (0x1E34268 + 4 x). It plays an event only when given its
+    // frame exactly: one it is given a frame past is passed over unplayed. The same key at a lower frame (the clip went
+    // round) starts the list again from the first event (the second when the first is 0x10018). So a clip whose
+    // frames go past an event's in one picture, or that goes round to a frame past its first event, loses that sound.
+    // For the events we give (mods' and the cage's clips): the frame it is given is held at the next event's when the
+    // clip has gone past it, so each plays, a picture late at most; the game's own clips as they are.
+    constexpr uint32_t kWalk = 0x1C4720u;
+    constexpr uint32_t kWalkKey = 0x1E340B8u, kWalkEntry = 0x1E30F60u, kWalkLast = 0x1E31560u, kWalkIndex = 0x1E340D8u,
+                       kWalkPlace = 0x1E34268u;
+    constexpr uint32_t kSkippedFirst = 0x10018u;
+    PS2Runtime::RecompiledFunction g_originalWalk = nullptr;
+
+    void walk(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const int32_t player = static_cast<int32_t>(getRegU32(ctx, 4));
+        const uint64_t key = GPR_U64(ctx, 5);
+        if (player >= 0 && player < 4 && g_entries.count(key) != 0u)
+        {
+            uint64_t kept = 0;
+            std::memcpy(&kept, guest(kWalkKey + 8u * static_cast<uint32_t>(player)), 8);
+            const uint32_t entry = read32(kWalkEntry + 4u * static_cast<uint32_t>(player));
+            if (kept == key && entry != 0u)
+            {
+                const int32_t now = static_cast<int32_t>(getRegU32(ctx, 6));
+                const int32_t last = static_cast<int32_t>(read32(kWalkLast + 4u * static_cast<uint32_t>(player)));
+                const int32_t count = static_cast<int32_t>(read32(entry + 8u));
+                auto frameAt = [](uint32_t event) { return static_cast<int32_t>(static_cast<int16_t>(read32(event) & 0xFFFFu)); };
+                int32_t held = now;
+                if (now > last)
+                {
+                    const int32_t index = static_cast<int32_t>(read32(kWalkIndex + 4u * static_cast<uint32_t>(player)));
+                    if (index >= 0 && index < count)
+                    {
+                        const int32_t next = frameAt(read32(kWalkPlace + 4u * static_cast<uint32_t>(player)));
+                        if (next > last && next < now)
+                            held = next;
+                    }
+                }
+                else if (now < last && count > 0)
+                {
+                    uint32_t first = entry + 12u;
+                    bool any = true;
+                    if (read32(first + 4u) == kSkippedFirst)
+                    {
+                        const int16_t values = static_cast<int16_t>(read32(first) >> 16u);
+                        first += 8u + 4u * static_cast<uint32_t>(std::max<int16_t>(values, 0));
+                        any = count > 1;
+                    }
+                    if (any && frameAt(first) >= 0 && frameAt(first) < now)
+                        held = frameAt(first);
+                }
+                if (held != now)
+                    SET_GPR_U64(ctx, 6, static_cast<uint64_t>(static_cast<int64_t>(held)));
+            }
+        }
+        g_originalWalk(rdram, ctx, runtime);
+    }
+
     void install(PS2Runtime &runtime)
     {
         g_table = vendetta_store::fixed(kTableOffset, kTableEntries * 4u, "clip names for sounds");
@@ -451,6 +511,9 @@ namespace vendetta_clipsounds
         g_originalLookup = runtime.lookupFunction(kLookup);
         if (g_originalLookup)
             runtime.replaceFunction(kLookup, lookup);
+        g_originalWalk = runtime.lookupFunction(kWalk);
+        if (g_originalWalk && !std::getenv("VENDETTA_CLIPSOUNDS_EXACT"))
+            runtime.replaceFunction(kWalk, walk);
     }
 }
 

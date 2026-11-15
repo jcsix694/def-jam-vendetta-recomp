@@ -83,8 +83,11 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
     // moved out to them as well as kept from going through. Outside the cage the same on the wires' other face (as far
     // past the walls as the wires are inside them), and where a point is as high as the cage's top, on the top's outer
     // face ("the top's depth" past the walls): each point there or farther out
-    void againstCage(const CageNumbers &n, CageClimber &c, const CageBody &body, bool touch)
+    // (offCage: the most moved off the wires a picture, n.offCage when not given)
+    void againstCage(const CageNumbers &n, CageClimber &c, const CageBody &body, bool touch, float offCage = -1.0f)
     {
+        if (offCage < 0.0f)
+            offCage = n.offCage;
         if (c.settle > 0)
             return;
         if (c.outside)
@@ -98,7 +101,7 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
             }
             if (move < 0.0f && !touch)
                 return;
-            c.out += std::clamp(move, -n.toCage, n.offCage);
+            c.out += std::clamp(move, -n.toCage, offCage);
             return;
         }
         // inside: only what is no higher than the cage's top is behind a wire. A point above the top by less than its room
@@ -119,7 +122,7 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
         const float move = n.wires - (most + c.out);
         if (move > 0.0f && !touch)
             return;
-        c.out += std::clamp(move, -n.offCage, n.toCage);
+        c.out += std::clamp(move, -offCage, n.toCage);
     }
 
     // the bar's taps as the game counts a pin's: a press counts while fewer than two have counted in the window; the
@@ -204,6 +207,12 @@ namespace cage_rules_inside // named, not unnamed: a build that merges files int
                phase == CAGE_PHASE_OFF_TRUSS || phase == CAGE_PHASE_OVER_TRUSS || phase == CAGE_PHASE_LOSE_GRIP ||
                phase == CAGE_PHASE_FALLING || phase == CAGE_PHASE_LAND || phase == CAGE_PHASE_HANG_OUTSIDE ||
                phase == CAGE_PHASE_FALL_OUTSIDE || phase == CAGE_PHASE_LAND_OUTSIDE;
+    }
+
+    // of those, the ones falling back into the ring inside: kept from going through the wires all the same
+    bool fallingBack(int32_t phase)
+    {
+        return phase == CAGE_PHASE_LOSE_GRIP || phase == CAGE_PHASE_FALLING || phase == CAGE_PHASE_LAND;
     }
 
     bool canBeShaken(int32_t phase)
@@ -1024,6 +1033,16 @@ int32_t cage_rules_picture(const CageNumbers *numbers, const CageHeights *height
     }
     if (!onTheTop(c.phase))
         againstCage(n, c, body, c.phase != CAGE_PHASE_ONTO && c.phase != CAGE_PHASE_LET_GO && c.phase != CAGE_PHASE_DROP);
+    else if (fallingBack(c.phase))
+    {
+        // shaken off: kept from going through the wires as the grip goes and the body falls back into the ring (never
+        // drawn to them); falling's way back in starts from where that leaves the anchor. Falling's pose is held from its
+        // first picture and can reach the wires at once (a leg toward the cage): moved off them all the way at once
+        const float before = c.out;
+        againstCage(n, c, body, false, c.phase == CAGE_PHASE_LOSE_GRIP ? n.offCage : 1e9f);
+        if (c.phase == CAGE_PHASE_FALLING)
+            c.fallFromOut += c.out - before;
+    }
     const bool part1 = c.phase == CAGE_PHASE_PULL_UP || c.phase == CAGE_PHASE_STRAIN;
     const bool part2 = c.phase == CAGE_PHASE_ONTO_TOP || c.phase == CAGE_PHASE_CROUCH;
     if (in->escape && (part1 || part2))

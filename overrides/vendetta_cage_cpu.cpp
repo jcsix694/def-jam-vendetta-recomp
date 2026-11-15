@@ -25,6 +25,12 @@
 //   wrestler's own top-rope dive; none fitting, it climbs back down); otherwise the game's thinker, as the routine's
 //   last call.
 // - The climb's state lets a computer onto the cage only from action 16's CLIMB (vendetta_cage::cpuMayClimb).
+// - Throws into the cage: the computer's lock-up (action 12) never presses triangle; its Irish whip is circle, pressed
+//   when its 18 pictures are up. FUN_00107410 (the brain's buttons copied to the fighter's pad words) is wrapped: for
+//   a computer holding an opponent from the front (state 35), both in the ring, whose brain presses circle, once a
+//   lock-up by the cage file's chance the whip is made a throw into the cage: circle and its direction taken out of
+//   the held and pressed words, triangle put in with the direction of the side the opponent stands nearest (the
+//   lock-up's commit and the throw's own routine then run as for a player's press).
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "vendetta_cage.h"
@@ -60,8 +66,12 @@ namespace vendetta_cage_cpu
     constexpr uint32_t kStanding = 2u, kCageState = 102u;
     constexpr uint32_t kUp = 1u, kRight = 2u, kDown = 4u, kLeft = 8u, kTriangle = 0x1000u, kCross = 0x4000u;
     constexpr uint32_t kOwnAction = 16u;
+    constexpr uint32_t kPadOut = 0x107410u;  // FUN_00107410(fighter index): the brain's buttons to the pad words
+    constexpr uint32_t kCircle = 0x2000u, kLockUp = 35u, kGrapple = 0x5A6u, kFromBehind = 0x200u;
 
-    PS2Runtime::RecompiledFunction g_startAction = nullptr, g_thinker = nullptr;
+    PS2Runtime::RecompiledFunction g_startAction = nullptr, g_thinker = nullptr, g_padOut = nullptr;
+    int g_whipChoice[4] = {};   // this lock-up's whip: 0 not rolled, 1 the whip kept, 2 a throw into the cage
+    uint32_t g_throwWay[4] = {}; // the throw's direction bits
 
     enum class Mode { None, Climb, Shake, Wait };
     struct Cpu
@@ -451,6 +461,67 @@ namespace vendetta_cage_cpu
         g_thinker(rdram, ctx, runtime);
     }
 
+    // the direction bits (up -z, right +x, down +z, left -x, and the four between) that point best at a side
+    uint32_t wayToward(float nx, float nz)
+    {
+        uint32_t best = 0;
+        float most = -2.0f;
+        for (uint32_t bits = 1; bits < 16u; ++bits)
+        {
+            if ((bits & (kUp | kDown)) == (kUp | kDown) || (bits & (kLeft | kRight)) == (kLeft | kRight))
+                continue;
+            float dx = ((bits & kRight) ? 1.0f : 0.0f) - ((bits & kLeft) ? 1.0f : 0.0f);
+            float dz = ((bits & kDown) ? 1.0f : 0.0f) - ((bits & kUp) ? 1.0f : 0.0f);
+            const float length = std::sqrt(dx * dx + dz * dz), d = (dx * nx + dz * nz) / length;
+            if (d > most)
+            {
+                most = d;
+                best = bits;
+            }
+        }
+        return best;
+    }
+
+    void padOutHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t index = getRegU32(ctx, 4);
+        if (index < 4u && cageMatch(rdram))
+        {
+            const uint32_t f = fighterAt(index), brain = kBrains + kBrainBytes * index, o = Ps2FastRead32(rdram, f + kTarget);
+            if (Ps2FastRead32(rdram, f + kState) != kLockUp)
+                g_whipChoice[index] = 0;
+            else if (indexOf(o) >= 0 && ((Ps2FastRead32(rdram, brain + kHeldOut) | Ps2FastRead32(rdram, brain + kPressedOut)) & kCircle) &&
+                     !(Ps2FastRead16(rdram, f + kGrapple) & kFromBehind) && (Ps2FastRead16(rdram, f + kPlace) & kInRing) &&
+                     (Ps2FastRead16(rdram, o + kPlace) & kInRing) && vendetta_cage::throwsReady())
+            {
+                if (g_whipChoice[index] == 0)
+                {
+                    g_whipChoice[index] = roll(num().whipThrow) ? 2 : 1;
+                    if (g_whipChoice[index] == 2)
+                    {
+                        // the side the opponent stands nearest
+                        float nx = 0.0f, nz = 1.0f, half = 0.0f;
+                        nearestSide(rdram, o, readFloat(rdram, o + kX), readFloat(rdram, o + kZ), nx, nz, half);
+                        g_throwWay[index] = wayToward(nx, nz);
+                        static const bool log = []() { const char *v = std::getenv("VENDETTA_CAGECLIMBLOG"); return v && v[0] >= '1'; }();
+                        if (log)
+                            std::cerr << "[cage] computer: player " << (Ps2FastRead32(rdram, f + kPlayer) & 3u)
+                                      << " makes its whip a throw into the cage (the side " << nx << " " << nz << ", the stick "
+                                      << g_throwWay[index] << ")" << std::endl;
+                    }
+                }
+                if (g_whipChoice[index] == 2)
+                    for (uint32_t word : {brain + kHeldOut, brain + kPressedOut})
+                    {
+                        const uint32_t v = Ps2FastRead32(rdram, word);
+                        if (v & kCircle)
+                            Ps2FastWrite32(rdram, word, (v & ~(kCircle | 0xFu)) | kTriangle | g_throwWay[index]);
+                    }
+            }
+        }
+        g_padOut(rdram, ctx, runtime);
+    }
+
     void install(PS2Runtime &runtime)
     {
         g_startAction = runtime.lookupFunction(kStartAction);
@@ -464,6 +535,9 @@ namespace vendetta_cage_cpu
         runtime.replaceFunction(kStartAction, startHook);
         runtime.replaceFunction(kThinker, thinkerHook);
         runtime.replaceFunction(kAction16, ownAction);
+        g_padOut = runtime.lookupFunction(kPadOut);
+        if (g_padOut)
+            runtime.replaceFunction(kPadOut, padOutHook);
     }
 }
 

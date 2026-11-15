@@ -80,6 +80,7 @@ namespace vendetta_cage
                                     // it at level 1, a third at level 2), whatever its chance a second rolled
         float diveMomentum = 20.0f; // "computer: momentum to climb to dive" (Blazin' climbs with any)
         float dive = 0.25f;         // "computer: a dive's chance a second": with ESCAPE off, an opponent down, the climb to dive
+        float whipThrow = 0.5f;     // "computer: a throw into the cage's chance in place of a whip": in a lock-up
     };
 
     struct CageFile

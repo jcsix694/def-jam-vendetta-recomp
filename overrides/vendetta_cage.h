@@ -7,6 +7,7 @@
 #include <filesystem>
 
 class PS2Runtime;
+struct R5900Context;
 
 namespace vendetta_cage
 {
@@ -154,4 +155,24 @@ namespace vendetta_cage
     bool climberSide(uint8_t *rdram, uint32_t fighter, float &nx, float &nz, float &along);
     void doorTo(bool open, float pictures);
     float doorOpen();
+    // (vendetta_cage_climb.cpp) one of the cage's clips posed on this fighter's own skeleton: the hips' farthest place
+    // straight ahead or behind (the largest |z| in the clip's own space: x the wrestler's left, z ahead), at which frame,
+    // the clip's last frame and, if asked, the hips at its first frame; false when the clip or the model can't be read.
+    // setFighterState: a state set as the game's setter sets it.
+    bool clipReach(uint8_t *rdram, uint32_t fighter, uint32_t clipNumber, float &reachX, float &reachZ, float &atFrame,
+                   float &lastFrame, float *startX = nullptr, float *startZ = nullptr);
+    // (vendetta_cage_climb.cpp) one of the cage's clips posed on this fighter's own skeleton up to a frame: how far its
+    // body reaches straight ahead and behind (the climb's room points, each with its room from cage.json: the largest
+    // z + room and -z + room in the clip's own space); false when the clip or the model can't be read
+    bool clipBodyReach(uint8_t *rdram, uint32_t fighter, uint32_t clipNumber, float upToFrame, float &ahead, float &behind);
+    void setFighterState(uint8_t *rdram, uint32_t fighter, uint32_t state);
+    // the way the fighter's body faces now in the world (from its hips), in the facing's degrees
+    float bodyFacingNow(uint8_t *rdram, uint32_t fighter);
+    // Throws into the cage (vendetta_cage_throw.cpp): triangle with a direction in a grapple. Each match's start;
+    // throwState: the climb's state routine asks first, each picture, for a fighter in a throw (true: handled).
+    void throwMatchStarting(PS2Runtime &runtime);
+    bool throwsReady(); // the cage's throw clips are in this match
+    bool throwState(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t fighter);
+    // VENDETTA_CAGETHROWLOG=1 (tests): each fighter's state, step, clip and buttons logged as they change (every picture)
+    void throwWatch(uint8_t *rdram, uint32_t fighter);
 }

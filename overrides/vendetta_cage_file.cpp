@@ -63,7 +63,8 @@ namespace vendetta_cage_file
                                        {"computer: pictures to reach a climber's side", &cpu.shakeGiveUp},
                                        {"computer: seconds at most watching a climber", &cpu.watchMost},
                                        {"computer: a dive's chance a second", &cpu.dive},
-                                       {"computer: momentum to climb to dive", &cpu.diveMomentum}};
+                                       {"computer: momentum to climb to dive", &cpu.diveMomentum},
+                                       {"computer: a throw into the cage's chance in place of a whip", &cpu.whipThrow}};
         struct Named
         {
             const char *name;

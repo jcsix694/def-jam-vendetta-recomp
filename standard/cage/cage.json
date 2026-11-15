@@ -23,6 +23,138 @@
         "to": 52,
         "what": "middle rope, left foot"
       }
+    ],
+    "3217": [
+      {
+        "from": 47,
+        "to": 49,
+        "what": "screen shake"
+      },
+      {
+        "from": 28,
+        "to": 40,
+        "what": "top rope, left hand"
+      }
+    ],
+    "3218": [
+      {
+        "from": 49,
+        "to": 53,
+        "what": "ring shakes"
+      }
+    ],
+    "3219": [
+      {
+        "from": 72,
+        "to": 76,
+        "what": "ring shakes"
+      },
+      {
+        "from": 0,
+        "to": 50,
+        "what": "top rope, left hand"
+      }
+    ],
+    "321A": [
+      {
+        "from": 70,
+        "to": 72,
+        "what": "screen shake"
+      },
+      {
+        "from": 21,
+        "to": 96,
+        "what": "top rope, right hand"
+      },
+      {
+        "from": 8,
+        "to": 20,
+        "what": "top rope, both hands"
+      },
+      {
+        "from": 12,
+        "to": 96,
+        "what": "bottom rope, right foot"
+      }
+    ],
+    "321F": [
+      {
+        "from": 15,
+        "to": 17,
+        "what": "screen shake"
+      }
+    ],
+    "3220": [
+      {
+        "from": 18,
+        "to": 22,
+        "what": "ring shakes"
+      }
+    ],
+    "3221": [
+      {
+        "from": 78,
+        "to": 82,
+        "what": "ring shakes"
+      }
+    ],
+    "3222": [
+      {
+        "from": 76,
+        "to": 78,
+        "what": "screen shake"
+      },
+      {
+        "from": 8,
+        "to": 24,
+        "what": "top rope, both hands"
+      },
+      {
+        "from": 24,
+        "to": 82,
+        "what": "top rope, right hand"
+      },
+      {
+        "from": 12,
+        "to": 89,
+        "what": "bottom rope, right foot"
+      }
+    ],
+    "3239": [
+      {
+        "from": 0,
+        "to": 2,
+        "what": "ring shakes"
+      },
+      {
+        "from": 14,
+        "to": 16,
+        "what": "ring shakes"
+      },
+      {
+        "from": 28,
+        "to": 30,
+        "what": "ring shakes"
+      }
+    ],
+    "323D": [
+      {
+        "from": 5,
+        "to": 13,
+        "what": "ring shakes"
+      }
+    ],
+    "3242": [
+      {
+        "from": 5,
+        "to": 9,
+        "what": "ring shakes"
+      },
+      {
+        "from": 0,
+        "to": 4,
+        "what": "screen shake"
+      }
     ]
   },
   "custom sounds": {
@@ -57,6 +189,11 @@
   },
   "sounds": {
     "3203": [
+      {
+        "frame": 8,
+        "sound": "Footstep",
+        "value": 400
+      },
       {
         "frame": 11,
         "sound": "CAGE TAP"
@@ -102,6 +239,16 @@
       {
         "frame": 34,
         "sound": "CAGE TAP MED"
+      },
+      {
+        "frame": 69,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 78,
+        "sound": "Footstep",
+        "value": 400
       }
     ],
     "3208": [
@@ -336,10 +483,238 @@
         "sound": "CAGE TAP LONG"
       }
     ],
+    "3217": [
+      {
+        "frame": 14,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 37,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 74,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 96,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
+    "3218": [
+      {
+        "frame": 37,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 47,
+        "sound": "CAGE THROW 1"
+      },
+      {
+        "frame": 47,
+        "sound": "Controller vibration",
+        "value": 2
+      },
+      {
+        "frame": 47,
+        "sound": "Grunt",
+        "value": 1
+      },
+      {
+        "frame": 81,
+        "sound": "Impact on the floor",
+        "value": 1
+      }
+    ],
+    "3219": [
+      {
+        "frame": 11,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 40,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 67,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 70,
+        "sound": "CAGE THROW 1"
+      },
+      {
+        "frame": 70,
+        "sound": "Grunt",
+        "value": 1
+      },
+      {
+        "frame": 70,
+        "sound": "Controller vibration",
+        "value": 2
+      },
+      {
+        "frame": 105,
+        "sound": "Impact on the floor",
+        "value": 1
+      }
+    ],
+    "321A": [
+      {
+        "frame": 6,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 120,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
+    "321B": [
+      {
+        "frame": 12,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
+    "321D": [
+      {
+        "frame": 0,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 10,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 20,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
+    "321E": [
+      {
+        "frame": 0,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 12,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 29,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
+    "321F": [
+      {
+        "frame": 8,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 48,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
+    "3220": [
+      {
+        "frame": 8,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 16,
+        "sound": "CAGE THROW 1"
+      },
+      {
+        "frame": 16,
+        "sound": "Grunt",
+        "value": 1
+      },
+      {
+        "frame": 16,
+        "sound": "Controller vibration",
+        "value": 2
+      },
+      {
+        "frame": 44,
+        "sound": "Impact on the floor",
+        "value": 1
+      }
+    ],
+    "3221": [
+      {
+        "frame": 4,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 40,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 70,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 76,
+        "sound": "CAGE THROW 1"
+      },
+      {
+        "frame": 76,
+        "sound": "Controller vibration",
+        "value": 2
+      },
+      {
+        "frame": 76,
+        "sound": "Grunt",
+        "value": 1
+      },
+      {
+        "frame": 109,
+        "sound": "Impact on the floor",
+        "value": 1
+      }
+    ],
+    "3222": [
+      {
+        "frame": 6,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 124,
+        "sound": "Footstep",
+        "value": 400
+      }
+    ],
     "3238": [
       {
         "frame": 8,
         "sound": "CAGE TAP LONG"
+      },
+      {
+        "frame": 13,
+        "sound": "Footstep",
+        "value": 400
       },
       {
         "frame": 24,
@@ -384,6 +759,16 @@
       {
         "frame": 0,
         "sound": "CAGE TAP LONG"
+      },
+      {
+        "frame": 15,
+        "sound": "Footstep",
+        "value": 400
+      },
+      {
+        "frame": 30,
+        "sound": "Footstep",
+        "value": 400
       }
     ],
     "323D": [
@@ -391,6 +776,11 @@
         "frame": 5,
         "sound": "Grunt",
         "value": 1
+      },
+      {
+        "frame": 5,
+        "sound": "Controller vibration",
+        "value": 2
       },
       {
         "frame": 23,
@@ -435,6 +825,11 @@
         "frame": 0,
         "sound": "Grunt",
         "value": 1
+      },
+      {
+        "frame": 0,
+        "sound": "Controller vibration",
+        "value": 2
       }
     ],
     "3245": [
@@ -560,6 +955,17 @@
     "3214": 120,
     "3215": 120,
     "3216": 120,
+    "3217": 120,
+    "3218": 120,
+    "3219": 120,
+    "321A": 120,
+    "321B": 120,
+    "321C": 120,
+    "321E": 120,
+    "321F": 120,
+    "3220": 120,
+    "3221": 120,
+    "3222": 120,
     "3238": 120,
     "3239": 120,
     "323A": 120,
@@ -648,6 +1054,7 @@
     "computer: a dive's chance a second": 0.25,
     "computer: momentum to climb to dive": 20,
     "computer: pictures to reach a climber's side": 300,
-    "computer: seconds at most watching a climber": 3
+    "computer: seconds at most watching a climber": 3,
+    "computer: a throw into the cage's chance in place of a whip": 0.5
   }
 }

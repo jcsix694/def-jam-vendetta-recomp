@@ -1049,6 +1049,27 @@ namespace vendetta_cage_climb
         writeFloat(rdram, fighter + kFacing, std::atan2(s.nx, s.nz) * 180.0f / 3.14159265f);
         if (s.pictures == 1)
         {
+            // stood nearer the middle when the shaker's clips (the grab, shaking, letting go, each facing the cage: its
+            // ahead is out) would put a part of its body through the wires from where it stands (inside the grab's blend)
+            float most = -1e9f;
+            for (uint32_t clip : {static_cast<uint32_t>(CAGE_CLIP_SHAKE_GRAB), static_cast<uint32_t>(CAGE_CLIP_SHAKE),
+                                  static_cast<uint32_t>(CAGE_CLIP_SHAKE_LET_GO)})
+            {
+                float ahead = 0.0f, behind = 0.0f;
+                if (vendetta_cage::clipBodyReach(rdram, fighter, clip, 1e9f, ahead, behind))
+                    most = std::max(most, ahead);
+            }
+            const float x = readFloat(rdram, fighter + kX), z = readFloat(rdram, fighter + kZ);
+            const float over = x * s.nx + z * s.nz + most - num().wires;
+            if (logOn())
+                std::cerr << "[cage] shake: player " << index << " at " << x * s.nx + z * s.nz << " out, its clips reach "
+                          << most << " ahead: " << (over > 0.0f ? "moved " : "short of the wires by ") << std::fabs(over)
+                          << (over > 0.0f ? " nearer the middle" : ", not moved") << std::endl;
+            if (most > -1e8f && over > 0.0f)
+            {
+                writeFloat(rdram, fighter + kX, x - s.nx * over);
+                writeFloat(rdram, fighter + kZ, z - s.nz * over);
+            }
             if (logOn())
                 std::cerr << "[cage] shake: player " << index << "'s bar is " << shakeTapsFor(rdram, fighter, num().tapsPart1)
                           << " taps (its health " << readFloat(rdram, fighter + kHealth) << " of "
@@ -1164,6 +1185,8 @@ namespace vendetta_cage_climb
         g_runtime = runtime;
         const uint32_t fighter = getRegU32(ctx, 4);
         const int index = indexOf(fighter);
+        if (g_active && vendetta_cage::throwState(rdram, ctx, runtime, fighter))
+            return; // a throw into the cage (vendetta_cage_throw.cpp) shares the state
         if (index >= 0 && g_active && g_shakes[index].on)
         {
             shakeState(rdram, ctx, fighter, index);
@@ -1677,6 +1700,87 @@ namespace vendetta_cage_climb
 
 bool vendetta_cage::cageMatch(uint8_t *rdram) { return (Ps2FastRead16(rdram, kRuleWord) & kRuleCage) != 0u; }
 
+bool vendetta_cage::clipReach(uint8_t *rdram, uint32_t fighter, uint32_t clipNumber, float &reachX, float &reachZ,
+                              float &atFrame, float &lastFrame, float *startX, float *startZ)
+{
+    using namespace vendetta_cage_climb;
+    const int index = indexOf(fighter);
+    const std::vector<uint8_t> *bytes = vendetta_animations_cageClipBytes(clipNumber);
+    if (index < 0 || !bytes)
+        return false;
+    const uint32_t model = Ps2FastRead32(rdram, kRigs + kRigSize * static_cast<uint32_t>(index) + kRigModel);
+    Skeleton s;
+    std::string why;
+    std::vector<Channel> ch;
+    uint32_t last = 0;
+    if (!readSkeleton(rdram, model, s, why) || s.rest.size() <= kHipsBone || !readClip(*bytes, s, last, ch))
+        return false;
+    reachX = reachZ = 0.0f;
+    atFrame = 0.0f;
+    for (uint32_t f = 0; f <= last; ++f)
+    {
+        const Matrix hips = pose(s, ch, static_cast<float>(f))[kHipsBone];
+        const float x = hips[12] * s.scale, z = hips[14] * s.scale;
+        if (f == 0u && startX && startZ)
+        {
+            *startX = x;
+            *startZ = z;
+        }
+        if (std::fabs(z) > std::fabs(reachZ))
+        {
+            reachX = x;
+            reachZ = z;
+            atFrame = static_cast<float>(f);
+        }
+    }
+    lastFrame = static_cast<float>(last);
+    return true;
+}
+
+bool vendetta_cage::clipBodyReach(uint8_t *rdram, uint32_t fighter, uint32_t clipNumber, float upToFrame, float &ahead,
+                                  float &behind)
+{
+    using namespace vendetta_cage_climb;
+    // the room points' bones (the body points chest, head, elbows, fists, knees, ankles: fighter +0x150 + 12k is bone
+    // 5, 8, 12, 14, 18, 20, 26, 29, 36, 39's world place)
+    constexpr uint32_t kRoomBones[CAGE_ROOMS] = {5u, 8u, 12u, 14u, 18u, 20u, 26u, 29u, 36u, 39u};
+    const int index = indexOf(fighter);
+    const std::vector<uint8_t> *bytes = vendetta_animations_cageClipBytes(clipNumber);
+    if (index < 0 || !bytes)
+        return false;
+    const uint32_t model = Ps2FastRead32(rdram, kRigs + kRigSize * static_cast<uint32_t>(index) + kRigModel);
+    Skeleton s;
+    std::string why;
+    std::vector<Channel> ch;
+    uint32_t last = 0;
+    if (!readSkeleton(rdram, model, s, why) || s.rest.size() <= kRoomBones[CAGE_ROOMS - 1] || !readClip(*bytes, s, last, ch))
+        return false;
+    const CageNumbers &n = num();
+    ahead = behind = -1e9f;
+    const uint32_t end = std::min(last, static_cast<uint32_t>(std::max(0.0f, upToFrame)));
+    for (uint32_t f = 0; f <= end; ++f)
+    {
+        const std::vector<Matrix> posed = pose(s, ch, static_cast<float>(f));
+        for (int32_t i = 0; i < CAGE_ROOMS; ++i)
+        {
+            const float z = posed[kRoomBones[i]][14] * s.scale;
+            ahead = std::max(ahead, z + n.room[i]);
+            behind = std::max(behind, -z + n.room[i]);
+        }
+    }
+    return true;
+}
+
+float vendetta_cage::bodyFacingNow(uint8_t *rdram, uint32_t fighter)
+{
+    return vendetta_cage_climb::bodyFacing(rdram, fighter);
+}
+
+void vendetta_cage::setFighterState(uint8_t *rdram, uint32_t fighter, uint32_t state)
+{
+    vendetta_cage_climb::setState(rdram, fighter, state);
+}
+
 namespace vendetta_cage_climb
 {
     // VENDETTA_CAGETEST_SHAKER=1: the shaker played for a tester (see the file's head)
@@ -1719,6 +1823,7 @@ void vendetta_cage::climbWatch(uint8_t *rdram, uint32_t fighter)
 {
     using namespace vendetta_cage_climb;
     const int index = indexOf(fighter);
+    vendetta_cage::throwWatch(rdram, fighter);
     shakerBot(rdram, fighter, index);
     if (index >= 0 && g_shakes[index].on && Ps2FastRead32(rdram, fighter + kState) != kClimbState)
     {
@@ -1876,6 +1981,7 @@ void vendetta_cage::climbMatchStarting(uint8_t *rdram, PS2Runtime &runtime)
 {
     using namespace vendetta_cage_climb;
     g_runtime = &runtime;
+    vendetta_cage::throwMatchStarting(runtime);
     if (g_fullSpeedEnding) // the last match ended by an escape: the game's own slow motion factor back
     {
         Ps2FastWrite32(rdram, kSlowFactor, g_slowFactorWas);
