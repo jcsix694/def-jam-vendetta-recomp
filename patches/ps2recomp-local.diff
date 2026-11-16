@@ -11148,7 +11148,7 @@ index f0ad507..8fa3249 100644
      result.displayFbp = displayFrame.fbp;
      result.sourceFbp = selected.fbp;
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 5658928..1596d3d 100644
+index 5658928..d692837 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -1,8 +1,17 @@
@@ -12181,7 +12181,7 @@ index 5658928..1596d3d 100644
          m_vtxCount = 2;
          break;
      default:
-@@ -1607,28 +2216,324 @@ void GS::vertexKick(bool drawing)
+@@ -1607,28 +2216,330 @@ void GS::vertexKick(bool drawing)
      }
  }
  
@@ -12299,8 +12299,14 @@ index 5658928..1596d3d 100644
 +        if (!elements.empty())
 +        {
 +            Element &e = elements.back();
-+            const bool touches =
-+                p.minX <= e.maxX + kGapX && p.maxX >= e.minX - kGapX && p.minY <= e.maxY + kGapY && p.maxY >= e.minY - kGapY;
++            // a word after a space on the same line: the same height, its top and bottom where the line's are, at most
++            // a word space (0.8 of the height) to the right of it - a banner or a sentence moves as one, while a score
++            // beside a name or the bars (other heights, farther apart) stay apart
++            const float lineHeight = e.maxY - e.minY;
++            const bool sameLine = lineHeight > 4.0f && std::fabs(p.minY - e.minY) <= 1.5f && std::fabs(p.maxY - e.maxY) <= 1.5f &&
++                                  p.minX >= e.maxX && p.minX - e.maxX <= 0.8f * lineHeight;
++            const bool touches = sameLine ||
++                (p.minX <= e.maxX + kGapX && p.maxX >= e.minX - kGapX && p.minY <= e.maxY + kGapY && p.maxY >= e.minY - kGapY);
 +            const bool notMuchWider = (p.maxX - p.minX) <= 2.0f * (e.maxX - e.minX) + 16.0f;
 +            const int edge = edgeSide(p.minX, p.maxX, p.width);
 +            const bool keepsCorner = edge >= 0 && third(e.minX, e.maxX, e.width) != edge;
@@ -12508,7 +12514,7 @@ index 5658928..1596d3d 100644
      return m_backend ? m_backend->ConsumeLocalToHostBytes(dst, maxBytes) : 0u;
  }
  
-@@ -1637,7 +2542,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1637,7 +2548,9 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
      if (!backend)
          backend = std::make_unique<GSCpuBackend>();
  
@@ -12518,7 +12524,7 @@ index 5658928..1596d3d 100644
      std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
      if (m_backend)
      {
-@@ -1657,21 +2564,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1657,21 +2570,30 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
          }
      }
  

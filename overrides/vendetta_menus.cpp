@@ -112,7 +112,8 @@ namespace vendetta_menus
             uint32_t rgb[3] = {0x80u, 0x80u, 0x80u}; // 0x80 = full
             bool high = false;                // highlighted: its own colour (else the theme's)
             uint32_t highRgb[3] = {0x80u, 0x78u, 0u};
-            int shadow = -1;                  // its black shadow: -1 the theme's, 0 not drawn, 1 drawn
+            int shadow = -1;                  // its black shadow when not highlighted: -1 the theme's, 0 not drawn, 1 drawn
+            int shadowHigh = -1;              // its black shadow when highlighted: the same
             int checked = 0;                  // the % codes against the game's text: 0 not yet, 1 the same, -1 not (the game's kept)
             bool logged = false;
         };
@@ -126,6 +127,12 @@ namespace vendetta_menus
         bool g_photoTablesSet = false;
         constexpr uint32_t kMessageBox = 0x186FF8u, kStoryCardRa = 0x17E200u;
         Fn g_fontDraw = nullptr, g_fontMeasure = nullptr, g_fontColour = nullptr, g_tint = nullptr;
+        // the banner font's line (FUN_001587a0; vendetta_wrestlers.cpp wraps it too, before this): its black shadow under
+        // High Scores' names (0x15252C), the winner banner "%s WINS" (0x16BCE8) and the unused Blazin' banner (0x1643F0);
+        // the words over them are white, so they follow the normal words' shadow
+        constexpr uint32_t kBannerDraw = 0x1587A0u;
+        constexpr uint32_t kBannerShadowRas[] = {0x15252Cu, 0x16BCE8u, 0x1643F0u};
+        Fn g_bannerDraw = nullptr;
         std::unordered_map<uint32_t, Words> g_words;       // a text's address in the executable -> the theme's change
         std::unordered_map<uint32_t, Words> g_builtWords;  // words built at run time: by the draw's return address
         bool g_highlightOn = false;
@@ -134,7 +141,35 @@ namespace vendetta_menus
         uint32_t g_lastGameColour[3] = {0x80u, 0x80u, 0x80u}; // the colour the game asked for (before the theme's)
         bool g_normalOn = false;
         uint32_t g_normal[3] = {0x80u, 0x80u, 0x80u};      // the theme's normal colour: every word the game draws in its white
-        bool g_shadowOff = false;                          // the theme's words drawn without their black shadows
+        bool g_comboOn = false;
+        uint32_t g_combo[3] = {0u, 0x7Du, 0x80u};          // the theme's combo colour: every word the game draws in its light blue
+        // the theme's words' black shadows by the word's colour: the game's white (and every other colour), its yellow, its
+        // light blue ("shadow": false = all three off; "shadows": { "normal", "highlighted", "combo" })
+        bool g_shadowNormal = true, g_shadowHigh = true, g_shadowCombo = true;
+        bool shadowsAllSame() { return g_shadowNormal == g_shadowHigh && g_shadowHigh == g_shadowCombo; }
+        bool shadowsChanged() { return !(g_shadowNormal && g_shadowHigh && g_shadowCombo); }
+
+        // A shadow drawn before its word's colour is known (the game draws the black shadow first, then sets the word's
+        // colour and draws the word; "1st COMBO MOVE" draws both shadows, then both words): each kept by its text, with its
+        // run of tags in the font's DMA chain list (the list's write pointer at *(font + 0) + 4: one 16-byte REF tag for each
+        // packet the font writes). When the word with the same text comes and its colour says no shadow, the shadow's tags
+        // are taken out of the list (the tags after it moved down; its packets stay in memory, no longer sent). Each
+        // letter's packets carry their own picture, so nothing after relies on them.
+        struct ShadowTake
+        {
+            uint32_t font = 0, chain = 0, ra = 0, text = 0;
+            uint32_t chainStart = 0, chainEnd = 0;
+            bool done = false;
+            int shadow = -1, shadowHigh = -1;
+        };
+        std::vector<ShadowTake> g_takes;
+
+        uint32_t guest32(const uint8_t *rdram, uint32_t a)
+        {
+            uint32_t v;
+            std::memcpy(&v, rdram + (a & PS2_RAM_MASK), 4);
+            return v;
+        }
 
         // Where the game draws a word's black shadow from (the return address of the font draw; the word itself is drawn
         // from another place, 2 left and up of it): a black word drawn from anywhere else (a help box's lines) is a word.
@@ -142,6 +177,18 @@ namespace vendetta_menus
             0x144024u, 0x1440B0u, 0x14B030u, 0x14E05Cu, 0x14F87Cu, 0x15663Cu, 0x15A338u, 0x15A448u, 0x165568u, 0x171928u, 0x178D10u,
             0x17CAA4u, 0x17D378u, 0x18078Cu, 0x1815E0u, 0x1818A4u, 0x182990u, 0x182B08u, 0x182C74u, 0x182DE8u, 0x185D10u, 0x185DECu,
             0x185EA4u, 0x1897B4u, 0x189AECu, 0x189EACu, 0x18A3A4u, 0x18C3DCu, 0x18C78Cu, 0x18E1A0u, 0x18E258u, 0x18F1E0u,
+            // the HUD's move name (FUN_001626b8), the combo name and "1st COMBO MOVE" / "MOVE COMBO" (FUN_00162ac8)
+            0x162A30u, 0x162E78u, 0x1632F8u, 0x163328u, 0x163924u,
+            // the rest found in the code (a black line followed by the same text in a colour): High Scores' tables, the story
+            // fight's results, Develop, the reward messages, the name lists, the HUD's other panel shapes, the career band
+            0x14B540u, 0x151F74u, 0x152758u, 0x152818u, 0x1528D8u, 0x1529E0u, 0x152ACCu, 0x152B8Cu, 0x152DFCu, 0x152EBCu, 0x152F7Cu,
+            0x153088u, 0x153174u, 0x153248u, 0x1534C4u, 0x153584u, 0x153644u, 0x153750u, 0x15383Cu, 0x153904u, 0x153B6Cu, 0x153C2Cu,
+            0x153CECu, 0x153DF8u, 0x153EE4u, 0x153FACu, 0x15421Cu, 0x1542DCu, 0x15439Cu, 0x15445Cu, 0x154568u, 0x154654u, 0x154714u,
+            0x1547E0u, 0x154A50u, 0x154B10u, 0x154BD0u, 0x154CD8u, 0x154DC4u, 0x154E84u, 0x1550F8u, 0x1551B8u, 0x155278u, 0x155380u,
+            0x15546Cu, 0x15552Cu, 0x15A534u, 0x15A64Cu, 0x163EBCu, 0x1655E0u, 0x165650u, 0x1656DCu, 0x16574Cu, 0x1657BCu, 0x16E840u,
+            0x16E918u, 0x16E9A0u, 0x16EA2Cu, 0x16EABCu, 0x16EB6Cu, 0x16EC28u, 0x16EC94u, 0x16ED28u, 0x16EDE4u, 0x18132Cu, 0x181488u,
+            0x181748u, 0x181A08u, 0x1826BCu, 0x182828u, 0x186668u, 0x1867A0u, 0x186908u, 0x186B04u, 0x186BE8u, 0x186D0Cu, 0x186E0Cu,
+            0x186EE0u, 0x189CA8u, 0x18A080u, 0x18A204u, 0x18A568u, 0x18A72Cu, 0x18A8D4u, 0x18AA40u,
         };
 
         bool isShadowRa(uint32_t ra)
@@ -1162,6 +1209,10 @@ namespace vendetta_menus
                     for (int k = 0; k < 3; ++k)
                         ctx->f[12 + k] = std::min(2.0f, float(g_highlight[k]) * f / 128.0f);
             }
+            // a picture tinted the game's light blue (the combo line's number, FUN_00162ac8: 0, 0.977, 1): the combo colour
+            if (g_comboOn && ctx->f[12] < 0.02f && ctx->f[13] > 0.95f && ctx->f[13] < 0.99f && ctx->f[14] > 0.99f && ctx->f[14] < 1.01f)
+                for (int k = 0; k < 3; ++k)
+                    ctx->f[12 + k] = float(g_combo[k]) / 128.0f;
             g_tint(rdram, ctx, runtime);
         }
 
@@ -1219,11 +1270,48 @@ namespace vendetta_menus
             Words *w = wordsFor(themedText(rdram, text), ra, key);
             const bool black = !(g_lastColour[0] | g_lastColour[1] | g_lastColour[2]);
             const bool isShadow = black && isShadowRa(ra);
-            if (isShadow && !(w && w->shadow >= 0 ? w->shadow == 1 : !g_shadowOff))
+            bool takeLater = false; // a shadow whose word's colour decides: drawn, and taken back if it must not show
+            if (isShadow)
             {
-                ctx->pc = ra; // its black shadow: not drawn
-                SET_GPR_U32(ctx, 2, 0u);
-                return;
+                const int own = w ? w->shadow : -1, ownHigh = w ? w->shadowHigh : -1;
+                const bool known = (own >= 0 && ownHigh >= 0 && own == ownHigh) || (own < 0 && ownHigh < 0 && shadowsAllSame());
+                const bool drawn = own >= 0 ? own == 1 : g_shadowNormal;
+                if (known && !drawn)
+                {
+                    ctx->pc = ra; // its black shadow: not drawn
+                    SET_GPR_U32(ctx, 2, 0u);
+                    return;
+                }
+                takeLater = !known;
+            }
+            else if (!g_takes.empty())
+            {
+                // a word after shadows kept for later: its own (the same text, the same font, just before it) decided by its colour
+                const uint32_t font = getRegU32(ctx, 4);
+                for (size_t k = g_takes.size(); k-- > 0;)
+                {
+                    ShadowTake &t = g_takes[k];
+                    if (t.text != text || t.font != font || ra <= t.ra || ra - t.ra >= 0x400u)
+                        continue;
+                    const bool high = yellow(g_lastGameColour[0], g_lastGameColour[1], g_lastGameColour[2]) > 0.0f;
+                    const bool combo = g_lastGameColour[0] == 0u && g_lastGameColour[1] == 0x7Du && g_lastGameColour[2] == 0x80u;
+                    const int own = high ? t.shadowHigh : t.shadow;
+                    const bool drawn = own >= 0 ? own == 1 : high ? g_shadowHigh : combo ? g_shadowCombo : g_shadowNormal;
+                    const uint32_t now = guest32(rdram, t.chain + 4u);
+                    if (!drawn && t.done && guest32(rdram, font) == t.chain && t.chainEnd > t.chainStart && now >= t.chainEnd)
+                    {
+                        // its tags taken out of the chain list, the ones after moved down
+                        const uint32_t cut = t.chainEnd - t.chainStart;
+                        std::memmove(rdram + (t.chainStart & PS2_RAM_MASK), rdram + (t.chainEnd & PS2_RAM_MASK), now - t.chainEnd);
+                        const uint32_t moved = now - cut;
+                        std::memcpy(rdram + ((t.chain + 4u) & PS2_RAM_MASK), &moved, 4);
+                        for (ShadowTake &o : g_takes)
+                            if (&o != &t && o.chain == t.chain && o.chainStart >= t.chainEnd)
+                                o.chainStart -= cut, o.chainEnd -= cut;
+                    }
+                    g_takes.erase(g_takes.begin() + std::ptrdiff_t(k));
+                    break;
+                }
             }
             if (w)
             {
@@ -1253,8 +1341,31 @@ namespace vendetta_menus
                 std::memcpy(own, g_normal, sizeof(own));
                 ownColour = true;
             }
+            else if (g_comboOn && g_lastGameColour[0] == 0u && g_lastGameColour[1] == 0x7Du && g_lastGameColour[2] == 0x80u)
+            {
+                std::memcpy(own, g_combo, sizeof(own)); // the combo words ("1st COMBO MOVE", FUN_00162ac8)
+                ownColour = true;
+            }
             if (!ownColour)
             {
+                if (takeLater)
+                {
+                    // the shadow drawn, its place kept: the word's colour decides whether it stays
+                    const uint32_t font = getRegU32(ctx, 4), chain = guest32(rdram, font);
+                    if (g_takes.size() >= 8)
+                        g_takes.erase(g_takes.begin()); // one whose word never came
+                    g_takes.push_back(ShadowTake{font, chain, ra, text, guest32(rdram, chain + 4u), 0u, false, w ? w->shadow : -1, w ? w->shadowHigh : -1});
+                    const size_t index = g_takes.size() - 1;
+                    callThen(rdram, ctx, runtime, g_fontDraw, [index, chain](uint8_t *rdram, R5900Context *)
+                             {
+                                 if (index < g_takes.size() && g_takes[index].chain == chain && !g_takes[index].done)
+                                 {
+                                     g_takes[index].chainEnd = guest32(rdram, chain + 4u);
+                                     g_takes[index].done = true;
+                                 }
+                             });
+                    return;
+                }
                 g_fontDraw(rdram, ctx, runtime); // the game's colour as the theme makes it
                 return;
             }
@@ -1265,6 +1376,18 @@ namespace vendetta_menus
             setColour(rdram, ctx, runtime, font, own, alpha);
             callThen(rdram, ctx, runtime, g_fontDraw, [font, alpha, before, runtime](uint8_t *rdram, R5900Context *ctx)
                      { setColour(rdram, ctx, runtime, font, before, alpha); });
+        }
+
+        void bannerDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t ra = getRegU32(ctx, 31);
+            if (!g_shadowNormal && std::find(std::begin(kBannerShadowRas), std::end(kBannerShadowRas), ra) != std::end(kBannerShadowRas))
+            {
+                ctx->pc = ra; // the banner's black shadow: not drawn (the callers use no result)
+                SET_GPR_U32(ctx, 2, 0u);
+                return;
+            }
+            g_bannerDraw(rdram, ctx, runtime);
         }
 
         void fontMeasure(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1334,7 +1457,9 @@ namespace vendetta_menus
                 w.high = true;
             if (const vendetta_mods::Json *shadow = entry.find("shadow"); shadow && shadow->type == vendetta_mods::Json::Type::Bool)
                 w.shadow = shadow->boolean ? 1 : 0;
-            if (!w.buffer && !w.colour && !w.high && w.shadow < 0)
+            if (const vendetta_mods::Json *shadow = entry.find("shadow highlighted"); shadow && shadow->type == vendetta_mods::Json::Type::Bool)
+                w.shadowHigh = shadow->boolean ? 1 : 0;
+            if (!w.buffer && !w.colour && !w.high && w.shadow < 0 && w.shadowHigh < 0)
                 return;
             if (piece.kind == 2)
             {
@@ -1408,8 +1533,17 @@ namespace vendetta_menus
                 g_highlightOn = true; // the theme's highlight: every yellow the game uses for it (the later theme's wins)
             if (screen.empty() && readColour(json.find("normal"), g_normal))
                 g_normalOn = true; // the theme's normal colour: every white the game draws its words in
+            if (screen.empty() && readColour(json.find("combo"), g_combo))
+                g_comboOn = true; // the theme's combo colour: every light blue the game draws its words in
             if (const vendetta_mods::Json *shadow = json.find("shadow"); screen.empty() && shadow && shadow->type == vendetta_mods::Json::Type::Bool)
-                g_shadowOff = !shadow->boolean;
+                g_shadowNormal = g_shadowHigh = g_shadowCombo = shadow->boolean; // all three (the first format)
+            if (const vendetta_mods::Json *shadows = json.find("shadows"); screen.empty() && shadows && shadows->isObject())
+            {
+                const std::pair<const char *, bool *> keys[] = {{"normal", &g_shadowNormal}, {"highlighted", &g_shadowHigh}, {"combo", &g_shadowCombo}};
+                for (const auto &[key, flag] : keys)
+                    if (const vendetta_mods::Json *v = shadows->find(key); v && v->type == vendetta_mods::Json::Type::Bool)
+                        *flag = v->boolean;
+            }
             if (const vendetta_mods::Json *fonts = json.find("fonts"); screen.empty() && fonts && fonts->isObject())
             {
                 const std::string folder = std::filesystem::path(relative).parent_path().generic_string();
@@ -1666,7 +1800,7 @@ namespace vendetta_menus
                 std::cerr << "[menus] " << (c->second.theme == "the recomp's own" ? "the recomp's own" : c->second.theme + "'s")
                           << " backdrop is 16:9: menu screens shown wide, the menus in the 4:3 middle" << std::endl;
         }
-        const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || g_normalOn || g_shadowOff || !g_fontFile[0].empty() ||
+        const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || g_normalOn || g_comboOn || shadowsChanged() || !g_fontFile[0].empty() ||
                            !g_fontFile[1].empty();
         if (g_storyCardPlain)
             hook(runtime, kMessageBox, g_messageBox, messageBox);
@@ -1693,8 +1827,10 @@ namespace vendetta_menus
             hook(runtime, kFontDraw, g_fontDraw, fontDraw);
             hook(runtime, kFontMeasure, g_fontMeasure, fontMeasure);
             hook(runtime, kFontColour, g_fontColour, fontColour);
-            if (g_highlightOn)
+            if (g_highlightOn || g_comboOn)
                 hook(runtime, kTint, g_tint, tint);
+            if (!g_shadowNormal)
+                hook(runtime, kBannerDraw, g_bannerDraw, bannerDraw);
         }
         else if (g_wideBackdrop)
             hook(runtime, kFontDraw, g_fontDraw, fontDraw); // the song box's words, at the frame's far left

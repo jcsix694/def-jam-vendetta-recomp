@@ -513,10 +513,10 @@ hud.text-295988,words,menu,hud,159D20,15A448 15A6A8,text,295988,,,,x 34781-34781
 hud.text-2959d0,words,menu,hud,159D20,15A448 15A6A8,text,2959D0,,,,x 34816-34816 y 33873-33873,,,,live,,,,,off
 hud.text-295ae8,words,menu,hud,159D20,15A338 15A6A8,text,295AE8,,,,x 29632-29632 y 33873-33873,,,,live,,,,,off
 hud.text-295b00,words,menu,hud,159D20,15A448 15A6A8,text,295B00,,,,x 35343-35343 y 33873-33873,,,,live,,,,,off
-hud.built-162a30,words-built,menu,hud,1626B8,162A30,built,,,,,x 26448-29008 y 33538-33538,,,,live,,,,,off
-hud.built-162a70,words-built,menu,hud,1626B8,162A70,built,,,,,x 26432-28992 y 33522-33522,,,,live,,,,,off
-hud.built-162e78,words-built,menu,hud,162AC8,162E78,built,,,,,x 26448-29008 y 33381-33381,,,,live,,,,,off
-hud.built-162eb8,words-built,menu,hud,162AC8,162EB8,built,,,,,x 26432-28992 y 33365-33365,,,,live,,,,,off
+hud.built-162a30,words-built,menu,hud,1626B8,162A30,built,,,,,x 26448-29008 y 33538-33538,,,,live,,,,,
+hud.built-162a70,words-built,menu,hud,1626B8,162A70,built,,,,,x 26432-28992 y 33522-33522,,,,live,,,,,
+hud.built-162e78,words-built,menu,hud,162AC8,162E78,built,,,,,x 26448-29008 y 33381-33381,,,,live,,,,,
+hud.built-162eb8,words-built,menu,hud,162AC8,162EB8,built,,,,,x 26432-28992 y 33365-33365,,,,live,,,,,
 hud.text-27db88,words,menu,hud,162AC8,163328 163380,text,27DB88,,,,x 27049-37379 y 33381-33381,,,,live,,,,,
 hud.text-27db98,words,menu,hud,162AC8,163924 163950,text,27DB98,,,,x 26704-29264 y 33381-33381,,,,live,,,,,
 hud.text-295870,words,menu,hud,162AC8,1632F8 163354,text,295870,,,,x 26704-37033 y 33381-33381,,,,live,,,,,
