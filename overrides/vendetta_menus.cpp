@@ -342,7 +342,7 @@ namespace vendetta_menus
             const float boxW = std::max(1e-3f, x1 - x0), boxH = std::max(1e-3f, y1 - y0), boxA = boxW / boxH * widen;
             const float imgA = c.height ? float(c.width) / float(c.height) : boxA;
             // a 16:9 backdrop: filled, so the wide frame shows all of it and a 4:3 frame its middle (never squashed)
-            const Fit fit = c.wide ? Fit::Fill : piece.join == 2 ? Fit::Stretch : c.fit;
+            const Fit fit = c.wide && std::strcmp(piece.name, "backdrop.background") == 0 ? Fit::Fill : piece.join == 2 ? Fit::Stretch : c.fit;
             float du = std::max(1.0f, float(piece.u1 - piece.u0));
             const float dv = std::max(1.0f, float(piece.v1 - piece.v0));
             if (piece.grows) // a bar: its picture over its full width, so a part-full bar shows that part of it
@@ -458,6 +458,99 @@ namespace vendetta_menus
         {
             for (int i = 0; i < 4; ++i)
                 writeFloat(q + 8 + 0x24 * i, readFloat(q + 8 + 0x24 * i) + kPinLeftGame);
+        }
+
+        // ---- the header in a wide menu frame (a 16:9 backdrop drawn): the header as in 4:3, in the middle, its title,
+        // prompts and words where they are; only its two ends carried on to the wide screen's sides, drawn behind it.
+        // The game's own bar: one column of each half drawn out to the side (the bar's left end, behind the emblem; the
+        // plate's plain right end). A theme's header picture made wide ("shape": "16:9", as the backdrop): its middle
+        // is the 4:3 header (in 4:3 its sides are cut off), its sides drawn out to the screen's sides as they are, never
+        // stretched; a theme's picture not made wide: as made, in the middle. The bar's halves are told apart by the
+        // return address in the header routine FUN_001712a8. ----
+        constexpr uint32_t kHeaderBarLeftRa = 0x171500u;  // the bar's left half (x 0-320, texels 0-256 of its strip)
+        constexpr uint32_t kHeaderBarRightRa = 0x171640u; // its right half (320-640)
+        constexpr float kGameLeftColumn = 2.0f;           // the bar at its left end, behind the emblem (a texel column)
+        constexpr float kGameRightColumn = 248.0f;        // the plate's plain right end
+        // the game's halves end in a darker edge column: the side drawn over the half's first 3 / last 7 texels (of 256)
+        // hides it (the emblem starts past texel 8)
+        constexpr float kGameLeftInset = 3.0f / 256.0f, kGameRightInset = 7.0f / 256.0f;
+        constexpr float kWideHeaderSide = 0.125f;         // a wide header picture's side: (853 - 640) / 2 / 853
+
+        enum class HeaderPart { None, BarLeft, BarRight };
+
+        HeaderPart headerPart(uint32_t ra)
+        {
+            if ((ra != kHeaderBarLeftRa && ra != kHeaderBarRightRa) || !g_wideBackdrop || !ps2_widescreen::centredNow(100))
+                return HeaderPart::None;
+            return ra == kHeaderBarLeftRa ? HeaderPart::BarLeft : HeaderPart::BarRight;
+        }
+
+        // A wide header picture's middle in a half of the bar (its UVs over the picture's 4:3 middle), in 4:3 too.
+        void wideHeaderMiddle(uint8_t *q, uint32_t texW)
+        {
+            for (int i = 0; i < 4; ++i)
+            {
+                uint8_t *u = q + 8 + 0x24 * i + 0x1C;
+                writeFloat(u, (kWideHeaderSide + readFloat(u) / float(texW) * (1.0f - 2.0f * kWideHeaderSide)) * float(texW));
+            }
+        }
+
+        // The side piece of a half of the bar (`q`, a copy of the half as drawn): from the half's outer edge in the frame
+        // (or `inset`, a share of the half's width, inside it) to the wide screen's side (its outer corners pinned there by
+        // the renderer), its UVs uOuter at the side and uInner where it meets the header.
+        void makeHeaderSide(uint8_t *q, bool left, float uOuter, float uInner, float inset = 0.0f)
+        {
+            float x0 = 1e9f, x1 = -1e9f;
+            for (int i = 0; i < 4; ++i)
+                x0 = std::min(x0, readFloat(q + 8 + 0x24 * i)), x1 = std::max(x1, readFloat(q + 8 + 0x24 * i));
+            const float into = inset * (x1 - x0);
+            const float edge = left ? x0 + into : x1 - into;
+            for (int i = 0; i < 4; ++i)
+            {
+                uint8_t *vtx = q + 8 + 0x24 * i;
+                const float x = readFloat(vtx);
+                const bool outer = left ? x == x0 : x == x1;
+                writeFloat(vtx, outer ? (left ? x0 + kPinLeftGame : x1 - kPinLeftGame) : edge);
+                writeFloat(vtx + 0x1C, outer ? uOuter : uInner);
+            }
+        }
+
+        // The u at a half's outer edge (its left corners' for the left half, its right corners' for the right).
+        float headerEdgeU(const uint8_t *q, bool left)
+        {
+            float x0 = 1e9f, x1 = -1e9f, u = 0.0f;
+            for (int i = 0; i < 4; ++i)
+                x0 = std::min(x0, readFloat(q + 8 + 0x24 * i)), x1 = std::max(x1, readFloat(q + 8 + 0x24 * i));
+            for (int i = 0; i < 4; ++i)
+                if (readFloat(q + 8 + 0x24 * i) == (left ? x0 : x1))
+                    u = readFloat(q + 8 + 0x24 * i + 0x1C);
+            return u;
+        }
+
+        // Quads drawn one after another through the game's quad routine (the half, then its side); `post` after the
+        // last.
+        void drawQuads(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, const uint8_t (*parts)[kQuadSize], int n, Post post)
+        {
+            const uint32_t a0 = getRegU32(ctx, 4), ra = getRegU32(ctx, 31), sp = getRegU32(ctx, 29);
+            uint8_t *scratch = rdram + (g_scratch & PS2_RAM_MASK);
+            for (int i = 0; i < n; ++i)
+            {
+                std::memcpy(scratch, parts[i], kQuadSize);
+                SET_GPR_U32(ctx, 4, a0);
+                SET_GPR_U32(ctx, 5, g_scratch);
+                SET_GPR_U32(ctx, 31, ra);
+                if (i + 1 == n)
+                {
+                    callThen(rdram, ctx, runtime, g_quad, std::move(post));
+                    return;
+                }
+                g_quad(rdram, ctx, runtime); // the quad routine only builds its packet: it never waits
+                if (ctx->pc != ra || getRegU32(ctx, 29) != sp)
+                {
+                    defer(ra, sp, std::move(post)); // left early after all: the header not drawn this frame
+                    return;
+                }
+            }
         }
 
         // ---- the banner font ("fonts": { "banner": ... }): the winner banner's, the Blazin' banner's and the High Scores
@@ -765,8 +858,24 @@ namespace vendetta_menus
             // in a wide menu frame, a piece crossing the 4:3 frame's sides is cut at them (the backdrop and the fades are
             // the frame's own size: never cut)
             const bool cut = g_wideBackdrop && g_scratch && ps2_widescreen::centredNow(100);
+            const HeaderPart header = g_scratch ? headerPart(ra) : HeaderPart::None;
             if (!change)
             {
+                if (header != HeaderPart::None)
+                {
+                    // the game's own bar: the half as it is, then a column of its end drawn out to the screen's side
+                    const bool left = header == HeaderPart::BarLeft;
+                    uint8_t parts[2][kQuadSize];
+                    std::memcpy(parts[0], qp, kQuadSize);
+                    std::memcpy(parts[1], qp, kQuadSize);
+                    float u0 = 1e9f;
+                    for (int i = 0; i < 4; ++i)
+                        u0 = std::min(u0, readFloat(qp + 8 + 0x24 * i + 0x1C));
+                    const float column = u0 + (left ? kGameLeftColumn : kGameRightColumn);
+                    makeHeaderSide(parts[1], left, column, column, left ? kGameLeftInset : kGameRightInset);
+                    drawQuads(rdram, ctx, runtime, parts, 2, [](uint8_t *, R5900Context *) {});
+                    return;
+                }
                 if (!cut)
                 {
                     g_quad(rdram, ctx, runtime);
@@ -794,6 +903,25 @@ namespace vendetta_menus
             std::memcpy(copy, qp, kQuadSize);
             const float widen = c.wide && g_wideBackdrop && uint32_t(index) == g_backdrop ? ps2_widescreen::targetAspect() / (4.0f / 3.0f) : 1.0f;
             changeQuad(copy, kMenuPieces[index], c, texW, texH, widen);
+            const bool barHalf = ra == kHeaderBarLeftRa || ra == kHeaderBarRightRa;
+            if (barHalf && c.wide)
+                wideHeaderMiddle(copy, texW); // a wide header picture: its 4:3 middle on the bar, in 4:3 too
+            if (barHalf && c.wide && header != HeaderPart::None && vendetta_pictures::bindNow(tbp, c.image))
+            {
+                // the half, then its side drawn out to the screen's side as it is
+                const bool left = header == HeaderPart::BarLeft;
+                uint8_t parts[2][kQuadSize];
+                std::memcpy(parts[0], copy, kQuadSize);
+                std::memcpy(parts[1], copy, kQuadSize);
+                makeHeaderSide(parts[1], left, left ? 0.0f : float(texW), headerEdgeU(copy, left));
+                if (g_log && !c.logged)
+                {
+                    c.logged = true;
+                    std::cerr << "[menus] " << kMenuPieces[index].name << " drawn from " << c.theme << "'s " << c.file << ", wide" << std::endl;
+                }
+                drawQuads(rdram, ctx, runtime, parts, 2, [tbp](uint8_t *, R5900Context *) { vendetta_pictures::unbindNow(tbp); });
+                return;
+            }
             if (cut && !cutAtFrame(copy))
             {
                 ctx->pc = ra;
@@ -1424,6 +1552,37 @@ namespace vendetta_menus
             }
         }
 
+        // The recomp's own 16:9 backdrop (game\standard\menus\backdrop.png) when the player has widescreen on and no menu
+        // theme changes the backdrop: the menus' screens shown wide, with the game's own tint, the menus in the 4:3
+        // middle. With 4:3 the game's own backdrop, untouched.
+        void standardBackdrop()
+        {
+            if (ps2_widescreen::targetAspect() <= 0.0f)
+                return;
+            if (const char *v = std::getenv("VENDETTA_STANDARD"); v && *v == '0')
+                return;
+            const std::filesystem::path path = PS2Runtime::getIoPaths().elfDirectory / "standard" / "menus" / "backdrop.png";
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(path, ec))
+                return;
+            Change c;
+            c.theme = "the recomp's own";
+            c.file = "standard/menus/backdrop.png";
+            vendetta_pictures::fileSize(path, c.width, c.height);
+            if (!c.width || !c.height)
+            {
+                vendetta_mods::problem() << "[standard] " << path.string() << " can't be read as a picture" << std::endl;
+                return;
+            }
+            uint32_t w = c.width, h = c.height;
+            while (w > 4096u || h > 4096u)
+                w = std::max(1u, w / 2u), h = std::max(1u, h / 2u);
+            c.image = vendetta_pictures::add(path, w, h, 1u);
+            vendetta_pictures::want(c.image);
+            c.wide = true;
+            g_changes[g_backdrop] = std::move(c);
+        }
+
         void hook(PS2Runtime &runtime, uint32_t address, Fn &original, Fn wrapper)
         {
             original = runtime.lookupFunction(address);
@@ -1457,10 +1616,13 @@ namespace vendetta_menus
         if (const auto b = g_byName.find("backdrop.background"); b != g_byName.end())
         {
             g_backdrop = b->second;
+            if (g_changes.find(g_backdrop) == g_changes.end())
+                standardBackdrop();
             const auto c = g_changes.find(g_backdrop);
             g_wideBackdrop = c != g_changes.end() && c->second.wide && ps2_widescreen::targetAspect() > 0.0f;
             if (g_wideBackdrop)
-                std::cerr << "[menus] " << c->second.theme << "'s backdrop is 16:9: menu screens shown wide, the menus in the 4:3 middle" << std::endl;
+                std::cerr << "[menus] " << (c->second.theme == "the recomp's own" ? "the recomp's own" : c->second.theme + "'s")
+                          << " backdrop is 16:9: menu screens shown wide, the menus in the 4:3 middle" << std::endl;
         }
         const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || !g_fontFile[0].empty() || !g_fontFile[1].empty();
         if (g_storyCardPlain)
@@ -1493,6 +1655,8 @@ namespace vendetta_menus
         }
         else if (g_wideBackdrop)
             hook(runtime, kFontDraw, g_fontDraw, fontDraw); // the song box's words, at the frame's far left
+        if (g_changes.size() == 1u && g_changes.begin()->second.theme == "the recomp's own" && !words && g_fontFile[2].empty() && g_photos.empty())
+            return; // only the recomp's own backdrop: said above
         std::cerr << "[menus] the project's menu themes change " << g_changes.size() << " pictures, " << g_words.size() + g_builtWords.size()
                   << " words" << (g_highlightOn ? ", the highlight colour" : "") << (g_fontFile[2].empty() ? "" : ", the banner font")
                   << (g_photos.empty() ? "" : ", " + std::to_string(g_photos.size()) + " gallery photos") << std::endl;
