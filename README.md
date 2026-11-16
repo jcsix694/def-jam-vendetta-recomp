@@ -24,13 +24,20 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Install](#install)
+- [Controls](#controls)
+- [New in the game](#new-in-the-game)
+  - [S-WORD and DABO](#s-word-and-dabo)
+  - [The six-sided ring](#the-six-sided-ring)
+  - [Cage match](#cage-match)
+  - [Match options](#match-options)
 - [Def Jam Vendetta Recompiled Settings](#def-jam-vendetta-recompiled-settings)
 - [Mods](#mods)
   - [The mod kit](#the-mod-kit)
+  - [Projects](#projects)
   - [Wrestlers](#wrestlers)
   - [Arenas](#arenas)
+  - [Menus, videos and music](#menus-videos-and-music)
   - [Blender plugin](#blender-plugin)
-- [Controls](#controls)
 - [Good to know](#good-to-know)
 - [Thanks to](#thanks-to)
 - [Licence](#licence)
@@ -43,6 +50,15 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 - Sharp 2D: the HUD, text and menus as sharp as the 3D
 - High Poly in every match (the PS2 used lower detail models with 3 or 4 fighters)
 - Vulkan on your graphics card, in a window or borderless
+
+**New in the game**
+- The Japanese version's content, in new slots: its two wrestlers, S-WORD and DABO, on the end of Choose Fighter and
+  unlocked, with their own moves, intros, taunts, victories and voices, and the Japanese version's two songs
+- A six-sided ring: a new arena, THE FACE CLUB SIX SIDES, on Choose Stage and unlocked
+- Cage match, in every arena, for every battle type and on both ring shapes: climb out to win, shake a climber off,
+  throw your opponent into the cage
+- Match options in Battle: pin, submission, TKO and rope breaks each switched on or off, and Tornado Tag
+- The camera style changed in the game, from the pause menu or Options
 
 **Playing**
 - Up to 4 players on controllers, plus the keyboard as any player
@@ -59,9 +75,10 @@ Vendetta (PlayStation 2, USA, **SLUS-20639**) as an `.iso` or `.chd`, and everyt
 - New wrestlers and arenas, each with its own place on Choose Fighter and Choose Stage, or in place of the game's own
 - Wrestlers with their own models, skins, attires, movesets, animations and voice lines
 - Your own animations: moves, intros, victories and taunts, posed frame by frame, with their own sounds and cameras
-- Arenas with their own models, textures, lights, crowd sounds and fly-in camera
+- Arenas with their own models, textures, lights, crowd sounds and fly-in camera, with four or six sides
+- Themes: the menus' words, pictures, fonts and colours, the game's movies and the game's songs replaced by your own
 - Projects: each one has its own mods and its own saves, so the original game and your saves are never touched
-- The mod kit comes with the game, with a Blender plugin for models
+- Everything about mods is done in the mod kit, which comes with the game, with a Blender plugin for models
 - Share a project and its mods as one zip
 
 ## Screenshots
@@ -128,6 +145,95 @@ downloads the new version, swaps in only what changed and rebuilds the game in a
 kept. Starting the game itself checks too: when a new version is out, a popup asks **Update** or **Play**, once per new
 version. Turn both checks off under About › Check for updates automatically.
 
+**Intel graphics built into the processor** (most laptops without their own graphics card) need an up to date Intel
+driver. An old one can leave the wrestlers out of the picture or fill it with stripes. The game checks the driver each
+time it starts and tells you when it is one known to draw wrong. Windows Update often says an old driver is the newest:
+get the driver from Intel's own site for your processor. If no newer driver exists for your PC, set **Drawn by** to
+**CPU** on the Graphics page: slower, at the PS2's own resolution, but drawn right.
+
+## Controls
+
+| PS2 | In a match | Controller (Xbox layout) | Keyboard |
+| --- | --- | --- | --- |
+| D-pad / left stick | move | D-pad / left stick | Arrow keys / W A S D |
+| ✕ Cross | grapple | A | X / Space |
+| ○ Circle | run, climb | B | C / Esc |
+| □ Square | strike | X | Z / Numpad 0 |
+| △ Triangle | climb the cage | Y | V / Numpad 1 |
+| L1 / R1 | dodge / block | LB / RB | Q / E |
+| L2 / R2 | | LT / RT | Left Shift / Right Shift |
+| Right stick | taunt, Blazin' | right stick | I J K L |
+| Start / Select | pause | Menu / View | Enter / Tab |
+
+Xbox-style controllers work out of the box, with vibration, and are given to players in the order Windows lists them.
+PlayStation controllers work through Steam or DS4Windows. The keyboard plays as nobody until you pick a player on the
+Controls page.
+
+## New in the game
+
+All of this comes with the game as standard, in the original game and in every project. Nothing needs a mod.
+
+### S-WORD and DABO
+
+The Japanese version of Def Jam Vendetta has two wrestlers the USA version doesn't: **S-WORD** and **DABO**. Both are
+here as they are on the Japanese disc, in two new slots on the end of Choose Fighter, unlocked from the start. Each has
+its own model, select screen pictures, voice lines, intro, taunts and victory, and its own moves, such as S-WORD's
+Kross' Ova Zan and DABO's Hitman's License. The Japanese version's two songs come too: "Kross Ova (ZAN)" and "It's My
+Turn (Fight!!!)". In a project they can be replaced by mods like any of the game's wrestlers.
+
+<table>
+<tr>
+<td width="50%"><img src="images/game-select-sword.jpg" alt="S-WORD and DABO on the end of Choose Fighter"><br><sub>The last column of Choose Fighter: S-WORD above DABO.</sub></td>
+<td width="50%"><img src="images/game-sword-dabo.jpg" alt="S-WORD versus DABO"><br><sub>S-WORD versus DABO.</sub></td>
+</tr>
+</table>
+
+### The six-sided ring
+
+**THE FACE CLUB SIX SIDES** is a new arena on Choose Stage, after the game's 12 and unlocked from the start: The Face
+Club with a six-sided ring, its ropes and corners following the six sides. Mod arenas can have six sides too.
+
+<img src="images/game-sixsides.jpg" alt="S-WORD and DABO in the six-sided ring, with the WWF No Mercy camera" width="50%"><br><sub>S-WORD and DABO in the six-sided ring, seen with the WWF No Mercy camera.</sub>
+
+### Cage match
+
+In Battle, after picking a battle type on Choose Match, set **MATCH TYPE** to **CAGE MATCH**. A cage stands round the
+ring in every arena, on the square ring and the six-sided one, for every battle type.
+
+- **Climb:** push toward the ropes and press △. How fast you climb follows your momentum.
+- **Escape:** at the top, tap to fill the bars and go over the top. Out of the cage wins.
+- **Stop a climber:** press ✕ toward the cage below them to shake it. Enough shaking leaves them hanging, then
+  drops them back into the ring.
+- **Throw into the cage:** grab with ✕, then △ with a direction. Close to the cage it's a whip into it; farther
+  away, a run and ram. Both can be reversed.
+- **Teams:** in a tag or handicap match every member of a team has to get out. With everyone for themselves, the first
+  one out wins.
+
+The ways to win are yours to pick: **ESCAPE**, **PIN**, **SUBMISSION** and **TKO**, with **ROPE BREAKS** on or off.
+The computer climbs, shakes and throws too.
+
+<table>
+<tr>
+<td width="50%"><img src="images/game-cagematch.jpg" alt="Choose Match: CAGE MATCH and its ways to win"><br><sub>Choose Match: CAGE MATCH and its ways to win.</sub></td>
+<td width="50%"><img src="images/game-cage.jpg" alt="Briggs climbing the cage"><br><sub>Briggs climbing the cage.</sub></td>
+</tr>
+<tr>
+<td><img src="images/game-cage-top.jpg" alt="At the top of the cage: tap to get over"><br><sub>At the top: tap to get over.</sub></td>
+<td><img src="images/game-cage-six.jpg" alt="S-WORD climbing the cage on the six-sided ring"><br><sub>The cage on the six-sided ring.</sub></td>
+</tr>
+</table>
+
+### Match options
+
+Choose Match has a second step in Battle for every battle type. In a **NORMAL** match, **PIN**, **SUBMISSION**,
+**TKO** and **ROPE BREAKS** can each be switched on or off (everything on is the game as it always was). Tag Team also
+has **TORNADO TAG**: both partners in the ring at once, no tags. Story and Survival keep their own rules.
+
+<img src="images/game-matchoptions.jpg" alt="Choose Match: a normal match's ways to win" width="50%">
+
+The **camera style** has a row in the pause menu and in Options, so it can be changed during a match. It's the same
+setting as on the settings program's Gameplay page.
+
 ## Def Jam Vendetta Recompiled Settings
 
 <table>
@@ -141,51 +247,73 @@ version. Turn both checks off under About › Check for updates automatically.
 </tr>
 </table>
 
-- **Play:** what to play, the original game or one of your projects; new projects, copy, rename, delete, export one to
-  share and import one.
-- **Mods:** a project's mods in their load order, its mods folder, and the mod kit.
+The settings program sets the game up, picks what to play and holds the settings. Mods are not set up here any more:
+a project's mods are managed in the mod kit, opened from the Play page.
+
+- **Play:** what to play, the original game or one of your projects; new projects, copy, rename, delete, a desktop
+  shortcut for a project, export one to share and import one. A project shows how many mods it has and whether
+  anything needs fixing, with **Open in the mod kit**.
 - **Display:** window or borderless, which screen, VSync, and
   widescreen, 4:3 or stretched.
 - **Graphics:** graphics card or CPU, scale 1× to 16×, Sharp 2D, and FSR, smooth or blocky scaling with sharpening.
 - **Sound:** volume and the arena reverb.
 - **Controls:** up to 4 players, each player's controller and vibration, which player the keyboard plays as, and what
   every button does.
-- **Gameplay:** the camera style in matches, the match speed (Def Jam Vendetta, WWF No Mercy or your own), and Unlock
-  everything.
+- **Gameplay:** the camera style in matches (also in the game's pause menu and Options), the match speed (Def Jam
+  Vendetta, WWF No Mercy or your own), and Unlock everything.
 - **About:** the version, your game folder and save data in one click, and what it's made with.
 
 ## Mods
 
 Mods are played in **projects**. A project is a set of mods with its own saves: the original game never loads mods,
-and its saves stay as they are.
+and its saves stay as they are. Everything about mods is done in the **mod kit**, which comes with the game in the
+`Mod kit` folder: making them, installing ones someone shared, and deciding what goes where in a project. The settings
+program only picks the project and plays it.
 
-<table>
-<tr>
-<td width="50%"><img src="images/settings-play.png" alt="The Play page with a project"><br><sub>The Play page: the original game or one of your projects, each with its own saves.</sub></td>
-<td width="50%"><img src="images/settings-mods.png" alt="The Mods page"><br><sub>The Mods page: a project's mods in load order, each switched on or off.</sub></td>
-</tr>
-</table>
+<img src="images/settings-play.png" alt="The Play page with a project" width="50%"><br><sub>The Play page: the original game or one of your projects, each with its own saves.</sub>
 
-1. On the **Play** page, press **+ New project** and give it a name.
-2. On the **Mods** page, press **Open the mod kit**. It's in the `Mod kit` folder beside Def Jam Vendetta Recompiled
-   Settings.
-3. In the mod kit, make a wrestler or an arena (or import one someone shared), then press **Add to project…**: it
-   either replaces one of the game's own or gets a new place of its own.
+1. On the settings program's **Play** page, press **+ New project** and give it a name.
+2. Press **Open in the mod kit**. The kit opens on that project.
+3. In the kit, press **Install a mod…** for a zip someone shared, or make your own wrestler, arena or theme, and
+   choose where each goes.
 4. Back on the **Play** page, pick the project and press **PLAY**.
 
-When two mods change the same thing, the one lower down the Mods page wins. If a project's mods have a problem, the
-game tells you before it starts, and the Mods page says what's wrong. To share a project with its mods, use
-**Export to share…** on the Play page; the other player brings it in with **Import…**.
+If a project has a problem, the Play page says so and **Fix in the mod kit** takes you to it. To share a project with
+its mods, use **Export to share…** on the Play page; the other player brings it in with **Import…**.
 
 ### The mod kit
 
-The mod kit makes the mods. Its first start asks for the name you make mods under, and it links itself to the game it
-came with.
+The mod kit has two sides. **PROJECTS** manages a project: what is on Choose Fighter, on Choose Stage, and which
+themes it uses. **BUILD** makes the things that go into projects: wrestlers, arenas and themes. Its first start asks
+for the name you make mods under, and it links itself to the game it came with.
 
 <table>
 <tr>
 <td width="50%"><img src="images/modkit-name.png" alt="The mod kit's first start: your name"><br><sub>Your name goes into every mod you make, so two people's mods never clash.</sub></td>
 <td width="50%"><img src="images/modkit-linked.png" alt="Linked games"><br><sub>Linked games: the game the kit reads from and adds mods to.</sub></td>
+</tr>
+</table>
+
+### Projects
+
+On the PROJECTS side, pick a project (or make one with **+ New project**):
+
+- **Roster:** Choose Fighter, slot by slot. A slot holds up to 3 attires, and each can come from anywhere: the game's
+  own, a wrestler you made, one you installed, even from different mods. Change or remove any attire, put a whole
+  wrestler in a slot, or add a **new slot** after the game's own. S-WORD and DABO are there as the game's own.
+- **Stages:** Choose Stage, place by place. A place is the game's arena or one of yours, with **new places** after the
+  game's own.
+- **Themes:** one menu theme, one video theme and one music theme, or back to the game's.
+- **Installed:** everything in the project, each switched on or off or removed, with any problem and its fix.
+
+**Install a mod…** takes a zip someone shared and shows what is in it and where each wrestler or arena will go,
+starting on what its maker chose. A project keeps its own copy of everything in it and never changes by itself: when
+you change something on the BUILD side, or install a newer zip, the project shows **Update**.
+
+<table>
+<tr>
+<td width="50%"><img src="images/modkit-projects.png" alt="A project's Roster"><br><sub>Roster: a custom wrestler in a new slot after the game's 46.</sub></td>
+<td width="50%"><img src="images/modkit-stages.png" alt="A project's Stages"><br><sub>Stages: Choose Stage place by place, THE FACE CLUB SIX SIDES among the game's.</sub></td>
 </tr>
 </table>
 
@@ -240,21 +368,13 @@ victories), and everything about it can then be changed:
 </tr>
 </table>
 
-#### Adding to a project
-
-<table>
-<tr>
-<td width="50%"><img src="images/modkit-addreplace.png" alt="Add to project: replacing a game wrestler"><br><sub>Replacing a wrestler: its attires take that wrestler's one by one, and the rest stay the game's own.</sub></td>
-<td width="50%"><img src="images/modkit-addnew.png" alt="Add to project: a new slot"><br><sub>A new slot at the end of Choose Fighter: no game wrestler changes.</sub></td>
-</tr>
-</table>
-
 ### Arenas
 
 An arena is its model with its lights, fly-in, sounds and Choose Stage pictures. It gets a new place on Choose Stage,
-or takes a game arena's place. Start from any of the game's 12 arenas, or from your own model made in Blender, and
-change what you want:
+or takes a game arena's place. Start from any of the game's arenas, the six-sided one too, or from your own model made
+in Blender, and change what you want:
 
+- **Ring:** four sides or six, following the model.
 - **Lights:** every light the game uses, for the fight, the intros and close-ups and each part of the crowd: its kind,
   where it sits, how far it reaches, and its colour over time, picked on a colour wheel.
 - **Fly-in:** the camera's path into the arena before a match, key by key on a timeline, with its cuts.
@@ -288,12 +408,19 @@ change what you want:
 </tr>
 </table>
 
-#### Adding to a project
+### Menus, videos and music
+
+Themes change how the game looks and sounds outside the fight. A project uses one of each kind.
+
+- **Menus:** the menus' words, pictures, fonts and colours, page by page, seen in the kit as the game shows them.
+- **Videos:** the game's movies replaced by your own video files, by name.
+- **Music:** the game's songs replaced by your own audio files, in the menus and in matches, with the part of the
+  file to play and the artist, song and album the game shows.
 
 <table>
 <tr>
-<td width="50%"><img src="images/modkit-arenareplace.png" alt="Add to project: replacing a game arena"><br><sub>Replacing an arena: it takes that arena's place in Battle, Survival and Story.</sub></td>
-<td width="50%"><img src="images/modkit-arenanew.png" alt="Add to project: a new arena on Choose Stage"><br><sub>New on Choose Stage, after the game's 12, in Battle. The kit's checks say what's still missing.</sub></td>
+<td width="50%"><img src="images/modkit-menus.png" alt="A menu theme's Main Menu page"><br><sub>A menu theme: each page as the game shows it, with its pictures and words to change.</sub></td>
+<td width="50%"><img src="images/modkit-music.png" alt="A music theme"><br><sub>A music theme: every song the game has, each replaced by a file of yours or left the game's.</sub></td>
 </tr>
 </table>
 
@@ -304,33 +431,17 @@ plugin, which brings the game's models into Blender and exports yours for the ki
 
 <img src="images/modkit-blender.png" alt="The Blender plugin page" width="50%">
 
-## Controls
-
-| PS2 | In a match | Controller (Xbox layout) | Keyboard |
-| --- | --- | --- | --- |
-| D-pad / left stick | move | D-pad / left stick | Arrow keys / W A S D |
-| ✕ Cross | grapple | A | X / Space |
-| ○ Circle | run, climb | B | C / Esc |
-| □ Square | strike | X | Z / Numpad 0 |
-| △ Triangle | | Y | V / Numpad 1 |
-| L1 / R1 | dodge / block | LB / RB | Q / E |
-| L2 / R2 | | LT / RT | Left Shift / Right Shift |
-| Right stick | taunt, Blazin' | right stick | I J K L |
-| Start / Select | pause | Menu / View | Enter / Tab |
-
-Xbox-style controllers work out of the box, with vibration, and are given to players in the order Windows lists them.
-PlayStation controllers work through Steam or DS4Windows. The keyboard plays as nobody until you pick a player on the
-Controls page.
-
 ## Good to know
 
 - **Your saves** are memory card files in `files\game\mc0` (About › Open save data). Copy that folder to back them up.
   Each project keeps its own in its folder under `files\projects`.
 - **Running slowly?** 16× (the default) needs a fairly strong graphics card: try 8× on the Graphics page.
+- **Wrestlers missing or a striped picture?** That is an old graphics driver, seen on Intel graphics built into the
+  processor. Update the driver (see [Install](#install)), or set Drawn by to CPU on the Graphics page.
 - **Preparing graphics:** the setup and each update prepare the graphics card's shaders (about 2 minutes), so the game
   starts quickly. After a graphics driver update the game prepares them again once, with a "Preparing graphics" popup.
 - **Vibration** can also be turned off in the game's own pause menu.
-- **Camera styles** (on the Gameplay page):
+- **Camera styles** (on the Gameplay page, and in the game's pause menu and Options):
   - **Def Jam Vendetta:** the game's own camera, the default.
   - **WWF No Mercy style:** looking down on the ring from the side, without swinging round the fighters.
   - **Wrestle Kingdom 2 style:** the ring seen from a corner, like a diamond. The D-pad and left stick are turned to
@@ -342,7 +453,9 @@ Controls page.
   speed, and the match clock follows the chosen speed.
 - **Unlock everything** (on the Gameplay page, off by default): every wrestler, attire, arena and gallery picture for
   every player, with or without a save. Your save is never changed, and anything you unlock while playing is still
-  saved, so turning it off puts you back where your save is.
+  saved, so turning it off puts you back where your save is. S-WORD, DABO and THE FACE CLUB SIX SIDES are unlocked
+  either way.
+- **Mods:** the original game never loads mods. Make a project on the Play page, then open it in the mod kit.
 - **Your settings** are in `files\settings.toml`. Def Jam Vendetta Recompiled Settings writes it, and you can edit it by hand.
 
 <details>
