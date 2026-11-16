@@ -26,8 +26,8 @@
     ],
     "3217": [
       {
-        "from": 47,
-        "to": 49,
+        "from": 46,
+        "to": "end",
         "what": "screen shake"
       },
       {
@@ -58,7 +58,7 @@
     "321A": [
       {
         "from": 70,
-        "to": 72,
+        "to": "end",
         "what": "screen shake"
       },
       {
@@ -79,8 +79,8 @@
     ],
     "321F": [
       {
-        "from": 15,
-        "to": 17,
+        "from": 14,
+        "to": "end",
         "what": "screen shake"
       }
     ],
@@ -101,7 +101,7 @@
     "3222": [
       {
         "from": 76,
-        "to": 78,
+        "to": "end",
         "what": "screen shake"
       },
       {
@@ -152,7 +152,7 @@
       },
       {
         "from": 0,
-        "to": 4,
+        "to": "end",
         "what": "screen shake"
       }
     ]
