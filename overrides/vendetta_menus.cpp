@@ -108,9 +108,11 @@ namespace vendetta_menus
             std::string theme, piece;
             std::string text;                 // the new words ("" = the game's)
             uint32_t buffer = 0;              // the new words in guest memory (the text pointer swapped to it)
-            int colour = 0;                   // 0 the game's, 1 the theme's highlight, 2 rgb
+            int colour = 0;                   // not highlighted: 0 the theme's, 1 the theme's highlight (an older theme's), 2 rgb
             uint32_t rgb[3] = {0x80u, 0x80u, 0x80u}; // 0x80 = full
-            bool shadow = true;               // false: the game's black shadow under it not drawn
+            bool high = false;                // highlighted: its own colour (else the theme's)
+            uint32_t highRgb[3] = {0x80u, 0x78u, 0u};
+            int shadow = -1;                  // its black shadow: -1 the theme's, 0 not drawn, 1 drawn
             int checked = 0;                  // the % codes against the game's text: 0 not yet, 1 the same, -1 not (the game's kept)
             bool logged = false;
         };
@@ -129,6 +131,25 @@ namespace vendetta_menus
         bool g_highlightOn = false;
         uint32_t g_highlight[3] = {0x80u, 0x78u, 0u};      // the theme's highlight (0x80 = full)
         uint32_t g_lastColour[3] = {0x80u, 0x80u, 0x80u}, g_lastAlpha = 0x80u; // the font's colour as last set
+        uint32_t g_lastGameColour[3] = {0x80u, 0x80u, 0x80u}; // the colour the game asked for (before the theme's)
+        bool g_normalOn = false;
+        uint32_t g_normal[3] = {0x80u, 0x80u, 0x80u};      // the theme's normal colour: every word the game draws in its white
+        bool g_shadowOff = false;                          // the theme's words drawn without their black shadows
+
+        // Where the game draws a word's black shadow from (the return address of the font draw; the word itself is drawn
+        // from another place, 2 left and up of it): a black word drawn from anywhere else (a help box's lines) is a word.
+        constexpr uint32_t kShadowRas[] = {
+            0x144024u, 0x1440B0u, 0x14B030u, 0x14E05Cu, 0x14F87Cu, 0x15663Cu, 0x15A338u, 0x15A448u, 0x165568u, 0x171928u, 0x178D10u,
+            0x17CAA4u, 0x17D378u, 0x18078Cu, 0x1815E0u, 0x1818A4u, 0x182990u, 0x182B08u, 0x182C74u, 0x182DE8u, 0x185D10u, 0x185DECu,
+            0x185EA4u, 0x1897B4u, 0x189AECu, 0x189EACu, 0x18A3A4u, 0x18C3DCu, 0x18C78Cu, 0x18E1A0u, 0x18E258u, 0x18F1E0u,
+        };
+
+        bool isShadowRa(uint32_t ra)
+        {
+            return std::find(std::begin(kShadowRas), std::end(kShadowRas), ra) != std::end(kShadowRas);
+        }
+
+
 
         // a theme's font file ("fonts": { "menu": ..., "header": ... }): its letters drawn instead of the game's
         constexpr uint32_t kFontChunks[4] = {0xFEF500u, 0xFFCD00u, 0x100A500u, 0x1017D00u}; // fonts 130-133 in RAM
@@ -1117,6 +1138,7 @@ namespace vendetta_menus
         void fontColour(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             uint32_t rgb[3] = {getRegU32(ctx, 5), getRegU32(ctx, 6), getRegU32(ctx, 7)};
+            std::memcpy(g_lastGameColour, rgb, sizeof(rgb));
             if (g_highlightOn)
             {
                 if (const float f = yellow(rgb[0], rgb[1], rgb[2]); f > 0.0f)
@@ -1195,37 +1217,51 @@ namespace vendetta_menus
             const uint32_t text = getRegU32(ctx, 7), ra = getRegU32(ctx, 31);
             uint32_t key = 0;
             Words *w = wordsFor(themedText(rdram, text), ra, key);
-            if (!w)
-            {
-                g_fontDraw(rdram, ctx, runtime);
-                return;
-            }
             const bool black = !(g_lastColour[0] | g_lastColour[1] | g_lastColour[2]);
-            if (!w->shadow && black)
+            const bool isShadow = black && isShadowRa(ra);
+            if (isShadow && !(w && w->shadow >= 0 ? w->shadow == 1 : !g_shadowOff))
             {
                 ctx->pc = ra; // its black shadow: not drawn
                 SET_GPR_U32(ctx, 2, 0u);
                 return;
             }
-            const bool swapped = key < 0x80000000u && usable(rdram, *w, text);
-            if (swapped)
-                SET_GPR_U32(ctx, 7, w->buffer);
-            if (g_log && !w->logged)
+            if (w)
             {
-                w->logged = true;
-                std::cerr << "[menus] " << w->piece << " drawn with " << w->theme << (swapped ? "'s words" : "'s colour or shadow, the game's words") << std::endl;
+                const bool swapped = key < 0x80000000u && usable(rdram, *w, text);
+                if (swapped)
+                    SET_GPR_U32(ctx, 7, w->buffer);
+                if (g_log && !w->logged)
+                {
+                    w->logged = true;
+                    std::cerr << "[menus] " << w->piece << " drawn with " << w->theme << (swapped ? "'s words" : "'s colour or shadow, the game's words") << std::endl;
+                }
             }
-            if (!w->colour || black)
+            // the colour for this draw: a word's own (highlighted when the game asked for its yellow, or not), else the
+            // theme's normal colour for a word the game draws in its white (menus and the match alike); its shadow stays black
+            const float f = yellow(g_lastGameColour[0], g_lastGameColour[1], g_lastGameColour[2]);
+            const bool white = g_lastGameColour[0] == 0x80u && g_lastGameColour[1] == 0x80u && g_lastGameColour[2] == 0x80u;
+            uint32_t own[3];
+            bool ownColour = false;
+            if (w && !isShadow && (f > 0.0f ? w->high : w->colour != 0))
             {
-                g_fontDraw(rdram, ctx, runtime); // the game's colour (its shadow stays black)
+                for (int k = 0; k < 3; ++k)
+                    own[k] = f > 0.0f ? std::min(255u, uint32_t(float(w->highRgb[k]) * f + 0.5f)) : w->colour == 1 ? g_highlight[k] : w->rgb[k];
+                ownColour = true;
+            }
+            else if (g_normalOn && white)
+            {
+                std::memcpy(own, g_normal, sizeof(own));
+                ownColour = true;
+            }
+            if (!ownColour)
+            {
+                g_fontDraw(rdram, ctx, runtime); // the game's colour as the theme makes it
                 return;
             }
             // its own colour for this draw only, the font's colour back after it (the next words keep theirs)
             const uint32_t font = getRegU32(ctx, 4), alpha = g_lastAlpha;
-            uint32_t before[3], own[3];
+            uint32_t before[3];
             std::memcpy(before, g_lastColour, sizeof(before));
-            for (int k = 0; k < 3; ++k)
-                own[k] = w->colour == 1 ? g_highlight[k] : w->rgb[k];
             setColour(rdram, ctx, runtime, font, own, alpha);
             callThen(rdram, ctx, runtime, g_fontDraw, [font, alpha, before, runtime](uint8_t *rdram, R5900Context *ctx)
                      { setColour(rdram, ctx, runtime, font, before, alpha); });
@@ -1294,9 +1330,11 @@ namespace vendetta_menus
                 else if (readColour(colour, w.rgb))
                     w.colour = 2;
             }
+            if (readColour(entry.find("highlighted"), w.highRgb))
+                w.high = true;
             if (const vendetta_mods::Json *shadow = entry.find("shadow"); shadow && shadow->type == vendetta_mods::Json::Type::Bool)
-                w.shadow = shadow->boolean;
-            if (!w.buffer && !w.colour && w.shadow)
+                w.shadow = shadow->boolean ? 1 : 0;
+            if (!w.buffer && !w.colour && !w.high && w.shadow < 0)
                 return;
             if (piece.kind == 2)
             {
@@ -1368,6 +1406,10 @@ namespace vendetta_menus
                 g_storyCardPlain = true;
             if (screen.empty() && readColour(json.find("highlight"), g_highlight))
                 g_highlightOn = true; // the theme's highlight: every yellow the game uses for it (the later theme's wins)
+            if (screen.empty() && readColour(json.find("normal"), g_normal))
+                g_normalOn = true; // the theme's normal colour: every white the game draws its words in
+            if (const vendetta_mods::Json *shadow = json.find("shadow"); screen.empty() && shadow && shadow->type == vendetta_mods::Json::Type::Bool)
+                g_shadowOff = !shadow->boolean;
             if (const vendetta_mods::Json *fonts = json.find("fonts"); screen.empty() && fonts && fonts->isObject())
             {
                 const std::string folder = std::filesystem::path(relative).parent_path().generic_string();
@@ -1624,7 +1666,8 @@ namespace vendetta_menus
                 std::cerr << "[menus] " << (c->second.theme == "the recomp's own" ? "the recomp's own" : c->second.theme + "'s")
                           << " backdrop is 16:9: menu screens shown wide, the menus in the 4:3 middle" << std::endl;
         }
-        const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || !g_fontFile[0].empty() || !g_fontFile[1].empty();
+        const bool words = !g_words.empty() || !g_builtWords.empty() || g_highlightOn || g_normalOn || g_shadowOff || !g_fontFile[0].empty() ||
+                           !g_fontFile[1].empty();
         if (g_storyCardPlain)
             hook(runtime, kMessageBox, g_messageBox, messageBox);
         if (g_changes.empty() && !words && g_fontFile[2].empty() && g_photos.empty())
