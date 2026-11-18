@@ -1640,6 +1640,234 @@ namespace vendetta_ring
             g_roundCorner(rdram, ctx, runtime);
         }
 
+        // ------------------------------------------------------------------ a corner move along a rope
+
+        // A corner move (slots 33 / 34: the grab sets +0x5A6 0x400) is set on the corner's middle line: the receiver on
+        // the slump spot facing out of the corner, the attacker walked by D401 to 7.5 in front of him (state 45,
+        // FUN_00120208, which starts both clips with flags 0xE). States 37 / 38 (FUN_0011f8b0 / FUN_0011fa78) then only
+        // play the clips (FUN_00132480): no push, nothing places them again, so each goes where his own clip carries him.
+        // The clips were made for the square's 90 degree corner, a rope 45 degrees off the middle line; on a ring of
+        // more sides a rope is 90 - 180 / sides off it (60 on six), so whatever a clip does along a rope (ROPE BURN's
+        // walk with the opponent's face on it) runs inside the real rope.
+        //
+        // While the move plays, each wrestler's frame (the anchor +0xCC / +0xD4, where the clip has him +0x138 / +0x140,
+        // the facing +0xDC and the facing after the clip +0x148) is turned about the point where the square's rope line
+        // meets the ring's on that side of the middle line, by up to the difference of the two (15 degrees on six sides;
+        // nothing on four): a body the clip puts on the square's rope line lands on the ring's. The turn grows with the
+        // angle of the hips off the middle line, seen from the square's corner point (full at 20 degrees, fading to
+        // nothing behind the post). The pair shares one turn, from the middle of their hips, while the clips hold them
+        // (until the receiver's release: the smaller of his playback f4 +0x370 and f9 +0x384, whole numbers, 0x7FF none,
+        // against his frame +0x110, a float); after it each has his own. A turn changes by at most 1 degree a picture;
+        // a change of side first goes back to nothing. The game's own places are kept by undoing the turn before reading the hips. VENDETTA_HEXCORNER=0: off.
+        constexpr uint32_t kAttackerMove = 0x11F8B0u; // the receiver's state 38 is FUN_0011fa78: turned from here too
+        constexpr uint32_t kState = 0x40u, kStep = 0x44u, kFrame = 0x110u, kGrab = 0x5A6u, kPairEnd = 0x370u, kRelease = 0x384u;
+        PS2Runtime::RecompiledFunction g_attackerMove = nullptr;
+        bool g_cornerTurnOn = true;
+
+        struct CornerTurn
+        {
+            float by = 0.0f;  // degrees turned now (the facing's sense)
+            int way = 0;      // the side of the middle line the pivot is on: 1 / -1, 0 none yet
+        };
+        struct CornerMove
+        {
+            uint32_t attacker = 0u, receiver = 0u;
+            int corner = -1;
+            CornerTurn turn[2];
+            uint64_t pictures = 0u;
+        };
+        CornerMove g_cornerMove[4];
+
+        struct CornerFrame
+        {
+            float ox, oz, tx, tz;  // out of the corner, and across it
+            float sqX, sqZ, rgX, rgZ; // the square's corner point for this move, the ring's
+        };
+
+        CornerFrame cornerFrame(int corner)
+        {
+            const float rad = g_cornerAngle[corner] * kPi / 180.0f, toCorner = 1.0f / std::cos(kPi / g_sides);
+            CornerFrame f;
+            f.ox = std::sin(rad);
+            f.oz = std::cos(rad);
+            f.tx = f.oz;
+            f.tz = -f.ox;
+            // the move is placed from the slump spot; the square's corner point is (rope - slump) x sqrt 2 past it
+            const float slump = g_ring.slumpDistance * toCorner;
+            const float square = slump + (g_ring.ropeDistance - g_ring.slumpDistance) * std::sqrt(2.0f);
+            const float ring = g_ring.ropeDistance * toCorner;
+            f.sqX = f.ox * square;
+            f.sqZ = f.oz * square;
+            f.rgX = f.ox * ring;
+            f.rgZ = f.oz * ring;
+            return f;
+        }
+
+        // The rope line on side `way` (1: +t) leaving a corner point half degrees off the inward middle line
+        void ropeWay(const CornerFrame &f, float half, int way, float &dx, float &dz)
+        {
+            const float c = std::cos(half * kPi / 180.0f), s = std::sin(half * kPi / 180.0f) * static_cast<float>(way);
+            dx = -f.ox * c + f.tx * s;
+            dz = -f.oz * c + f.tz * s;
+        }
+
+        // The pivot for side `way` and the full turn there (facing degrees)
+        void cornerPivot(const CornerFrame &f, int way, float &px, float &pz, float &full)
+        {
+            const float half = 90.0f - 180.0f / static_cast<float>(g_sides);
+            float ax, az, bx, bz;
+            ropeWay(f, 45.0f, way, ax, az);
+            ropeWay(f, half, way, bx, bz);
+            // sq + l a = rg + m b
+            const float det = ax * -bz - az * -bx;
+            const float rx = f.rgX - f.sqX, rz = f.rgZ - f.sqZ;
+            const float l = std::fabs(det) < 1e-6f ? 0.0f : (rx * -bz - rz * -bx) / det;
+            px = f.sqX + ax * l;
+            pz = f.sqZ + az * l;
+            full = wrapDegrees((std::atan2(bx, bz) - std::atan2(ax, az)) * 180.0f / kPi);
+        }
+
+        // The share of the full turn a point gets, and its side of the middle line
+        float cornerWeight(const CornerFrame &f, float x, float z, int &way)
+        {
+            const float rx = x - f.sqX, rz = z - f.sqZ;
+            const float in = -(rx * f.ox + rz * f.oz), across = rx * f.tx + rz * f.tz;
+            way = across >= 0.0f ? 1 : -1;
+            const float off = std::fabs(std::atan2(across, in)) * 180.0f / kPi;
+            float w = std::min(1.0f, off / 20.0f);
+            if (off > 90.0f)
+                w *= std::max(0.0f, (180.0f - off) / 90.0f);
+            return w;
+        }
+
+        void turnFighter(uint8_t *rdram, uint32_t fighter, float px, float pz, float by)
+        {
+            if (std::fabs(by) < 1e-5f)
+                return;
+            const float c = std::cos(by * kPi / 180.0f), s = std::sin(by * kPi / 180.0f);
+            turnAbout(rdram, fighter + 0xCCu, fighter + 0xD4u, px, pz, c, s);
+            turnAbout(rdram, fighter + 0x138u, fighter + 0x140u, px, pz, c, s);
+            for (const uint32_t angle : {0xDCu, 0x148u})
+                Ps2FastWrite32(rdram, fighter + angle, std::bit_cast<uint32_t>(wrapDegrees(readFloat(rdram, fighter + angle) + by)));
+        }
+
+        // A point of the game's own (the turn undone)
+        void untilTurned(const CornerFrame &f, const CornerTurn &t, float &x, float &z)
+        {
+            if (t.way == 0 || std::fabs(t.by) < 1e-5f)
+                return;
+            float px, pz, full;
+            cornerPivot(f, t.way, px, pz, full);
+            const float c = std::cos(-t.by * kPi / 180.0f), s = std::sin(-t.by * kPi / 180.0f);
+            const float dx = x - px, dz = z - pz;
+            x = px + dx * c + dz * s;
+            z = pz + dz * c - dx * s;
+        }
+
+        bool released(uint8_t *rdram, uint32_t receiver)
+        {
+            float at = 1e9f;
+            for (const uint32_t field : {kPairEnd, kRelease})
+                if (const int32_t v = static_cast<int32_t>(Ps2FastRead32(rdram, receiver + field)); v >= 0 && v < 2000) // 0x7FF: none
+                    at = std::min(at, static_cast<float>(v));
+            return readFloat(rdram, receiver + kFrame) >= at;
+        }
+
+        // Moves one wrestler's turn toward `want` (way `way`), at most 1 degree; a change of side goes through nothing
+        void easeTurn(uint8_t *rdram, uint32_t fighter, const CornerFrame &f, CornerTurn &t, float want, int way)
+        {
+            if (t.way != 0 && way != t.way && std::fabs(t.by) > 1e-3f)
+            {
+                want = 0.0f;
+                way = t.way;
+            }
+            if (t.way != way)
+                t = {0.0f, way};
+            const float to = t.by + std::max(-1.0f, std::min(1.0f, want - t.by));
+            float px, pz, full;
+            cornerPivot(f, way, px, pz, full);
+            turnFighter(rdram, fighter, px, pz, to - t.by);
+            t.by = to;
+        }
+
+        void cornerMoveTurn(uint8_t *rdram, uint32_t attacker)
+        {
+            const uint32_t player = Ps2FastRead32(rdram, attacker + kPlayer) & 3u, receiver = Ps2FastRead32(rdram, attacker);
+            CornerMove &m = g_cornerMove[player];
+            if (Ps2FastRead32(rdram, attacker + kStep) == 0u || m.attacker != attacker || m.receiver != receiver)
+            {
+                // the corner: the one the receiver is slumped in (his hips, before anything is turned)
+                m = {};
+                m.attacker = attacker;
+                m.receiver = receiver;
+                m.corner = receiver ? cornerOf(readFloat(rdram, receiver + kHipsX), readFloat(rdram, receiver + kHipsZ)) : -1;
+                if (g_log)
+                    std::cerr << "[ring] corner move at corner " << m.corner << ": the pair turned along the ring's ropes" << std::endl;
+            }
+            if (m.corner < 0 || m.corner >= g_sides || receiver == 0u)
+                return;
+            const CornerFrame f = cornerFrame(m.corner);
+            const uint32_t who[2] = {attacker, receiver};
+            float x[2], z[2];
+            for (int i = 0; i < 2; ++i)
+            {
+                x[i] = readFloat(rdram, who[i] + kHipsX);
+                z[i] = readFloat(rdram, who[i] + kHipsZ);
+                untilTurned(f, m.turn[i], x[i], z[i]);
+            }
+            const bool receiverPlays = Ps2FastRead32(rdram, receiver + kState) == 38u;
+            float full[2];
+            int way[2];
+            float want[2];
+            if (receiverPlays && !released(rdram, receiver))
+            {
+                int w;
+                const float share = cornerWeight(f, (x[0] + x[1]) * 0.5f, (z[0] + z[1]) * 0.5f, w);
+                float px, pz;
+                cornerPivot(f, w, px, pz, full[0]);
+                way[0] = way[1] = w;
+                want[0] = want[1] = full[0] * share;
+            }
+            else
+                for (int i = 0; i < 2; ++i)
+                {
+                    const float share = cornerWeight(f, x[i], z[i], way[i]);
+                    float px, pz;
+                    cornerPivot(f, way[i], px, pz, full[i]);
+                    want[i] = full[i] * share;
+                }
+            easeTurn(rdram, attacker, f, m.turn[0], want[0], way[0]);
+            if (receiverPlays)
+                easeTurn(rdram, receiver, f, m.turn[1], want[1], way[1]);
+            if (g_log && (m.pictures++ % 10u) == 0u)
+            {
+                // how far inside the nearest rope each one's hips are: as the game has them, and turned
+                auto inside = [&](float px, float pz) {
+                    float most = -1e30f;
+                    for (int k = 0; k < g_sides; ++k)
+                        most = std::max(most, px * g_sideNormal[k][0] + pz * g_sideNormal[k][1]);
+                    return g_ring.ropeDistance - most;
+                };
+                std::cerr << "[ring] corner move: frame " << readFloat(rdram, attacker + kFrame) << ", turned " << m.turn[0].by << " / "
+                          << m.turn[1].by << (receiverPlays && !released(rdram, receiver) ? " (held)" : "") << ", in from the rope: "
+                          << inside(x[0], z[0]) << " -> " << inside(readFloat(rdram, attacker + kHipsX), readFloat(rdram, attacker + kHipsZ))
+                          << " / " << inside(x[1], z[1]) << " -> " << inside(readFloat(rdram, receiver + kHipsX), readFloat(rdram, receiver + kHipsZ))
+                          << ", the game's hips (" << x[0] << ", " << z[0] << ") (" << x[1] << ", " << z[1] << ")" << std::endl;
+            }
+        }
+
+        // FUN_0011f8b0(fighter): state 37, the attacker's move. Our turn first, then the game's routine as the last step.
+        void attackerMove(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (g_active && g_cornerTurnOn && g_sides != 4)
+            {
+                const uint32_t fighter = getRegU32(ctx, 4);
+                if ((Ps2FastRead32(rdram, fighter + (kGrab & ~3u)) >> ((kGrab & 2u) * 8u) & 0x400u) != 0u)
+                    cornerMoveTurn(rdram, fighter);
+            }
+            g_attackerMove(rdram, ctx, runtime);
+        }
+
         // ------------------------------------------------------------------ a run's start (FUN_00114140)
 
         // 0x114178: jal FUN_00132d30(stick): the corner a diagonal on the stick names (the game's four, by the diagonal alone),
@@ -3039,6 +3267,10 @@ namespace vendetta_ring
         runtime.registerFunction(kHookApronCorner, apronCorner);
         g_roundCorner = runtime.lookupFunction(kRoundCorner);
         runtime.replaceFunction(kRoundCorner, roundCorner);
+        if (const char *turn = std::getenv("VENDETTA_HEXCORNER"); turn && *turn == '0')
+            g_cornerTurnOn = false;
+        g_attackerMove = runtime.lookupFunction(kAttackerMove);
+        runtime.replaceFunction(kAttackerMove, attackerMove);
         g_sceneStart = runtime.lookupFunction(kSceneStart);
         runtime.replaceFunction(kSceneStart, sceneStart);
         g_cpuSees = runtime.lookupFunction(kCpuSees);

@@ -78,14 +78,17 @@ public partial class ProjectsViewModel : ObservableObject
         {
             var installed = ProjectMods.List(_folder, p.Name);
             var problems = KitStatus(p.Folder) ?? ProjectCheck.Problems(_folder, p.Name).Select(x => x.Text).ToList();
-            var mods = p.Mods.Count switch { 0 => "no mods on", 1 => "1 mod", _ => $"{p.Mods.Count} mods" };
+            // the mod kit's own small mods for an original attire or arena placed somewhere else ("original.<name>") are
+            // part of the project but not shown or counted as mods
+            var shown = p.Mods.Where(m => !m.StartsWith("original.", StringComparison.OrdinalIgnoreCase)).ToList();
+            var mods = shown.Count switch { 0 => "no mods on", 1 => "1 mod", _ => $"{shown.Count} mods" };
             Choices.Add(new PlayChoice
             {
                 Key = p.Name,
                 Name = p.Name,
                 Line = mods + " · " + (p.HasSave ? "saved" : "no save yet"),
                 Picture = LoadPicture(p.Picture),
-                Mods = p.Mods.Select((m, i) => $"{i + 1}.  " + (installed.FirstOrDefault(x => x.Is(m))?.Name ?? m + "  (not installed)")).ToList(),
+                Mods = shown.Select((m, i) => $"{i + 1}.  " + (installed.FirstOrDefault(x => x.Is(m))?.Name ?? m + "  (not installed)")).ToList(),
                 SaveLine = p.HasSave ? $"Saved · projects\\{p.Name}\\saves" : "No save yet (an empty memory card)",
                 SavesPath = p.SavesPath,
                 Folder = p.Folder,

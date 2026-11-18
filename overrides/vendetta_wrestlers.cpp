@@ -107,6 +107,7 @@ namespace vendetta_wrestlers
             bool own = false;
             std::vector<std::array<uint8_t, kRecordSize>> entries;
             std::vector<uint32_t> voices;
+            uint32_t newSlot = 0; // a mod's (not the recomp's own): its number among the new slots asked for, from 1
         };
 
         uint8_t *g_rdram = nullptr;
@@ -165,7 +166,25 @@ namespace vendetta_wrestlers
         uint32_t g_endRecord = kFirstNewRecord;
         uint32_t g_voiceRows = kGameVoiceRows; // the voice table's rows in use (the mods' own voices after the game's 44)
         uint32_t g_slots = kGameSlots;            // Choose Fighter's slots (even)
-        std::vector<uint32_t> g_newAttires;       // per slot from 44: its attires (0 = the filler of an odd count)
+        std::vector<uint32_t> g_newAttires;       // per slot from 44 as built (before any order): its attires (0 = the filler)
+        // A project's own order ("fighter order"): each slot of Choose Fighter, the slot it was as built (0-43 the game's,
+        // 44 on the recomp's own and the new ones in load order, then the filler); without one, each its own
+        std::vector<uint32_t> g_slotOrigin;
+        uint32_t g_newSlotsAsked = 0;             // the new slots asked for ("new slots", else the mods' "new" wrestlers)
+        // "fighter starts": the four slots a player's cursor starts on (the first not taken by an earlier player, nor
+        // locked); used only when the project has "fighter order" or "fighter starts" (else the game's own start)
+        std::array<uint32_t, 4> g_startSlots = {6u, 7u, 8u, 9u};
+        bool g_ownStarts = false;
+        // FUN_0014fbd8's returns from the recount right after each of its four cursor starts (a computer player's, a person's)
+        constexpr uint32_t kStartReturns[] = {0x1500ACu, 0x1500C8u, 0x150524u, 0x150540u, 0x150768u, 0x150784u, 0x1509F8u, 0x150A14u};
+        constexpr uint32_t kPictureReturns[] = {0x14FDF0u, 0x14FE08u}; // ... and from its recount every picture
+        // Whatever opens the screen puts the cursor on slot 7 (cursor 6, scroll 0) with no recount after it: a jal to one
+        // of these hooks stands in for one of its stores (config/patches.toml), which the hook makes, noting the opening
+        // for the screen's first picture
+        constexpr uint32_t kHookOpenScroll = 0x1DF8A0u; // from User Setup FUN_00148120 0x1484B8 / 0x148830: sw $zero, 0x78($s2)
+        constexpr uint32_t kHookOpenCursor = 0x1DF8A4u; // from FUN_0014da00 0x14DC00 / 0x14DC84: sw $a0, 0x74($s1)
+        constexpr uint32_t kHookOpenTeams = 0x1DF8A8u;  // from the team set-up FUN_00146518 0x14684C: sw $a0, 0x74($s3)
+        bool g_opened = false;
         bool g_moveDataReady = false;
         Fn g_originalLogo = nullptr, g_originalLoadMatch = nullptr, g_originalMatchInit = nullptr;
         Fn g_originalFindPicture = nullptr, g_originalHeroBuild = nullptr, g_originalHeroUpgrades = nullptr;
@@ -853,6 +872,8 @@ namespace vendetta_wrestlers
         {
             std::vector<std::pair<std::string, std::vector<Place>>> slots;
             std::vector<std::vector<Place>> newSlots;
+            std::vector<uint32_t> newSlotNumbers; // each one's number in "new slots" (from 1)
+            uint32_t newSlotsAsked = 0;
         };
 
         const Roster *projectRoster()
@@ -940,12 +961,17 @@ namespace vendetta_wrestlers
             else if (slots)
                 vendetta_mods::problem() << "[wrestlers] " << project->name << ": \"roster\" should be { \"<game wrestler>\": [ ... ] }" << std::endl;
             if (fresh && fresh->isArray())
+                roster->newSlotsAsked = static_cast<uint32_t>(fresh->items.size());
+            if (fresh && fresh->isArray())
                 for (size_t i = 0; i < fresh->items.size(); ++i)
                 {
                     std::vector<Place> out;
                     places(fresh->items[i], "new slot " + std::to_string(i + 1u), false, out);
                     if (!out.empty())
+                    {
                         roster->newSlots.push_back(std::move(out));
+                        roster->newSlotNumbers.push_back(static_cast<uint32_t>(i + 1u));
+                    }
                 }
             else if (fresh)
                 vendetta_mods::problem() << "[wrestlers] " << project->name << ": \"new slots\" should be a list of slots" << std::endl;
@@ -1345,17 +1371,27 @@ namespace vendetta_wrestlers
                     std::vector<Source> sources;
                     for (const std::string &attire : attireFolders)
                         sources.push_back({&mod, item.text, attire});
+                    const size_t before = g_wrestlers.size();
+                    const uint32_t number = mod.standard ? 0u : ++g_newSlotsAsked;
                     addWrestler(sources);
+                    if (g_wrestlers.size() > before)
+                        g_wrestlers.back().newSlot = number;
                 }
             }
             if (roster)
-                for (const std::vector<Place> &slot : roster->newSlots)
+            {
+                g_newSlotsAsked = roster->newSlotsAsked;
+                for (size_t i = 0; i < roster->newSlots.size(); ++i)
                 {
                     std::vector<Source> sources;
-                    for (const Place &place : slot)
+                    for (const Place &place : roster->newSlots[i])
                         sources.push_back(place.source);
+                    const size_t before = g_wrestlers.size();
                     addWrestler(sources);
+                    if (g_wrestlers.size() > before)
+                        g_wrestlers.back().newSlot = roster->newSlotNumbers[i];
                 }
+            }
         }
 
         // A folder holds something an attire uses
@@ -1951,6 +1987,129 @@ namespace vendetta_wrestlers
             }
         }
 
+        // A slot named in "fighter order" / "fighter starts": the slot as built (0-43 the game's: a game wrestler by his name
+        // as "roster" names him; 44 on: one of the recomp's own by its name, a new slot as { "new slot": n }). -1: not a
+        // slot (or a new slot named in the starts); -2: a new slot asked for that couldn't be made (its problem is told)
+        int builtSlotNamed(const vendetta_mods::Json &item, bool newSlots, std::string &label)
+        {
+            if (item.isString())
+            {
+                label = item.text;
+                uint32_t base = 0, attires = 0;
+                if (!gameWrestler(item.text, base, attires))
+                    return -1;
+                if (base < kGameRecords)
+                {
+                    for (uint32_t k = 0; k < kGameSlots; ++k)
+                        if (read32(kGameGrid + 8u * k) == base)
+                            return static_cast<int>(k);
+                    return -1;
+                }
+                for (size_t i = 0; i < g_wrestlers.size(); ++i)
+                    if (g_wrestlers[i].own && g_wrestlers[i].records.front() == base)
+                        return static_cast<int>(kGameSlots + i);
+                return -1;
+            }
+            const vendetta_mods::Json *const n = item.isObject() ? item.find("new slot") : nullptr;
+            label = isNumber(n) ? "new slot " + std::to_string(static_cast<long long>(n->number)) : std::string("?");
+            if (!newSlots || !isNumber(n) || n->number < 1.0 || n->number != std::floor(n->number) || n->number > g_newSlotsAsked)
+                return -1;
+            for (size_t i = 0; i < g_wrestlers.size(); ++i)
+                if (g_wrestlers[i].newSlot == static_cast<uint32_t>(n->number))
+                    return static_cast<int>(kGameSlots + i);
+            return -2;
+        }
+
+        // The project's "fighter order" and "fighter starts" (project.json):
+        //   "fighter order":  [ "CARLA", "S-WORD", { "new slot": 2 }, ... ]   Choose Fighter's slots in this order (top of
+        //                     column 1, its bottom, then column 2 ...); the slots it leaves out follow in their own order
+        //   "fighter starts": [ "TANK", "SPIDER", "BRIGGS", "PROOF" ]        the four wrestlers the cursors start on
+        // A name twice or not a slot stops the project. Returns the slots as built, in the new order (`built` of them).
+        std::vector<uint32_t> fighterOrder(uint32_t built)
+        {
+            std::vector<uint32_t> order;
+            const vendetta_mods::Project *const project = vendetta_mods::currentProject();
+            const vendetta_mods::Json *const list = project ? project->manifest.find("fighter order") : nullptr;
+            const vendetta_mods::Json *const starts = project ? project->manifest.find("fighter starts") : nullptr;
+            const auto bad = [&](const std::string &why, const std::string &forPlayer)
+            {
+                vendetta_mods::problem() << "[wrestlers] " << project->name << ": " << why << std::endl;
+                vendetta_mods::blocking(project->name + ": " + forPlayer);
+            };
+            std::vector<bool> placed(built, false);
+            if (list && !list->isArray())
+                bad("\"fighter order\" should be a list of slots", "its fighter order can't be read.");
+            else if (list)
+                for (const vendetta_mods::Json &item : list->items)
+                {
+                    std::string label;
+                    const int slot = builtSlotNamed(item, true, label);
+                    if (slot == -2)
+                    {
+                        vendetta_mods::problem() << "[wrestlers] " << project->name << ": \"fighter order\": " << label
+                                                 << " wasn't made: left out" << std::endl;
+                        continue;
+                    }
+                    if (slot < 0 || static_cast<uint32_t>(slot) >= built)
+                    {
+                        bad("\"fighter order\": \"" + label + "\" isn't a Choose Fighter slot",
+                            "its fighter order names " + label + ", which isn't on Choose Fighter.");
+                        continue;
+                    }
+                    if (placed[static_cast<size_t>(slot)])
+                    {
+                        bad("\"fighter order\": " + label + " is in it twice", "its fighter order has " + label + " twice.");
+                        continue;
+                    }
+                    placed[static_cast<size_t>(slot)] = true;
+                    order.push_back(static_cast<uint32_t>(slot));
+                }
+            for (uint32_t s = 0; s < built; ++s)
+                if (!placed[s])
+                    order.push_back(s);
+            // the four starts, as built (the game's slots 6-9 when not named)
+            std::array<uint32_t, 4> startsBuilt = {6u, 7u, 8u, 9u};
+            if (starts)
+            {
+                bool good = starts->isArray() && starts->items.size() == 4u;
+                if (!good)
+                    bad("\"fighter starts\" should be a list of 4 wrestlers", "its fighter starts should be 4 wrestlers.");
+                std::set<int> seen;
+                for (size_t i = 0; good && i < 4u; ++i)
+                {
+                    std::string label;
+                    const int slot = builtSlotNamed(starts->items[i], false, label);
+                    if (slot < 0)
+                    {
+                        bad("\"fighter starts\": \"" + label + "\" isn't a game wrestler or one of the recomp's own",
+                            "its fighter starts name " + label + ", which can't be a start.");
+                        good = false;
+                    }
+                    else if (!seen.insert(slot).second)
+                    {
+                        bad("\"fighter starts\": " + label + " is in it twice", "its fighter starts have " + label + " twice.");
+                        good = false;
+                    }
+                    else
+                        startsBuilt[i] = static_cast<uint32_t>(slot);
+                }
+                if (!good)
+                    startsBuilt = {6u, 7u, 8u, 9u};
+            }
+            g_ownStarts = list || starts;
+            for (size_t i = 0; i < 4u; ++i)
+                g_startSlots[i] = static_cast<uint32_t>(std::find(order.begin(), order.end(), startsBuilt[i]) - order.begin());
+            if (g_ownStarts)
+            {
+                std::cerr << "[wrestlers] " << project->name << "'s own order: " << (list && list->isArray() ? list->items.size() : 0u)
+                          << " slot(s) named first; the cursors start on slots";
+                for (uint32_t s : g_startSlots)
+                    std::cerr << " " << s + 1u;
+                std::cerr << std::endl;
+            }
+            return order;
+        }
+
         // The tables the game's code reads, copied (with room) and the mods' wrestlers added; Choose Fighter's size.
         void buildTables()
         {
@@ -1981,12 +2140,29 @@ namespace vendetta_wrestlers
                 g_newAttires[slot - kGameSlots] = attires;
                 ++slot;
             }
+            // the project's own order: the entries moved, and each slot's description (what it was as built) with it
+            g_slotOrigin = fighterOrder(slot);
+            if (!std::is_sorted(g_slotOrigin.begin(), g_slotOrigin.end()))
+            {
+                std::vector<uint8_t> built(guest(vendetta_store::kSelectGrid), guest(vendetta_store::kSelectGrid) + 8u * slot);
+                for (uint32_t s = 0; s < slot; ++s)
+                    std::memcpy(guest(vendetta_store::kSelectGrid + 8u * s), built.data() + 8u * g_slotOrigin[s], 8u);
+                for (Moved &m : g_moved)
+                    m.slot = static_cast<uint32_t>(std::find(g_slotOrigin.begin(), g_slotOrigin.end(), m.slot) - g_slotOrigin.begin());
+                // the pictures read ahead around a tile: the new wrestlers in the grid's order
+                std::vector<uint32_t> firsts;
+                for (uint32_t from : g_slotOrigin)
+                    if (from >= kGameSlots && from - kGameSlots < g_firstAttires.size())
+                        firsts.push_back(g_firstAttires[from - kGameSlots]);
+                g_firstAttires = std::move(firsts);
+            }
             if (slot % 2u)
             {
                 // an odd count: an empty slot ends the last column (no attires: a locked tile nobody can pick)
                 write32(vendetta_store::kSelectGrid + 8u * slot, 0u);
                 write32(vendetta_store::kSelectGrid + 8u * slot + 4u, 0u);
                 g_newAttires.push_back(0u);
+                g_slotOrigin.push_back(slot);
                 ++slot;
             }
             g_slots = slot;
@@ -2005,12 +2181,12 @@ namespace vendetta_wrestlers
                 // every slot that isn't the game's own as it was: who is in it, place by place (with everything unlocked)
                 for (uint32_t s = 0; s < g_slots; ++s)
                 {
-                    const uint32_t base = read32(vendetta_store::kSelectGrid + 8u * s);
-                    uint32_t count = s < kGameSlots ? 0u : g_newAttires[s - kGameSlots];
+                    const uint32_t base = read32(vendetta_store::kSelectGrid + 8u * s), from = g_slotOrigin[s];
+                    uint32_t count = from < kGameSlots ? 0u : g_newAttires[from - kGameSlots];
                     for (const Moved &m : g_moved)
                         if (m.slot == s)
                             count = m.count;
-                    if (!count && s < kGameSlots)
+                    if (!count && from < kGameSlots)
                     {
                         while (count < 3u && static_cast<int32_t>(read32(kUnlockTable + 12u * base + 4u * count)) >= 0)
                             ++count;
@@ -2018,7 +2194,7 @@ namespace vendetta_wrestlers
                         if (const auto cap = g_caps.find(base); cap != g_caps.end())
                             count = std::min(count, cap->second);
                     }
-                    bool changed = s >= kGameSlots || base >= kGameRecords || g_caps.count(base) != 0u;
+                    bool changed = from != s || from >= kGameSlots || base >= kGameRecords || g_caps.count(base) != 0u;
                     std::string who;
                     for (uint32_t k = 0; k < count; ++k)
                     {
@@ -2119,9 +2295,9 @@ namespace vendetta_wrestlers
             const uint32_t counts = getRegU32(ctx, 4); // 63 attire counts by base record
             for (uint32_t slot = 0; slot < g_slots; ++slot)
             {
-                const uint32_t base = slotBase(slot);
-                uint32_t attires = slot < kGameSlots ? (base < kGameRecords ? read32(counts + 4u * base) : 0u)
-                                                     : g_newAttires[slot - kGameSlots];
+                const uint32_t base = slotBase(slot), from = slot < g_slotOrigin.size() ? g_slotOrigin[slot] : slot;
+                uint32_t attires = from < kGameSlots ? (base < kGameRecords ? read32(counts + 4u * base) : 0u)
+                                                     : g_newAttires[from - kGameSlots];
                 // a moved slot: his own attires as the save unlocks them; with all of them, the added ones too
                 for (const Moved &m : g_moved)
                     if (m.slot == slot)
@@ -2131,10 +2307,62 @@ namespace vendetta_wrestlers
                         attires = unlocked >= m.gameCount ? m.count : std::min(unlocked, m.count);
                     }
                 // a slot shown with fewer than his own: the first few, as far as the save unlocks them
-                if (const auto cap = g_caps.find(base); slot < kGameSlots && cap != g_caps.end())
+                if (const auto cap = g_caps.find(base); from < kGameSlots && cap != g_caps.end())
                     attires = std::min(attires, cap->second);
                 write32(vendetta_store::kSelectGrid + 8u * slot + 4u, attires);
             }
+            // a player's cursor start: the game's is the first of slots 6-9 not taken, set by Choose Fighter itself when a
+            // player's turn begins (the recount follows at once: the eight returns), or as slot 7 (cursor 6, scroll 0) by
+            // whatever opens the screen (User Setup FUN_00148120 0x1484BC / 0x148834, FUN_0014da00 0x14DC00 / 0x14DC84,
+            // FUN_00146518 0x14684C; no recount after: their stores are hooked below, and the screen's first picture's
+            // recount, Choose Fighter's per-picture one, places the cursor). With a project's own order or starts: the first of its four
+            // not taken nor locked, else the first slot that can be picked, put in the window by the game's own rule
+            // (Random's: s < 20 the cursor s, scroll 0; else scroll min(s - 2, the last scroll), the cursor s - scroll)
+            const uint32_t ra = getRegU32(ctx, 31);
+            const uint32_t fe = getRegU32(ctx, 17); // s1: Choose Fighter's front end
+            const bool picture = ra == kPictureReturns[0] || ra == kPictureReturns[1];
+            const bool opened = g_opened && picture && read32(fe + 0x74u) == 6u && read32(fe + 0x78u) == 0u;
+            if (picture)
+                g_opened = false;
+            if (g_ownStarts && (opened || std::find(std::begin(kStartReturns), std::end(kStartReturns), ra) != std::end(kStartReturns)))
+            {
+                uint32_t start = g_slots;
+                for (uint32_t s : g_startSlots)
+                    if (start == g_slots && pickable(fe, s))
+                        start = s;
+                for (uint32_t s = 0; s < g_slots && start == g_slots; ++s)
+                    if (pickable(fe, s))
+                        start = s;
+                if (start < g_slots)
+                {
+                    const uint32_t scroll = start < 20u ? 0u : std::min(start - 2u, g_slots - kWindow);
+                    write32(fe + 0x74u, start - scroll);
+                    write32(fe + 0x78u, scroll);
+                    if (vendetta_mods::detailLog())
+                        std::cerr << "[wrestlers] player " << read32(fe + 0x1Cu) + 1u << "'s cursor starts on slot " << start + 1u
+                                  << std::endl;
+                }
+            }
+            returnToCaller(ctx);
+        }
+
+        // The openers' stores (each hook makes the store its jal replaced, then returns after the jal's delay slot)
+        void openScroll(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            write32(getRegU32(ctx, 18) + 0x78u, 0u);
+            g_opened = true;
+            returnToCaller(ctx);
+        }
+        void openCursor(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            write32(getRegU32(ctx, 17) + 0x74u, getRegU32(ctx, 4));
+            g_opened = true;
+            returnToCaller(ctx);
+        }
+        void openTeams(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            write32(getRegU32(ctx, 19) + 0x74u, getRegU32(ctx, 4));
+            g_opened = true;
             returnToCaller(ctx);
         }
 
@@ -2532,6 +2760,9 @@ namespace vendetta_wrestlers
         // the copies are read by the patched game code whether or not a mod adds a wrestler
         buildTables();
         runtime.replaceFunction(kRecount, recount);
+        runtime.registerFunction(kHookOpenScroll, openScroll);
+        runtime.registerFunction(kHookOpenCursor, openCursor);
+        runtime.registerFunction(kHookOpenTeams, openTeams);
         runtime.replaceFunction(kCanUp, canUp);
         runtime.replaceFunction(kCanDown, canDown);
         runtime.replaceFunction(kLeft, left);

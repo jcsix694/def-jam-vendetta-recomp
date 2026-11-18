@@ -312,6 +312,8 @@ namespace vendetta_arenas
             // the game" (that arena's model, unchanged)
             std::filesystem::path modelFolder;
             bool standard = false;           // one the recomp brings (it means to have the made-from arena's sounds and fly-in)
+            std::string standardName;        // a standard arena's place: its name (plainName), kept by a mod replacing it
+            uint32_t newPlace = 0;           // a mod's new place: its number among the new places asked for, from 1
             uint32_t stage = 0;              // its Choose Stage stage: the game arena it replaces (0-11), or a new place (12 on)
             uint32_t venue = 0;              // the venue its file was made from: the one the game loads behind it
             std::vector<uint8_t> file;       // model.arena, read at the arena's load (only the current arena's kept)
@@ -2890,6 +2892,10 @@ namespace vendetta_arenas
 
         PS2Runtime::RecompiledFunction g_originalChooseStage = nullptr, g_originalPictureAndName = nullptr;
         uint32_t g_places = 12;     // the game's 12, then the mods' new arenas
+        // a project's "stage order": the stages it names first, in order (the places it leaves out follow in their own
+        // order); empty = the game's order
+        std::vector<uint32_t> g_stageOrder;
+        bool g_ownStageOrder = false;
         bool g_tablesReady = false;
         uint32_t g_lastFlags[12] = {};
 
@@ -2916,6 +2922,22 @@ namespace vendetta_arenas
                     thumbs[m.stage] = m.stage;
                     ++g_places;
                 }
+            if (!g_stageOrder.empty())
+            {
+                // the project's own order: the stages it names, then the rest as they were
+                std::vector<uint32_t> places(order, order + g_places), ordered;
+                for (uint32_t stage : g_stageOrder)
+                    if (std::find(places.begin(), places.end(), stage) != places.end())
+                        ordered.push_back(stage);
+                for (uint32_t stage : places)
+                    if (std::find(ordered.begin(), ordered.end(), stage) == ordered.end())
+                        ordered.push_back(stage);
+                std::copy(ordered.begin(), ordered.end(), order);
+                std::string line;
+                for (uint32_t stage : ordered)
+                    line += (line.empty() ? "" : ", ") + std::to_string(stage);
+                std::cerr << "[arenas] Choose Stage's places in the project's order (by stage): " << line << std::endl;
+            }
             g_tablesReady = true;
         }
 
@@ -2944,12 +2966,27 @@ namespace vendetta_arenas
                 std::memcpy(fe + 0xF48u + 4u * i, &game, 4);
                 flags[i] = g_lastFlags[i] = game;
             }
-            for (uint32_t p = 12; p < g_places; ++p)
-                flags[placeStage(p)] = 1u;
+            for (uint32_t p = 0; p < g_places; ++p)
+                if (placeStage(p) >= 12u)
+                    flags[placeStage(p)] = 1u; // the new places (wherever a project's order put them)
             const uint32_t lastStart = g_places - 6u;
             std::memcpy(fe + 0xF78u, &lastStart, 4);
             std::memcpy(fe + 0xF7Cu, &g_places, 4);
             uint32_t cursor = Ps2FastRead32(rdram, frontEnd + 0x58u), window = Ps2FastRead32(rdram, frontEnd + 0x5Cu);
+            if (g_ownStageOrder && window + cursor < g_places && !unlocked(window + cursor))
+            {
+                // the screen opens on place 0 (the game's is always unlocked): a project's order may put a locked
+                // arena there, so the cursor goes to the first unlocked place (moving and Random never stop on one)
+                for (uint32_t p = 0; p < g_places; ++p)
+                    if (unlocked(p))
+                    {
+                        cursor = p % 6u;
+                        window = p - cursor;
+                        std::memcpy(fe + 0x58u, &cursor, 4);
+                        std::memcpy(fe + 0x5Cu, &window, 4);
+                        break;
+                    }
+            }
             if (window > lastStart)
             {
                 cursor = std::min(cursor + (window - lastStart), 5u);
@@ -4275,9 +4312,85 @@ namespace vendetta_arenas
             std::string label;            // its folder as named, for messages
             std::filesystem::path folder; // empty: the mod names no folder
             bool standard = false;
+            uint32_t newPlace = 0;        // a mod's new place: its number among the new places asked for, from 1
         };
 
         void takeStagePictures(ModArena &m);
+
+        // The project's "stage order" (project.json): [ "THE FACE CLUB", "THE FACE CLUB SIX SIDES", { "new place": 1 }, ... ],
+        // Choose Stage's places left to right: a game arena by its Choose Stage name, a standard arena by its name, a new
+        // place by its number in "new places" (else among the mods' "new" arenas). The places it leaves out follow in
+        // their own order. A name twice or not a place stops the project.
+        void readStageOrder(uint32_t newPlacesAsked)
+        {
+            const vendetta_mods::Project *const project = vendetta_mods::currentProject();
+            const vendetta_mods::Json *const list = project ? project->manifest.find("stage order") : nullptr;
+            if (!list)
+                return;
+            const auto bad = [&](const std::string &why, const std::string &forPlayer)
+            {
+                vendetta_mods::problem() << "[arenas] " << project->name << ": " << why << std::endl;
+                vendetta_mods::blocking(project->name + ": " + forPlayer);
+            };
+            if (!list->isArray())
+            {
+                bad("\"stage order\" should be a list of places", "its stage order can't be read.");
+                return;
+            }
+            std::vector<uint32_t> stages;
+            for (const vendetta_mods::Json &item : list->items)
+            {
+                std::string label = "?";
+                uint32_t stage = ~0u;
+                bool made = true;
+                if (item.isString())
+                {
+                    label = item.text;
+                    for (const ModArena &m : g_modArenas)
+                        if (!m.standardName.empty() && m.standardName == plainName(item.text))
+                            stage = m.stage;
+                    if (stage == ~0u)
+                        stage = venueNamed(item.text);
+                }
+                else if (const vendetta_mods::Json *n = item.isObject() ? item.find("new place") : nullptr;
+                         n && n->type == vendetta_mods::Json::Type::Number)
+                {
+                    label = "new place " + std::to_string(static_cast<long long>(n->number));
+                    if (n->number >= 1.0 && n->number == std::floor(n->number) && n->number <= newPlacesAsked)
+                    {
+                        made = false;
+                        for (const ModArena &m : g_modArenas)
+                            if (m.newPlace == static_cast<uint32_t>(n->number) && m.isNew)
+                            {
+                                stage = m.stage;
+                                made = true;
+                            }
+                    }
+                }
+                if (!made)
+                {
+                    vendetta_mods::problem() << "[arenas] " << project->name << ": \"stage order\": " << label
+                                             << " wasn't made: left out" << std::endl;
+                    continue;
+                }
+                if (stage == ~0u)
+                {
+                    bad("\"stage order\": \"" + label + "\" isn't a Choose Stage place",
+                        "its stage order names " + label + ", which isn't on Choose Stage.");
+                    continue;
+                }
+                if (std::find(stages.begin(), stages.end(), stage) != stages.end())
+                {
+                    bad("\"stage order\": " + label + " is in it twice", "its stage order has " + label + " twice.");
+                    continue;
+                }
+                stages.push_back(stage);
+            }
+            g_stageOrder = std::move(stages);
+            g_ownStageOrder = true;
+            std::cerr << "[arenas] " << project->name << "'s own stage order: " << list->items.size() << " place(s) named first"
+                      << std::endl;
+        }
 
         // The arenas: the standard ones, then the mods' ("replace": {"arenas": {"<arena>": "<folder>"}}, "new": {"arenas":
         // [...]}), read at start (their files at each load)
@@ -4297,6 +4410,7 @@ namespace vendetta_arenas
             const vendetta_mods::Json *const stages = project ? project->manifest.find("stages") : nullptr;
             const vendetta_mods::Json *const places = project ? project->manifest.find("new places") : nullptr;
             const bool listed = stages || places;
+            uint32_t newPlacesAsked = 0; // a mod's new place's number ("new places", else the mods' "new" arenas in load order)
             if (listed)
             {
                 const auto entry = [&](const std::string &stage, const vendetta_mods::Json &value, const std::string &where)
@@ -4330,7 +4444,13 @@ namespace vendetta_arenas
                         entry(name, value, name + (!name.empty() && (name.back() == 's' || name.back() == 'S') ? "' place" : "'s place"));
                 if (places && places->isArray())
                     for (size_t i = 0; i < places->items.size(); ++i)
+                    {
+                        const size_t before = list.size();
                         entry(std::string(), places->items[i], "new place " + std::to_string(i + 1u));
+                        if (list.size() > before)
+                            list.back().newPlace = static_cast<uint32_t>(i + 1u);
+                    }
+                newPlacesAsked = places && places->isArray() ? static_cast<uint32_t>(places->items.size()) : 0u;
             }
             for (const vendetta_mods::Mod &mod : vendetta_mods::loadedMods())
             {
@@ -4348,9 +4468,13 @@ namespace vendetta_arenas
                     for (const vendetta_mods::Json &folder : newArenas->items)
                         entries.push_back({"", folder});
                 for (const auto &[name, value] : entries)
+                {
                     list.push_back({mod.name, name, value.isString() ? value.text : std::string(),
                                     value.isString() ? vendetta_mods::fileNamed(mod.folder, value.text) : std::filesystem::path(),
                                     false});
+                    if (name.empty())
+                        list.back().newPlace = ++newPlacesAsked;
+                }
             }
             for (const ArenaEntry &e : list)
             {
@@ -4402,6 +4526,8 @@ namespace vendetta_arenas
                     m.folder = folder;
                     m.modelFolder = modelFolder;
                     m.standard = e.standard;
+                    m.standardName = e.standard ? plainName(e.label) : takeOver >= 0 ? g_modArenas[size_t(takeOver)].standardName : std::string();
+                    m.newPlace = e.newPlace;
                     m.stage = venue;
                     m.isNew = isNew;
                     m.gamePicture = game[1];
@@ -4530,6 +4656,7 @@ namespace vendetta_arenas
                         g_modArenas.push_back(std::move(m));
                 }
             }
+            readStageOrder(newPlacesAsked);
         }
 
         // ------------------------------------------------------------------ a standard arena's Choose Stage pictures

@@ -371,4 +371,12 @@ instructions = [
   { address = "0x00143248", value = "0x3c01438c" }, # lui $at, 0x438C: VIBRATION at y 280 (was 252)
   { address = "0x00143278", value = "0x3c01439a" }, # lui $at, 0x439A: the card's row at y 308 (was 280)
   { address = "0x00143298", value = "0x3c0143a8" }, # lui $at, 0x43A8: EXIT at y 336 (was 308)
+  # Whatever opens Choose Fighter puts its cursor on slot 7 (cursor 6, scroll 0): each jal goes to a hook in
+  # overrides/vendetta_wrestlers.cpp that makes the store it replaces and notes the opening, so a project's own
+  # "fighter starts" can place the cursor at the screen's first picture
+  { address = "0x001484b8", value = "0x0c077e28" }, # jal 0x1DF8A0 (was sw $zero, 0x78($s2)): User Setup FUN_00148120
+  { address = "0x00148830", value = "0x0c077e28" }, # jal 0x1DF8A0 (was sw $zero, 0x78($s2)): User Setup FUN_00148120
+  { address = "0x0014dc00", value = "0x0c077e29" }, # jal 0x1DF8A4 (was sw $a0, 0x74($s1)): FUN_0014da00
+  { address = "0x0014dc84", value = "0x0c077e29" }, # jal 0x1DF8A4 (was sw $a0, 0x74($s1)): FUN_0014da00
+  { address = "0x0014684c", value = "0x0c077e2a" }, # jal 0x1DF8A8 (was sw $a0, 0x74($s3)): the team set-up FUN_00146518
 ]
