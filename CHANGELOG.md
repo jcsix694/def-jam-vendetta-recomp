@@ -5,6 +5,21 @@ The newest version is at the top.
 
 ---
 
+## 0.7.1
+
+### Fixed
+- **Comes with the mod kit v0.5.1** (the Mod kit folder, Settings > Mods > Open the mod kit). Its Create new previews
+  on Animations, Fly-ins and Sounds now stop when the popup closes (they kept playing, sounds too).
+
+### Good to know
+- The game itself is the same as 0.7.0.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects, mods and your work in the mod kit stay as they are.
+- **If you have 0.5.1**, its settings program can't update itself: download this version's zip and unzip it over your
+  game folder, replacing the files, then open the settings program.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.7.0
 
 ### New
