@@ -5,6 +5,44 @@ The newest version is at the top.
 
 ---
 
+## 0.7.0
+
+### New
+- **Cage match.** Pick it in Battle's Choose Match. Climb the cage with triangle at the ropes, escape over the top or
+  out through the door, throw your opponent into the cage, shake it to bring a climber down. Works in one on one,
+  tag, handicap and all against all, and the computer plays it too.
+- **More ways to win in Battle.** Choose Match offers PIN and SUBMISSION on their own, and TORNADO TAG for tag
+  matches.
+- **A six-sided ring.** THE FACE CLUB SIX SIDES comes with the game as a new arena on Choose Stage. Moves, runs,
+  climbs and corner moves follow its angled ropes.
+- **Two more wrestlers: S-WORD and DABO**, from the Japanese release of the game, with their own moves and their
+  two songs. They sit at the end of Choose Fighter, unlocked.
+- **Themes from mods.** A mod can now change the menus (pictures, words, colours, fonts), replace the game's videos
+  or replace its songs.
+- **Projects set up in the mod kit.** A project chooses who is on each Choose Fighter slot, which arena is on each
+  stage, its themes, and even the order of Choose Fighter and Choose Stage and which wrestlers the cursors start on.
+- **The camera style in the pause menu** and in Options, kept for next time.
+- **Comes with the mod kit v0.5.0** (the Mod kit folder, Settings > Mods > Open the mod kit), redesigned with a
+  PROJECTS side and a BUILD side, and the Blender plugin v0.4.0 (install it again from the kit's Blender plugin page).
+
+### Better
+- **Widescreen menus** have a proper 16:9 background instead of black sides.
+- **Sounds that loop** now loop the way the PS2 plays them.
+- **A graphics driver check** when the game starts: if your graphics driver is one known to draw the game wrong, it
+  tells you once.
+
+### Fixed
+- **The setup** builds again when the game was first built with another version of Microsoft's build tools.
+- **Videos and songs in the mod kit** are no longer silent when the kit is opened from the settings program.
+
+### Good to know
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects, mods and your work in the mod kit stay as they are.
+- **If you have 0.5.1**, its settings program can't update itself: download this version's zip and unzip it over your
+  game folder, replacing the files, then open the settings program.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.6.2
 
 ### Fixed
