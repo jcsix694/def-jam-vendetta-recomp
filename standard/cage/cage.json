@@ -653,6 +653,10 @@
         "value": 2
       },
       {
+        "frame": 16,
+        "sound": "CAGE TAP"
+      },
+      {
         "frame": 44,
         "sound": "Impact on the floor",
         "value": 1
@@ -687,6 +691,10 @@
         "frame": 76,
         "sound": "Grunt",
         "value": 1
+      },
+      {
+        "frame": 76,
+        "sound": "CAGE TAP"
       },
       {
         "frame": 109,
