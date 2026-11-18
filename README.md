@@ -290,7 +290,7 @@ for the name you make mods under, and it links itself to the game it came with.
 <table>
 <tr>
 <td width="50%"><img src="images/modkit-name.png" alt="The mod kit's first start: your name"><br><sub>Your name goes into every mod you make, so two people's mods never clash.</sub></td>
-<td width="50%"><img src="images/modkit-linked.png" alt="Linked games"><br><sub>Linked games: the game the kit reads from and adds mods to.</sub></td>
+<td width="50%"><img src="images/modkit-linked.png" alt="Settings and the linked game"><br><sub>Settings: your name, the preview's wrestlers and ring, and the linked game the kit reads from and adds mods to.</sub></td>
 </tr>
 </table>
 
@@ -300,10 +300,14 @@ On the PROJECTS side, pick a project (or make one with **+ New project**):
 
 - **Roster:** Choose Fighter, slot by slot. A slot holds up to 3 attires, and each can come from anywhere: the game's
   own, a wrestler you made, one you installed, even from different mods. Change or remove any attire, put a whole
-  wrestler in a slot, or add a **new slot** after the game's own. S-WORD and DABO are there as the game's own.
+  wrestler in a slot, or add a **new slot** after the game's own. S-WORD and DABO are there as the game's own. Each
+  attire is a card with its model turning, its profile, and its render, icon and name logo.
 - **Stages:** Choose Stage, place by place. A place is the game's arena or one of yours, with **new places** after the
-  game's own.
-- **Themes:** one menu theme, one video theme and one music theme, or back to the game's.
+  game's own. The arena is shown in 3-D with its big picture, thumbnail and name strip.
+- **Order:** the order of the wrestlers on Choose Fighter and the arenas on Choose Stage, and the wrestler each player's
+  cursor starts on.
+- **Themes:** one menu theme, one video theme and one music theme, or back to the game's, each seen or heard right
+  there: the menus' screens, the videos and the songs.
 - **Installed:** everything in the project, each switched on or off or removed, with any problem and its fix.
 
 **Install a mod…** takes a zip someone shared and shows what is in it and where each wrestler or arena will go,
@@ -312,8 +316,12 @@ you change something on the BUILD side, or install a newer zip, the project show
 
 <table>
 <tr>
-<td width="50%"><img src="images/modkit-projects.png" alt="A project's Roster"><br><sub>Roster: a custom wrestler in a new slot after the game's 46.</sub></td>
-<td width="50%"><img src="images/modkit-stages.png" alt="A project's Stages"><br><sub>Stages: Choose Stage place by place, THE FACE CLUB SIX SIDES among the game's.</sub></td>
+<td width="50%"><img src="images/modkit-projects.png" alt="A project's Roster"><br><sub>Roster: a new slot after the game's 46, with a custom wrestler and one of the game's attires.</sub></td>
+<td width="50%"><img src="images/modkit-stages.png" alt="A project's Stages"><br><sub>Stages: THE FACE CLUB SIX SIDES in 3-D with its three pictures, and a custom arena in a new place.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="images/modkit-order.png" alt="A project's Order"><br><sub>Order: Choose Fighter's and Choose Stage's order, and where each player's cursor starts.</sub></td>
+<td width="50%"><img src="images/modkit-themes.png" alt="A project's Themes"><br><sub>Themes: a custom menu theme and music theme, the videos left the game's, each seen or played here.</sub></td>
 </tr>
 </table>
 
