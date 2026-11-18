@@ -5,6 +5,25 @@ The newest version is at the top.
 
 ---
 
+## 0.6.2
+
+### Fixed
+- **The setup stopped at Build tools on Windows in another language.** Microsoft's build tools come in your PC's
+  language, and the setup could only read the compiler's version in English, so it said the compiler "could not be
+  run" however often the tools were installed. It reads it in any language now.
+- **Open the log on the setup page closed the settings program.** It opens the log in Notepad now.
+
+### Good to know
+- **If the setup stopped for you**, the build tools you installed are fine. Download this version's zip, unzip it over
+  your game folder (replacing the files), open the settings program and run the setup again.
+- The game itself is the same as 0.6.1. Comes with the mod kit v0.4.1, as before.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects, mods and your work in the mod kit stay as they are.
+- **If you have 0.5.1**, its settings program can't update itself: download this version's zip and unzip it over your
+  game folder, replacing the files, then open the settings program.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.6.1
 
 ### Fixed
