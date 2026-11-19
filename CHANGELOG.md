@@ -5,6 +5,26 @@ The newest version is at the top.
 
 ---
 
+## 0.7.3
+
+### Fixed
+- **Drawn by: CPU now says what it can't show.** On CPU, S-WORD and DABO, the cage, the six-sided ring and mods'
+  wrestlers, arenas and pictures aren't drawn (S-WORD and DABO look like Briggs and the cage can't be seen). The
+  settings program now says so under Drawn by, and the game's log says it once instead of calling each picture
+  unreadable. Set Drawn by to Graphics card to see them.
+- **Comes with the mod kit v0.5.3** (the Mod kit folder, Settings > Mods > Open the mod kit). Its PLAY gives the same
+  warning when the game is set to CPU.
+
+### Good to know
+- **Older Intel graphics:** on some Intel graphics built into the processor (a 10th Gen Core i3, for one), even the
+  newest driver draws the game wrong on the graphics card. Use Drawn by: CPU there.
+- To update, press **Update** when the game asks as it starts, or on the settings program's Play page. Your saves,
+  settings, projects, mods and your work in the mod kit stay as they are.
+- **If you have 0.5.1**, its settings program can't update itself: download this version's zip and unzip it over your
+  game folder, replacing the files, then open the settings program.
+- After the update Windows may show "Windows protected your PC" again (the program isn't signed yet): click
+  **More info**, then **Run anyway**.
+
 ## 0.7.2
 
 ### Fixed
