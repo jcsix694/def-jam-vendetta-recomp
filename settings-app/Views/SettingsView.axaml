@@ -94,7 +94,7 @@
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                             <StackPanel VerticalAlignment="Center" Spacing="2">
                                 <TextBlock Classes="label" Text="Drawn by" />
-                                <TextBlock Classes="hint" Text="{Binding RendererHint}" />
+                                <TextBlock Classes="hint" TextWrapping="Wrap" Text="{Binding RendererHint}" />
                             </StackPanel>
                             <ListBox Grid.Column="1" Classes="seg" SelectedIndex="{Binding RendererIndex}">
                                 <ListBoxItem Content="Graphics card" />

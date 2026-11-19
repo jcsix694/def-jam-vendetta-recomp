@@ -6,9 +6,11 @@
 #include "runtime/gs/gs_gpu.h"
 #include "vendetta_mods.h"
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <string>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -53,7 +55,7 @@ namespace vendetta_pictures
         std::vector<uint32_t> g_queue;
         uint64_t g_bytes = 0;
         bool g_blankSent = false;
-        bool g_saidNoGpu = false;
+        std::atomic<bool> g_saidNoGpu{false};
 
         // VENDETTA_PICTURELOG=1: each batch read, and each picture shown before it was read (the "no waiting" check)
         bool logOn()
@@ -61,6 +63,11 @@ namespace vendetta_pictures
             static const bool on = std::getenv("VENDETTA_PICTURELOG") && *std::getenv("VENDETTA_PICTURELOG") != '0';
             return on;
         }
+
+        // said once when pictures are wanted on the CPU renderer
+        constexpr const char *kNoGpuLine =
+            "[renderer] CPU: pictures and models from files are not drawn (S-WORD and DABO, the cage, the six-sided ring, "
+            "mods' wrestlers, arenas and pictures); Drawn by: Graphics card shows them";
 
         GSGpuRenderer *gpu() { return g_runtime ? g_runtime->gs().gpuRendererForSettings() : nullptr; }
 
@@ -180,6 +187,13 @@ namespace vendetta_pictures
                         continue;
                     }
                     p.state = State::Failed;
+                    if (!gpu())
+                    {
+                        // not the file: the CPU renderer has no pictures from files at all
+                        if (!g_saidNoGpu.exchange(true))
+                            std::cerr << (std::string(kNoGpuLine) + "\n") << std::flush; // one write: other threads print too
+                        continue;
+                    }
                     vendetta_mods::problem() << "[pictures] " << p.file.string() << " can't be read as a picture" << std::endl;
                 }
                 keepBudget();
@@ -227,11 +241,8 @@ namespace vendetta_pictures
     bool available()
     {
         const bool yes = gpu() != nullptr;
-        if (!yes && !g_saidNoGpu)
-        {
-            g_saidNoGpu = true;
-            std::cerr << "[pictures] the CPU renderer draws no pictures from files: the game's own are shown" << std::endl;
-        }
+        if (!yes && !g_saidNoGpu.exchange(true))
+            std::cerr << (std::string(kNoGpuLine) + "\n") << std::flush; // one write: other threads print too
         return yes;
     }
 

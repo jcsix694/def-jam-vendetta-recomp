@@ -232,7 +232,8 @@ public partial class SettingsViewModel : ObservableObject
         _ => "Matches at 16:9 with more of the arena; menus and movies stay 4:3. New: tested in the warehouse arena so far.",
     };
 
-    public string RendererHint => RendererIndex == 0 ? "Default: sharp and fast" : "The old way, for checking: 1× only";
+    public string RendererHint => RendererIndex == 0 ? "Default: sharp and fast"
+        : "Slower, 1× only. S-WORD, DABO, the cage, the six-sided ring and mods' models and pictures don't show";
 
     public string ScaleHint => RendererIndex == 1 ? "The CPU draws at 1×" : ScaleIndex switch
     {

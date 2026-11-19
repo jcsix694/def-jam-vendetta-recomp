@@ -148,8 +148,10 @@ version. Turn both checks off under About › Check for updates automatically.
 **Intel graphics built into the processor** (most laptops without their own graphics card) need an up to date Intel
 driver. An old one can leave the wrestlers out of the picture or fill it with stripes. The game checks the driver each
 time it starts and tells you when it is one known to draw wrong. Windows Update often says an old driver is the newest:
-get the driver from Intel's own site for your processor. If no newer driver exists for your PC, set **Drawn by** to
-**CPU** on the Graphics page: slower, at the PS2's own resolution, but drawn right.
+get the driver from Intel's own site for your processor. On some older Intel graphics (a 10th Gen Core i3, for one)
+even the newest driver draws it wrong. Then set **Drawn by** to **CPU** on the Graphics page: slower, at the PS2's own
+resolution, but drawn right. On CPU, S-WORD and DABO, the cage, the six-sided ring and mods' wrestlers, arenas and
+pictures don't show (S-WORD and DABO look like Briggs, the cage can't be seen): they need the graphics card.
 
 ## Controls
 
@@ -255,7 +257,7 @@ a project's mods are managed in the mod kit, opened from the Play page.
   anything needs fixing, with **Open in the mod kit**.
 - **Display:** window or borderless, which screen, VSync, and
   widescreen, 4:3 or stretched.
-- **Graphics:** graphics card or CPU, scale 1× to 16×, Sharp 2D, and FSR, smooth or blocky scaling with sharpening.
+- **Graphics:** graphics card or CPU (CPU shows no mods' or added models and pictures), scale 1× to 16×, Sharp 2D, and FSR, smooth or blocky scaling with sharpening.
 - **Sound:** volume and the arena reverb.
 - **Controls:** up to 4 players, each player's controller and vibration, which player the keyboard plays as, and what
   every button does.
@@ -446,6 +448,8 @@ plugin, which brings the game's models into Blender and exports yours for the ki
 - **Running slowly?** 16× (the default) needs a fairly strong graphics card: try 8× on the Graphics page.
 - **Wrestlers missing or a striped picture?** That is an old graphics driver, seen on Intel graphics built into the
   processor. Update the driver (see [Install](#install)), or set Drawn by to CPU on the Graphics page.
+- **S-WORD and DABO look like Briggs, the cage can't be seen, or the six-sided ring is missing?** Drawn by is set to
+  CPU. These, and mods' wrestlers, arenas and pictures, are only drawn by the graphics card.
 - **Preparing graphics:** the setup and each update prepare the graphics card's shaders (about 2 minutes), so the game
   starts quickly. After a graphics driver update the game prepares them again once, with a "Preparing graphics" popup.
 - **Vibration** can also be turned off in the game's own pause menu.
